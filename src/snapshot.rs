@@ -7,8 +7,8 @@ use crate::alerts::{self, Alert};
 use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
 use crate::probes::{
-    audio, block, cpu, dmi, firmware, gpu, hwmon, input, memory, net, numa, nvme, pci, power,
-    software, usb,
+    audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, memory, modules,
+    net, numa, nvme, pci, power, software, usb,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -33,6 +33,11 @@ pub struct HardwareSnapshot {
     pub power: power::PowerReport,
     pub numa: numa::NumaReport,
     pub block: block::BlockReport,
+    pub fs: fs::FsReport,
+    pub modules: modules::ModulesReport,
+    pub clock: clock::ClockReport,
+    pub edac: edac::EdacReport,
+    pub iomem: iomem::IomemReport,
     pub software: software::SoftwareInfo,
 }
 
@@ -89,6 +94,11 @@ impl HardwareSnapshot {
             power: power::collect(ctx),
             numa: numa::collect(ctx),
             block,
+            fs: fs::collect(ctx),
+            modules: modules::collect(ctx),
+            clock: clock::collect(ctx),
+            edac: edac::collect(ctx),
+            iomem: iomem::collect(ctx),
             software: software::collect(ctx),
         }
     }
@@ -116,6 +126,9 @@ impl HardwareSnapshot {
         *prev_disk = Some(block::counters(&self.block));
         self.memory = memory::collect(ctx);
         self.power = power::collect(ctx);
+        self.software = software::collect(ctx);
+        self.clock = clock::collect(ctx);
+        self.edac = edac::collect(ctx);
         self.collected_at_unix_ms = unix_ms();
     }
 }

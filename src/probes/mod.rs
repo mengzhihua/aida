@@ -2,13 +2,18 @@
 
 pub mod audio;
 pub mod block;
+pub mod clock;
 pub mod cpu;
 pub mod dmi;
+pub mod edac;
 pub mod firmware;
+pub mod fs;
 pub mod gpu;
 pub mod hwmon;
 pub mod input;
+pub mod iomem;
 pub mod memory;
+pub mod modules;
 pub mod net;
 pub mod numa;
 pub mod nvme;

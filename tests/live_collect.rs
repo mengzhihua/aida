@@ -26,6 +26,19 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"power\""));
     assert!(json.contains("\"audio\""));
     assert!(json.contains("\"firmware\""));
+    assert!(json.contains("\"fs\""));
+    assert!(json.contains("\"modules\""));
+    assert!(json.contains("\"clock\""));
+    assert!(json.contains("\"edac\""));
+    assert!(json.contains("\"iomem\""));
+    assert!(
+        snap.software.load_1.value.is_some(),
+        "loadavg 应可读"
+    );
+    assert!(
+        !snap.fs.mounts.is_empty(),
+        "mountinfo 应至少有一个挂载点"
+    );
     assert!(
         !snap.memory.total_kb.value.is_none(),
         "MemTotal 应可读"
@@ -57,6 +70,9 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("电源"));
     assert!(html.contains("声卡"));
     assert!(html.contains("固件"));
+    assert!(html.contains("文件系统"));
+    assert!(html.contains("loadavg"));
+    assert!(html.contains("clocksource"));
     assert!(!html.contains("<script"));
 }
 

@@ -18,6 +18,11 @@ pub struct SoftwareInfo {
     pub mem_available_kb: Sample<u64>,
     pub swap_total_kb: Sample<u64>,
     pub desktop: Sample<String>,
+    pub load_1: Sample<f64>,
+    pub load_5: Sample<f64>,
+    pub load_15: Sample<f64>,
+    pub procs: Sample<String>,
+    pub boot_time_unix: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -49,6 +54,9 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
             Sample::missing("env:XDG_CURRENT_DESKTOP（无图形会话时正常为空）")
         });
 
+    let load = parse_loadavg(&access::read_trimmed(ctx.proc_path("loadavg")));
+    let boot_time_unix = parse_btime(&access::read_trimmed(ctx.proc_path("stat")));
+
     SoftwareInfo {
         os_name: os.pretty,
         os_id: os.id,
@@ -62,8 +70,80 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         mem_available_kb: mem.available,
         swap_total_kb: mem.swap,
         desktop,
+        load_1: load.l1,
+        load_5: load.l5,
+        load_15: load.l15,
+        procs: load.procs,
+        boot_time_unix,
         notes: Vec::new(),
     }
+}
+
+fn parse_loadavg(sample: &Sample<String>) -> Load {
+    let miss_f = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let miss_s = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let Some(text) = sample.value.as_deref() else {
+        return Load {
+            l1: miss_f(),
+            l5: miss_f(),
+            l15: miss_f(),
+            procs: miss_s(),
+        };
+    };
+    let mut it = text.split_whitespace();
+    let pick_f = |it: &mut std::str::SplitWhitespace, src: &str| {
+        it.next()
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|v| Sample::ok(v, src.to_string()))
+            .unwrap_or_else(|| Sample::error(src.to_string(), "无法解析 loadavg"))
+    };
+    let src = sample.source.clone();
+    Load {
+        l1: pick_f(&mut it, &src),
+        l5: pick_f(&mut it, &src),
+        l15: pick_f(&mut it, &src),
+        procs: it
+            .next()
+            .map(|s| Sample::ok(s.to_string(), src.clone()))
+            .unwrap_or_else(miss_s),
+    }
+}
+
+struct Load {
+    l1: Sample<f64>,
+    l5: Sample<f64>,
+    l15: Sample<f64>,
+    procs: Sample<String>,
+}
+
+fn parse_btime(sample: &Sample<String>) -> Sample<u64> {
+    let miss = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let Some(text) = sample.value.as_deref() else {
+        return miss();
+    };
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("btime ") {
+            if let Ok(v) = rest.trim().parse::<u64>() {
+                return Sample::ok(v, sample.source.clone());
+            }
+        }
+    }
+    Sample::missing(sample.source.clone())
 }
 
 struct OsRelease {
@@ -186,5 +266,15 @@ mod tests {
         let os = parse_os_release(&s);
         assert_eq!(os.pretty.value.as_deref(), Some("Ubuntu 24.04.4 LTS"));
         assert_eq!(os.id.value.as_deref(), Some("ubuntu"));
+    }
+
+    #[test]
+    fn loadavg_and_btime() {
+        let load = parse_loadavg(&Sample::ok("0.10 0.20 0.30 1/99 1234".into(), "loadavg"));
+        assert_eq!(load.l1.value, Some(0.10));
+        assert_eq!(load.l15.value, Some(0.30));
+        assert_eq!(load.procs.value.as_deref(), Some("1/99"));
+        let bt = parse_btime(&Sample::ok("cpu 1 2 3\nbtime 1700000000\n".into(), "stat"));
+        assert_eq!(bt.value, Some(1700000000));
     }
 }
