@@ -1554,16 +1554,7 @@ impl AidaApp {
                     ui.label(name);
                     ui.label(&d.class_name);
                     ui.label(d.driver.display());
-                    let link = match d.current_link_speed.value.as_deref() {
-                        Some(s) => format!(
-                            "{} x{}  msi {}",
-                            s,
-                            d.current_link_width.display(),
-                            d.msi_irqs
-                        ),
-                        None => format!("—  msi {}", d.msi_irqs),
-                    };
-                    ui.label(link);
+                    ui.label(d.link_label());
                     ui.end_row();
                 }
             });

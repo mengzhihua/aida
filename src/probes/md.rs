@@ -71,10 +71,7 @@ pub fn parse_mdstat(text: &str) -> (String, Vec<MdArray>) {
             let Some((name, rest)) = line.split_once(" : ") else {
                 continue;
             };
-            let toks: Vec<&str> = rest.split_whitespace().collect();
-            let state = toks.first().copied().unwrap_or("").to_string();
-            let level = toks.get(1).copied().unwrap_or("").to_string();
-            let members = toks.iter().skip(2).cloned().collect::<Vec<_>>().join(" ");
+            let (state, level, members) = parse_array_header(rest, &personalities);
             cur = Some(MdArray {
                 name: name.trim().to_string(),
                 level,
@@ -103,6 +100,36 @@ pub fn parse_mdstat(text: &str) -> (String, Vec<MdArray>) {
     (personalities, arrays)
 }
 
+fn parse_array_header(rest: &str, personalities: &str) -> (String, String, String) {
+    let known = personality_names(personalities);
+    let mut toks = rest.split_whitespace().peekable();
+    let state = toks.next().unwrap_or("").to_string();
+    while toks.peek().is_some_and(|t| t.starts_with('(')) {
+        toks.next();
+    }
+    let level = match toks.peek().copied() {
+        Some(t) if is_raid_level(t, &known) => toks.next().unwrap_or("").to_string(),
+        _ => String::new(),
+    };
+    let members = toks.collect::<Vec<_>>().join(" ");
+    (state, level, members)
+}
+
+fn personality_names(personalities: &str) -> Vec<String> {
+    personalities
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c| c == '[' || c == ']').to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+fn is_raid_level(tok: &str, known: &[String]) -> bool {
+    let t = tok.trim_matches(|c| c == '[' || c == ']');
+    t.starts_with("raid")
+        || matches!(t, "linear" | "multipath" | "faulty")
+        || known.iter().any(|k| k == t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +151,27 @@ unused devices: <none>
         assert_eq!(a[0].state, "active");
         assert!(a[0].members.contains("sda1"));
         assert!(a[0].detail.contains("[UU]"));
+    }
+
+    #[test]
+    fn inactive_and_auto_read_only() {
+        let text = "\
+Personalities : [raid1]
+md127 : inactive sdb11
+md0 : active (auto-read-only) raid1 sda1[0] sdb1[1]
+      1024 blocks
+unused devices: <none>
+";
+        let (_, a) = parse_mdstat(text);
+        let inactive = a.iter().find(|x| x.name == "md127").unwrap();
+        assert_eq!(inactive.state, "inactive");
+        assert_eq!(inactive.level, "");
+        assert_eq!(inactive.members, "sdb11");
+        let ro = a.iter().find(|x| x.name == "md0").unwrap();
+        assert_eq!(ro.state, "active");
+        assert_eq!(ro.level, "raid1");
+        assert!(ro.members.contains("sda1"));
+        assert!(!ro.level.contains("auto"));
     }
 
     #[test]
