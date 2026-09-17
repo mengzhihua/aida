@@ -8,8 +8,9 @@ use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
 use crate::probes::rapl::RaplSnap;
 use crate::probes::{
-    ata, audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, irq, memory,
-    modules, net, numa, nvme, pci, power, psi, rapl, software, usb, virtio,
+    ata, audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, iommu, irq,
+    md, memory, modules, net, numa, nvme, pci, platform, power, psi, rapl, scsi, software, usb,
+    virtio,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -27,6 +28,7 @@ pub struct HardwareSnapshot {
     pub nvme: nvme::NvmeReport,
     pub pci: pci::PciReport,
     pub virtio: virtio::VirtioReport,
+    pub iommu: iommu::IommuReport,
     pub gpu: gpu::GpuReport,
     pub net: net::NetReport,
     pub usb: usb::UsbReport,
@@ -44,6 +46,9 @@ pub struct HardwareSnapshot {
     pub psi: psi::PsiReport,
     pub irq: irq::IrqReport,
     pub ata: ata::AtaReport,
+    pub md: md::MdReport,
+    pub scsi: scsi::ScsiReport,
+    pub platform: platform::PlatformReport,
     pub software: software::SoftwareInfo,
 }
 
@@ -111,6 +116,7 @@ impl HardwareSnapshot {
             nvme: nvme::collect(ctx),
             pci: pci::collect(ctx),
             virtio: virtio::collect(ctx),
+            iommu: iommu::collect(ctx),
             gpu: gpu::collect(ctx),
             net,
             usb: usb::collect(ctx),
@@ -128,6 +134,9 @@ impl HardwareSnapshot {
             psi: psi::collect(ctx),
             irq: irq::collect(ctx),
             ata: ata::collect(ctx),
+            md: md::collect(ctx),
+            scsi: scsi::collect(ctx),
+            platform: platform::collect(ctx),
             software: software::collect(ctx),
         }
     }
@@ -164,6 +173,7 @@ impl HardwareSnapshot {
         self.fs = fs::collect(ctx);
         self.psi = psi::collect(ctx);
         self.irq = irq::collect(ctx);
+        self.platform = platform::collect(ctx);
         self.collected_at_unix_ms = unix_ms();
     }
 }

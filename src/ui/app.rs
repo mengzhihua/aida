@@ -36,6 +36,7 @@ enum Nav {
     Input,
     Audio,
     Pci,
+    Platform,
     Numa,
     Software,
     Bench,
@@ -282,6 +283,12 @@ impl eframe::App for AidaApp {
                 nav_btn(ui, &mut self.nav, Nav::Input, tr(cjk, "输入设备", "Input"));
                 nav_btn(ui, &mut self.nav, Nav::Audio, tr(cjk, "声卡", "Audio"));
                 nav_btn(ui, &mut self.nav, Nav::Pci, tr(cjk, "PCI 设备", "PCI"));
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Platform,
+                    tr(cjk, "平台 / 总线", "Platform"),
+                );
                 nav_btn(ui, &mut self.nav, Nav::Numa, tr(cjk, "NUMA 内存", "NUMA"));
                 nav_btn(ui, &mut self.nav, Nav::Software, tr(cjk, "操作系统", "OS"));
                 ui.separator();
@@ -314,6 +321,7 @@ impl eframe::App for AidaApp {
             Nav::Input => self.ui_input(ui),
             Nav::Audio => self.ui_audio(ui),
             Nav::Pci => self.ui_pci(ui),
+            Nav::Platform => self.ui_platform(ui),
             Nav::Numa => self.ui_numa(ui),
             Nav::Software => self.ui_software(ui),
             Nav::Bench => self.ui_bench(ui),
@@ -569,10 +577,12 @@ impl AidaApp {
             ui.strong(self.t("缓存 (cpu0)", "Caches (cpu0)"));
             for c in &self.snap.cpu.caches {
                 ui.label(format!(
-                    "L{} {} {} shared {}",
+                    "L{} {} {}  line {}  assoc {}  shared {}",
                     c.level.display(),
                     c.kind.display(),
                     c.size.display(),
+                    c.line_size.display(),
+                    c.associativity.display(),
                     c.shared_cpu_list.display()
                 ));
             }
@@ -1238,6 +1248,45 @@ impl AidaApp {
             }
         }
         ui.separator();
+        ui.strong("MD RAID");
+        for n in &self.snap.md.notes {
+            ui.weak(n);
+        }
+        if !self.snap.md.personalities.is_empty() {
+            kv(ui, "personalities", &self.snap.md.personalities);
+        }
+        for a in &self.snap.md.arrays {
+            kv(
+                ui,
+                &a.name,
+                &format!(
+                    "{} {}  {}  deg {}  {}",
+                    a.state,
+                    a.level,
+                    a.members,
+                    a.degraded.display(),
+                    a.detail
+                ),
+            );
+        }
+        ui.separator();
+        ui.strong("SCSI host");
+        for n in &self.snap.scsi.notes {
+            ui.weak(n);
+        }
+        for h in &self.snap.scsi.hosts {
+            kv(
+                ui,
+                &h.name,
+                &format!(
+                    "{}  queue {}  {}",
+                    h.proc_name.display(),
+                    h.can_queue.display(),
+                    h.state.display()
+                ),
+            );
+        }
+        ui.separator();
         ui.strong("NVMe");
         if self.snap.nvme.controllers.is_empty() {
             for n in &self.snap.nvme.notes {
@@ -1492,6 +1541,7 @@ impl AidaApp {
                 ui.strong("name");
                 ui.strong("class");
                 ui.strong("driver");
+                ui.strong("link");
                 ui.end_row();
                 for d in &self.snap.pci.devices {
                     ui.label(&d.slot);
@@ -1504,6 +1554,12 @@ impl AidaApp {
                     ui.label(name);
                     ui.label(&d.class_name);
                     ui.label(d.driver.display());
+                    ui.label(format!(
+                        "{} x{}  msi {}",
+                        d.current_link_speed.display(),
+                        d.current_link_width.display(),
+                        d.msi_irqs
+                    ));
                     ui.end_row();
                 }
             });
@@ -1523,6 +1579,80 @@ impl AidaApp {
                     d.driver.display(),
                     d.status.display()
                 ),
+            );
+        }
+        ui.separator();
+        ui.strong("IOMMU");
+        for n in &self.snap.iommu.notes {
+            ui.weak(n);
+        }
+        for g in &self.snap.iommu.groups {
+            kv(
+                ui,
+                &format!("group {}", g.id),
+                &g.devices.join(" "),
+            );
+        }
+    }
+
+    fn ui_platform(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("平台 / 总线", "Platform"));
+        for n in &self.snap.platform.notes {
+            ui.weak(n);
+        }
+        if !self.snap.platform.watchdogs.is_empty() {
+            ui.strong("watchdog");
+            for w in &self.snap.platform.watchdogs {
+                kv(
+                    ui,
+                    &w.name,
+                    &format!(
+                        "{}  timeout {}  left {}",
+                        w.identity.display(),
+                        w.timeout.display(),
+                        w.timeleft.display()
+                    ),
+                );
+            }
+        }
+        if !self.snap.platform.backlights.is_empty() {
+            ui.strong("backlight");
+            for b in &self.snap.platform.backlights {
+                kv(
+                    ui,
+                    &b.name,
+                    &format!(
+                        "{}  {} / {}",
+                        b.kind.display(),
+                        b.actual.display(),
+                        b.max.display()
+                    ),
+                );
+            }
+        }
+        if !self.snap.platform.leds.is_empty() {
+            ui.collapsing(format!("LED ({})", self.snap.platform.leds.len()), |ui| {
+                for l in &self.snap.platform.leds {
+                    kv(
+                        ui,
+                        &l.name,
+                        &format!(
+                            "{} / {}  {}",
+                            l.brightness.display(),
+                            l.max_brightness.display(),
+                            l.trigger.display()
+                        ),
+                    );
+                }
+            });
+        }
+        ui.separator();
+        ui.strong("I2C");
+        for a in &self.snap.platform.i2c_adapters {
+            kv(
+                ui,
+                &a.name,
+                &format!("{}  clients {}", a.adapter_name.display(), a.clients),
             );
         }
     }
@@ -1558,6 +1688,11 @@ impl AidaApp {
                 None => self.snap.software.tainted.access_label(),
             },
         );
+        kv(ui, "LSM", &self.snap.software.lsm.display());
+        if self.snap.software.selinux_enforce.access == AccessKind::Ok {
+            kv(ui, "SELinux enforce", &self.snap.software.selinux_enforce.display());
+        }
+        kv(ui, "entropy", &self.snap.software.entropy_avail.display());
         if let Some(cpu) = &self.snap.psi.cpu {
             kv(
                 ui,

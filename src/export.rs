@@ -371,6 +371,39 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
 
+    section(&mut html, "平台");
+    if !snap.platform.watchdogs.is_empty() {
+        html.push_str("<table><tr><th>watchdog</th><th>identity</th><th>timeout</th></tr>");
+        for w in &snap.platform.watchdogs {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&w.name),
+                esc(&w.identity.display()),
+                esc(&w.timeout.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for b in &snap.platform.backlights {
+        html.push_str(&format!(
+            "<p>backlight {} {} / {}</p>",
+            esc(&b.name),
+            esc(&b.actual.display()),
+            esc(&b.max.display())
+        ));
+    }
+    for a in &snap.platform.i2c_adapters {
+        html.push_str(&format!(
+            "<p>I2C {} {} clients {}</p>",
+            esc(&a.name),
+            esc(&a.adapter_name.display()),
+            a.clients
+        ));
+    }
+    for n in &snap.platform.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+
     section(&mut html, "NVMe");
     if snap.nvme.controllers.is_empty() {
         html.push_str("<p class=\"warn\">未发现 NVMe 控制器</p>");
@@ -402,7 +435,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
 
     section(&mut html, "PCI");
     html.push_str(
-        "<table><tr><th>槽位</th><th>ID</th><th>名称</th><th>类别</th><th>驱动</th></tr>",
+        "<table><tr><th>槽位</th><th>ID</th><th>名称</th><th>类别</th><th>驱动</th><th>链路</th></tr>",
     );
     for d in &snap.pci.devices {
         let name = match (&d.vendor_name, &d.device_name) {
@@ -411,13 +444,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             _ => String::from("—"),
         };
         html.push_str(&format!(
-            "<tr><td>{}</td><td>{}:{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}:{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} x{} msi {}</td></tr>",
             esc(&d.slot),
             esc(&d.vendor_id),
             esc(&d.device_id),
             esc(&name),
             esc(&d.class_name),
-            esc(&d.driver.display())
+            esc(&d.driver.display()),
+            esc(&d.current_link_speed.display()),
+            esc(&d.current_link_width.display()),
+            d.msi_irqs
         ));
     }
     html.push_str("</table>");
@@ -439,6 +475,24 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str("</table>");
     }
     for n in &snap.virtio.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "IOMMU");
+    if snap.iommu.groups.is_empty() {
+        html.push_str("<p class=\"muted\">无 IOMMU 分组</p>");
+    } else {
+        html.push_str("<table><tr><th>group</th><th>devices</th></tr>");
+        for g in &snap.iommu.groups {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(&g.id),
+                esc(&g.devices.join(" "))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.iommu.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
 
@@ -711,6 +765,38 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.ata.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
+    if !snap.md.arrays.is_empty() {
+        html.push_str("<table><tr><th>MD</th><th>级别</th><th>状态</th><th>成员</th></tr>");
+        for a in &snap.md.arrays {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&a.name),
+                esc(&a.level),
+                esc(&a.state),
+                esc(&a.members)
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.md.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+    if !snap.scsi.hosts.is_empty() {
+        html.push_str("<table><tr><th>SCSI</th><th>驱动</th><th>can_queue</th><th>状态</th></tr>");
+        for h in &snap.scsi.hosts {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&h.name),
+                esc(&h.proc_name.display()),
+                esc(&h.can_queue.display()),
+                esc(&h.state.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.scsi.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
     for b in &snap.block.devices {
         if b.partitions.is_empty() {
             continue;
@@ -815,6 +901,8 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     None => snap.software.tainted.access_label(),
                 },
             ),
+            ("LSM", snap.software.lsm.display()),
+            ("entropy", snap.software.entropy_avail.display()),
         ],
     );
     if let Some(cpu) = &snap.psi.cpu {
