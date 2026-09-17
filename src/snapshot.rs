@@ -53,6 +53,13 @@ impl HardwareSnapshot {
     }
 
     pub fn collect_cpu_sample(ctx: &ProbeCtx, sample_util: bool) -> Self {
+        // 第一次计数必须记下真实墙钟：cpu::collect 自己还会 sleep 120ms，
+        // 若再 sleep 一次却仍除以 0.12，RAPL/网卡/磁盘速率会被放大约一倍。
+        let rate_t0 = if sample_util {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let net_prev = if sample_util {
             Some(net::counters(&net::collect(ctx)))
         } else {
@@ -74,11 +81,16 @@ impl HardwareSnapshot {
             cpu::collect_with_util(ctx, None)
         };
         let (net, block, rapl) = if sample_util {
-            std::thread::sleep(std::time::Duration::from_millis(120));
+            let t0 = rate_t0.expect("sample_util 时已记录起点");
+            let min = std::time::Duration::from_millis(120);
+            if let Some(remain) = min.checked_sub(t0.elapsed()) {
+                std::thread::sleep(remain);
+            }
+            let dt = t0.elapsed().as_secs_f64().max(1e-3);
             (
-                net::collect_with_prev(ctx, net_prev.as_deref(), 0.12),
-                block::collect_with_prev(ctx, disk_prev.as_deref(), 0.12),
-                rapl::collect_with_prev(ctx, rapl_prev.as_deref(), 0.12),
+                net::collect_with_prev(ctx, net_prev.as_deref(), dt),
+                block::collect_with_prev(ctx, disk_prev.as_deref(), dt),
+                rapl::collect_with_prev(ctx, rapl_prev.as_deref(), dt),
             )
         } else {
             (net::collect(ctx), block::collect(ctx), rapl::collect(ctx))

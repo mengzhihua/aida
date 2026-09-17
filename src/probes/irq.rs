@@ -27,22 +27,21 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
         (crate::access::AccessKind::Ok, Some(text)) => parse_interrupts(text),
         _ => {
             notes.push(sample.access_label());
-            return IrqReport {
-                cpu_count: 0,
-                lines: Vec::new(),
-                softirqs: Vec::new(),
-                notes,
-            };
+            (0, Vec::new())
         }
     };
     lines.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
-    let softirqs = match access::read_trimmed(ctx.proc_path("softirqs")).value {
-        Some(text) => {
-            let (_, mut v) = parse_interrupts(&text);
+    let soft_sample = access::read_trimmed(ctx.proc_path("softirqs"));
+    let softirqs = match (soft_sample.access, soft_sample.value.as_deref()) {
+        (crate::access::AccessKind::Ok, Some(text)) => {
+            let (_, mut v) = parse_interrupts(text);
             v.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
             v
         }
-        None => Vec::new(),
+        _ => {
+            notes.push(soft_sample.access_label());
+            Vec::new()
+        }
     };
     IrqReport {
         cpu_count,
@@ -145,6 +144,31 @@ ERR:          0
         assert_eq!(r.softirqs.len(), 2);
         assert_eq!(r.softirqs[0].irq, "TIMER");
         assert_eq!(r.softirqs[0].total, 15);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn softirqs_without_interrupts() {
+        let root = std::env::temp_dir().join(format!("aida-irq-soft-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(
+            root.join("proc/softirqs"),
+            "                    CPU0       CPU1\n       TIMER:         10          5\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.lines.is_empty());
+        assert_eq!(r.softirqs.len(), 1);
+        assert_eq!(r.softirqs[0].irq, "TIMER");
+        assert_eq!(r.softirqs[0].total, 15);
+        assert!(!r.notes.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

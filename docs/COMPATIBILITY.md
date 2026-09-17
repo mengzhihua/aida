@@ -58,7 +58,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 36. **tainted=0 就是干净内核。** 按位解码，不要把十进制当“错误码”。
 37. **无 `/sys/class/powercap` 不是 bug。** 虚拟机、ARM、未开 RAPL 时常见；不要调用 `turbostat`。
 38. **`energy_uj` 会回绕。** 功率用差分，回绕时加上 `max_energy_range_uj`。
-39. **virtio `modalias` 是 `virtio:d{device}v{vendor}`。** ID 是十六进制；不要用 `split('d')`。
+39. **virtio `modalias` 是 `virtio:d{device}v{vendor}`。** ID 对照 `linux/virtio_ids.h`（16=gpu、18=input、20=crypto、23=iommu、26=fs），不要靠 PCI class 猜。
 40. **`block_size_bytes` 是十六进制。** `8000000` = 128 MiB，不是十进制 8e6。
 41. **KSM `run=0` 表示未启用合并。** 不是采集失败。
 42. **PTP 在 KVM 上经常是 `KVM virtual PTP`。** 无 `/sys/class/ptp` 时列表为空。

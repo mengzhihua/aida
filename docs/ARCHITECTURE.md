@@ -47,7 +47,7 @@
 | IRQ | `/proc/interrupts` | `/proc/softirqs`；按合计排序 |
 | ATA | `/sys/class/ata_port` | link `sata_spd`；IDENTIFY 型号 |
 | PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `pci.ids` + 内置厂商表 |
-| virtio | `/sys/bus/virtio/devices` | `modalias` `virtio:dXXXXXXXX` → 类型 |
+| virtio | `/sys/bus/virtio/devices` | `modalias` `virtio:dXXXXXXXX` → `virtio_ids.h` 类型 |
 | Block | `/sys/block`（跳过 loop/ram/分区） | `/proc/diskstats` 差分 I/O；`queue/*` 块大小/nr_requests/dax/write_cache |
 | Software | `/etc/os-release`，`/proc/meminfo`，`osrelease` | loadavg / btime / tainted；`XDG_CURRENT_DESKTOP` |
 

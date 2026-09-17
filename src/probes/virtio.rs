@@ -88,6 +88,7 @@ pub fn virtio_kind(modalias: Option<&str>) -> String {
     let id = m.strip_prefix("virtio:d").and_then(|rest| {
         rest.split('v').next().and_then(|hex| u32::from_str_radix(hex, 16).ok())
     });
+    // include/uapi/linux/virtio_ids.h
     match id {
         Some(1) => "net",
         Some(2) => "block",
@@ -96,12 +97,15 @@ pub fn virtio_kind(modalias: Option<&str>) -> String {
         Some(5) => "balloon",
         Some(8) => "scsi",
         Some(9) => "9p",
-        Some(16) => "fs",
-        Some(18) => "gpu",
+        Some(16) => "gpu",
+        Some(17) => "clock",
+        Some(18) => "input",
         Some(19) => "vsock",
-        Some(20) => "iommu",
+        Some(20) => "crypto",
+        Some(23) => "iommu",
         Some(24) => "mem",
-        Some(26) => "input",
+        Some(25) => "sound",
+        Some(26) => "fs",
         Some(n) => return format!("id {n}"),
         None => "unknown",
     }
@@ -122,6 +126,11 @@ mod tests {
         );
         assert_eq!(virtio_kind(Some("virtio:d00000002v00001AF4")), "block");
         assert_eq!(virtio_kind(Some("virtio:d00000001v00001AF4")), "net");
+        assert_eq!(virtio_kind(Some("virtio:d00000010v00001AF4")), "gpu");
+        assert_eq!(virtio_kind(Some("virtio:d00000012v00001AF4")), "input");
+        assert_eq!(virtio_kind(Some("virtio:d00000014v00001AF4")), "crypto");
+        assert_eq!(virtio_kind(Some("virtio:d00000017v00001AF4")), "iommu");
+        assert_eq!(virtio_kind(Some("virtio:d0000001av00001AF4")), "fs");
     }
 
     #[test]
