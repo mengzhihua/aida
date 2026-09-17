@@ -9,7 +9,18 @@ pub struct FirmwareReport {
     pub interface: Sample<String>,
     pub secure_boot: Sample<String>,
     pub fw_platform_size: Sample<String>,
+    pub acpi_tables: Vec<String>,
+    pub tpms: Vec<TpmDevice>,
+    pub rng_current: Sample<String>,
+    pub rng_available: Sample<String>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TpmDevice {
+    pub name: String,
+    pub version_major: Sample<String>,
+    pub pcr_banks: Vec<String>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
@@ -37,10 +48,20 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
     };
     let fw_platform_size = access::read_trimmed(efi_dir.join("fw_platform_size"));
     let secure_boot = read_secure_boot(ctx);
+    let acpi_tables = list_acpi(ctx);
+    let tpms = collect_tpm(ctx);
+    if tpms.is_empty() {
+        notes.push("无 TPM sysfs（虚拟机未转发 TPM 时常见）。".into());
+    }
+    let rng_dir = ctx.sys_path("class/misc/hw_random");
     FirmwareReport {
         interface,
         secure_boot,
         fw_platform_size,
+        acpi_tables,
+        tpms,
+        rng_current: access::read_trimmed(rng_dir.join("rng_current")),
+        rng_available: access::read_trimmed(rng_dir.join("rng_available")),
         notes,
     }
 }
@@ -91,6 +112,39 @@ fn read_secure_boot(ctx: &ProbeCtx) -> Sample<String> {
     Sample::missing(dir.display().to_string())
 }
 
+fn list_acpi(ctx: &ProbeCtx) -> Vec<String> {
+    let root = ctx.sys_path("firmware/acpi/tables");
+    match access::list_dir_names(&root).value {
+        Some(names) => names
+            .into_iter()
+            .filter(|n| n != "data" && n != "dynamic")
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+fn collect_tpm(ctx: &ProbeCtx) -> Vec<TpmDevice> {
+    let root = ctx.sys_path("class/tpm");
+    let names = match access::list_dir_names(&root).value {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names.into_iter().filter(|n| n.starts_with("tpm")) {
+        let dir = root.join(&name);
+        let pcr_banks = match access::list_dir_names(&dir).value {
+            Some(n) => n.into_iter().filter(|x| x.starts_with("pcr-")).collect(),
+            None => Vec::new(),
+        };
+        out.push(TpmDevice {
+            version_major: access::read_trimmed(dir.join("tpm_version_major")),
+            pcr_banks,
+            name,
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +173,17 @@ mod tests {
         let r = collect(&ctx);
         assert_eq!(r.interface.value.as_deref(), Some("EFI"));
         assert_eq!(r.secure_boot.value.as_deref(), Some("enabled"));
+        fs::create_dir_all(root.join("sys/firmware/acpi/tables")).unwrap();
+        fs::write(root.join("sys/firmware/acpi/tables/FACP"), b"").unwrap();
+        fs::write(root.join("sys/firmware/acpi/tables/DSDT"), b"").unwrap();
+        fs::create_dir_all(root.join("sys/class/tpm/tpm0/pcr-sha256")).unwrap();
+        fs::write(root.join("sys/class/tpm/tpm0/tpm_version_major"), "2\n").unwrap();
+        fs::create_dir_all(root.join("sys/class/misc/hw_random")).unwrap();
+        fs::write(root.join("sys/class/misc/hw_random/rng_current"), "virtio_rng.0\n").unwrap();
+        let r2 = collect(&ctx);
+        assert!(r2.acpi_tables.contains(&"FACP".into()));
+        assert_eq!(r2.tpms[0].version_major.value.as_deref(), Some("2"));
+        assert_eq!(r2.rng_current.value.as_deref(), Some("virtio_rng.0"));
         let _ = fs::remove_dir_all(&root);
     }
 }

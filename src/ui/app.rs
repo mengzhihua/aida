@@ -331,6 +331,28 @@ impl AidaApp {
                 self.snap.software.load_15.display()
             ),
         );
+        if let Some(cpu) = &self.snap.psi.cpu {
+            kv(
+                ui,
+                "PSI",
+                &format!(
+                    "cpu {:.2}  mem {}  io {}",
+                    cpu.some.avg10,
+                    self.snap
+                        .psi
+                        .memory
+                        .as_ref()
+                        .map(|m| format!("{:.2}", m.some.avg10))
+                        .unwrap_or_else(|| "—".into()),
+                    self.snap
+                        .psi
+                        .io
+                        .as_ref()
+                        .map(|m| format!("{:.2}", m.some.avg10))
+                        .unwrap_or_else(|| "—".into()),
+                ),
+            );
+        }
         kv(
             ui,
             self.t("系统厂商", "Vendor"),
@@ -815,10 +837,28 @@ impl AidaApp {
                 );
             }
             for conn in &g.connectors {
+                let edid = conn
+                    .edid
+                    .as_ref()
+                    .map(|e| {
+                        format!(
+                            "{} {} {}x{}",
+                            e.manufacturer,
+                            e.name.as_deref().unwrap_or(""),
+                            e.h_active.unwrap_or(0),
+                            e.v_active.unwrap_or(0)
+                        )
+                    })
+                    .unwrap_or_default();
                 kv(
                     ui,
                     &conn.name,
-                    &format!("{} / {}", conn.status.display(), conn.enabled.display()),
+                    &format!(
+                        "{} / {}  {}",
+                        conn.status.display(),
+                        conn.enabled.display(),
+                        edid
+                    ),
                 );
             }
             for (k, v) in &g.extra {
@@ -937,12 +977,21 @@ impl AidaApp {
                 ui.strong("fstype");
                 ui.strong(self.t("源", "source"));
                 ui.strong("kind");
+                ui.strong(self.t("用量", "usage"));
                 ui.end_row();
                 for m in self.snap.fs.mounts.iter().filter(|m| m.kind != "virtual") {
                     ui.label(&m.target);
                     ui.label(&m.fstype);
                     ui.label(&m.source);
                     ui.label(m.kind);
+                    ui.label(match (m.used_bytes, m.total_bytes) {
+                        (Some(u), Some(t)) => format!(
+                            "{} / {}",
+                            crate::export::format_bytes(u),
+                            crate::export::format_bytes(t)
+                        ),
+                        _ => "—".into(),
+                    });
                     ui.end_row();
                 }
             });
@@ -1028,6 +1077,36 @@ impl AidaApp {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+        }
+        ui.separator();
+        ui.strong("ATA / SATA");
+        for n in &self.snap.ata.notes {
+            ui.weak(n);
+        }
+        for p in &self.snap.ata.ports {
+            for l in &p.links {
+                kv(
+                    ui,
+                    &format!("{} {}", p.name, l.name),
+                    &format!(
+                        "spd {}  limit {}",
+                        l.sata_spd.display(),
+                        l.sata_spd_limit.display()
+                    ),
+                );
+                for d in &l.devices {
+                    kv(
+                        ui,
+                        &d.name,
+                        &format!(
+                            "{}  {}  trim {}",
+                            d.model.display(),
+                            d.class.display(),
+                            d.trim.display()
+                        ),
+                    );
+                }
             }
         }
         ui.separator();
@@ -1302,6 +1381,42 @@ impl AidaApp {
         kv(ui, "desktop", &self.snap.software.desktop.display());
         kv(
             ui,
+            "tainted",
+            &match self.snap.software.tainted.value {
+                Some(0) => "0".into(),
+                Some(v) => format!("{}  {}", v, self.snap.software.taint_flags.join(", ")),
+                None => self.snap.software.tainted.access_label(),
+            },
+        );
+        if let Some(cpu) = &self.snap.psi.cpu {
+            kv(
+                ui,
+                "PSI cpu",
+                &format!(
+                    "some {:.2}/{:.2}/{:.2}",
+                    cpu.some.avg10, cpu.some.avg60, cpu.some.avg300
+                ),
+            );
+        }
+        if let Some(mem) = &self.snap.psi.memory {
+            kv(
+                ui,
+                "PSI memory",
+                &format!("some {:.2}  full {:.2}", mem.some.avg10, mem.full.as_ref().map(|f| f.avg10).unwrap_or(0.0)),
+            );
+        }
+        if let Some(io) = &self.snap.psi.io {
+            kv(
+                ui,
+                "PSI io",
+                &format!("some {:.2}  full {:.2}", io.some.avg10, io.full.as_ref().map(|f| f.avg10).unwrap_or(0.0)),
+            );
+        }
+        for n in &self.snap.psi.notes {
+            ui.weak(n);
+        }
+        kv(
+            ui,
             "loadavg",
             &format!(
                 "{}  {}  {}  {}",
@@ -1370,8 +1485,39 @@ impl AidaApp {
                 .unwrap_or_else(|| self.snap.firmware.interface.access_label()),
         );
         kv(ui, "Secure Boot", &self.snap.firmware.secure_boot.display());
+        kv(
+            ui,
+            "ACPI",
+            &if self.snap.firmware.acpi_tables.is_empty() {
+                "—".into()
+            } else {
+                self.snap.firmware.acpi_tables.join(" ")
+            },
+        );
+        kv(ui, "hwrng", &self.snap.firmware.rng_current.display());
+        for t in &self.snap.firmware.tpms {
+            kv(
+                ui,
+                &format!("TPM {}", t.name),
+                &format!(
+                    "v{}  {}",
+                    t.version_major.display(),
+                    t.pcr_banks.join(",")
+                ),
+            );
+        }
         for n in &self.snap.firmware.notes {
             ui.weak(n);
+        }
+        if !self.snap.irq.lines.is_empty() {
+            ui.collapsing(
+                format!("IRQ top ({})", self.snap.irq.lines.len()),
+                |ui| {
+                    for l in self.snap.irq.lines.iter().take(16) {
+                        kv(ui, &l.irq, &format!("{}  {}", l.total, l.extra));
+                    }
+                },
+            );
         }
         ui.collapsing("cmdline", |ui| {
             ui.label(self.snap.software.cmdline.display());

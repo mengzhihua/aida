@@ -109,8 +109,25 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("接口", snap.firmware.interface.display()),
             ("Secure Boot", snap.firmware.secure_boot.display()),
             ("fw_platform_size", snap.firmware.fw_platform_size.display()),
+            (
+                "ACPI",
+                if snap.firmware.acpi_tables.is_empty() {
+                    "—".into()
+                } else {
+                    snap.firmware.acpi_tables.join(" ")
+                },
+            ),
+            ("hwrng", snap.firmware.rng_current.display()),
         ],
     );
+    for t in &snap.firmware.tpms {
+        html.push_str(&format!(
+            "<p>TPM {} version {} banks {}</p>",
+            esc(&t.name),
+            esc(&t.version_major.display()),
+            esc(&t.pcr_banks.join(","))
+        ));
+    }
     for n in &snap.firmware.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
@@ -365,6 +382,29 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ("VBIOS", g.vbios.display()),
             ],
         );
+        for c in &g.connectors {
+            let edid = c
+                .edid
+                .as_ref()
+                .map(|e| {
+                    format!(
+                        "{} {} {}x{} {}cm",
+                        e.manufacturer,
+                        e.name.as_deref().unwrap_or("—"),
+                        e.h_active.unwrap_or(0),
+                        e.v_active.unwrap_or(0),
+                        e.width_cm.unwrap_or(0)
+                    )
+                })
+                .unwrap_or_else(|| "no EDID".into());
+            html.push_str(&format!(
+                "<p>{} {} / {} · {}</p>",
+                esc(&c.name),
+                esc(&c.status.display()),
+                esc(&c.enabled.display()),
+                esc(&edid)
+            ));
+        }
     }
     for n in &snap.gpu.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
@@ -506,6 +546,37 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ));
     }
     html.push_str("</table>");
+    if !snap.ata.ports.is_empty() {
+        html.push_str("<table><tr><th>ATA</th><th>链路</th><th>设备</th></tr>");
+        for p in &snap.ata.ports {
+            for l in &p.links {
+                let devs = l
+                    .devices
+                    .iter()
+                    .map(|d| {
+                        format!(
+                            "{} {} {}",
+                            d.name,
+                            d.class.display(),
+                            d.model.display()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                html.push_str(&format!(
+                    "<tr><td>{}</td><td>{} {}</td><td>{}</td></tr>",
+                    esc(&p.name),
+                    esc(&l.name),
+                    esc(&l.sata_spd.display()),
+                    esc(&devs)
+                ));
+            }
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.ata.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
     for b in &snap.block.devices {
         if b.partitions.is_empty() {
             continue;
@@ -530,14 +601,19 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
 
     section(&mut html, "文件系统");
-    html.push_str("<table><tr><th>挂载点</th><th>fstype</th><th>源</th><th>kind</th></tr>");
+    html.push_str("<table><tr><th>挂载点</th><th>fstype</th><th>源</th><th>kind</th><th>用量</th></tr>");
     for m in snap.fs.mounts.iter().filter(|m| m.kind != "virtual") {
+        let usage = match (m.used_bytes, m.total_bytes) {
+            (Some(u), Some(t)) => format!("{} / {}", format_bytes(u), format_bytes(t)),
+            _ => "—".into(),
+        };
         html.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             esc(&m.target),
             esc(&m.fstype),
             esc(&m.source),
-            m.kind
+            m.kind,
+            esc(&usage)
         ));
     }
     html.push_str("</table>");
@@ -578,8 +654,44 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("clocksource", snap.clock.current.display()),
             ("available_clocksource", snap.clock.available.display()),
             ("模块数", snap.modules.modules.len().to_string()),
+            (
+                "tainted",
+                match snap.software.tainted.value {
+                    Some(0) => "0".into(),
+                    Some(v) => format!("{} ({})", v, snap.software.taint_flags.join(", ")),
+                    None => snap.software.tainted.access_label(),
+                },
+            ),
         ],
     );
+    if let Some(cpu) = &snap.psi.cpu {
+        html.push_str(&format!(
+            "<p>PSI cpu some avg10={:.2} memory={} io={}</p>",
+            cpu.some.avg10,
+            snap.psi
+                .memory
+                .as_ref()
+                .map(|m| format!("{:.2}", m.some.avg10))
+                .unwrap_or_else(|| "n/a".into()),
+            snap.psi
+                .io
+                .as_ref()
+                .map(|m| format!("{:.2}", m.some.avg10))
+                .unwrap_or_else(|| "n/a".into()),
+        ));
+    }
+    if !snap.irq.lines.is_empty() {
+        html.push_str("<table><tr><th>IRQ</th><th>合计</th><th>说明</th></tr>");
+        for l in snap.irq.lines.iter().take(12) {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&l.irq),
+                l.total,
+                esc(&l.extra)
+            ));
+        }
+        html.push_str("</table>");
+    }
     if !snap.iomem.summaries.is_empty() {
         html.push_str("<table><tr><th>iomem</th><th>段数</th><th>大小</th></tr>");
         for s in snap.iomem.summaries.iter().take(16) {

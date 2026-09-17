@@ -23,6 +23,8 @@ pub struct SoftwareInfo {
     pub load_15: Sample<f64>,
     pub procs: Sample<String>,
     pub boot_time_unix: Sample<u64>,
+    pub tainted: Sample<u64>,
+    pub taint_flags: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -56,6 +58,9 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
 
     let load = parse_loadavg(&access::read_trimmed(ctx.proc_path("loadavg")));
     let boot_time_unix = parse_btime(&access::read_trimmed(ctx.proc_path("stat")));
+    let (tainted, taint_flags) = parse_taint(&access::read_trimmed(
+        ctx.proc_path("sys/kernel/tainted"),
+    ));
 
     SoftwareInfo {
         os_name: os.pretty,
@@ -75,6 +80,8 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         load_15: load.l15,
         procs: load.procs,
         boot_time_unix,
+        tainted,
+        taint_flags,
         notes: Vec::new(),
     }
 }
@@ -144,6 +151,52 @@ fn parse_btime(sample: &Sample<String>) -> Sample<u64> {
         }
     }
     Sample::missing(sample.source.clone())
+}
+
+const TAINT_BITS: &[(u32, &str)] = &[
+    (0, "P proprietary module"),
+    (1, "F force load"),
+    (2, "S SMP unsupported"),
+    (3, "R force unload"),
+    (4, "M MCE"),
+    (5, "B bad page"),
+    (6, "U userspace taint"),
+    (7, "D died (oops/bug)"),
+    (8, "A ACPI override"),
+    (9, "W warning"),
+    (10, "C staging driver"),
+    (11, "I firmware workaround"),
+    (12, "O out-of-tree module"),
+    (13, "E unsigned module"),
+    (14, "L soft lockup"),
+    (15, "K livepatch"),
+    (16, "X auxiliary taint"),
+    (17, "T struct randomization"),
+];
+
+pub fn parse_taint(sample: &Sample<String>) -> (Sample<u64>, Vec<String>) {
+    let miss = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let Some(text) = sample.value.as_deref() else {
+        return (miss(), Vec::new());
+    };
+    let Ok(v) = text.trim().parse::<u64>() else {
+        return (Sample::error(sample.source.clone(), "无法解析 tainted"), Vec::new());
+    };
+    let flags = decode_taint(v);
+    (Sample::ok(v, sample.source.clone()), flags)
+}
+
+pub fn decode_taint(v: u64) -> Vec<String> {
+    TAINT_BITS
+        .iter()
+        .filter(|(bit, _)| v & (1u64 << bit) != 0)
+        .map(|(bit, name)| format!("{bit}:{name}"))
+        .collect()
 }
 
 struct OsRelease {
@@ -276,5 +329,16 @@ mod tests {
         assert_eq!(load.procs.value.as_deref(), Some("1/99"));
         let bt = parse_btime(&Sample::ok("cpu 1 2 3\nbtime 1700000000\n".into(), "stat"));
         assert_eq!(bt.value, Some(1700000000));
+    }
+
+    #[test]
+    fn taint_bits() {
+        assert!(decode_taint(0).is_empty());
+        let f = decode_taint(1 << 12);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].contains("out-of-tree"));
+        let (s, flags) = parse_taint(&Sample::ok("4096".into(), "tainted"));
+        assert_eq!(s.value, Some(4096));
+        assert_eq!(flags, f);
     }
 }

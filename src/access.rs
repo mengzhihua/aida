@@ -357,6 +357,18 @@ fn hint_for(source: &str, kind: AccessKind) -> Option<String> {
         AccessKind::PermissionDenied if source.contains("/proc/iomem") => Some(
             "完整物理地址通常仅 root 可见；普通用户看到的范围会被清零。".into(),
         ),
+        AccessKind::NotFound if source.contains("/class/ata_") => Some(
+            "无 ATA sysfs。NVMe/virtio 盘不走 ata_port。".into(),
+        ),
+        AccessKind::NotFound if source.contains("/class/tpm") => {
+            Some("无 TPM 设备。虚拟机未开 TPM 时常见。".into())
+        }
+        AccessKind::NotFound if source.contains("/hw_random") => {
+            Some("无 hwrng。可有 virtio_rng 或板载 TRNG。".into())
+        }
+        AccessKind::NotFound if source.contains("/proc/pressure") => {
+            Some("无 PSI。内核需 CONFIG_PSI。".into())
+        },
         _ => None,
     }
 }

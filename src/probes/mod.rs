@@ -1,5 +1,6 @@
 //! 硬件探测模块。每个子模块只负责一类内核接口，由 `snapshot` 汇总。
 
+pub mod ata;
 pub mod audio;
 pub mod block;
 pub mod clock;
@@ -12,6 +13,7 @@ pub mod gpu;
 pub mod hwmon;
 pub mod input;
 pub mod iomem;
+pub mod irq;
 pub mod memory;
 pub mod modules;
 pub mod net;
@@ -19,5 +21,6 @@ pub mod numa;
 pub mod nvme;
 pub mod pci;
 pub mod power;
+pub mod psi;
 pub mod software;
 pub mod usb;

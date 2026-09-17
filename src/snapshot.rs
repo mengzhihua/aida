@@ -7,8 +7,8 @@ use crate::alerts::{self, Alert};
 use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
 use crate::probes::{
-    audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, memory, modules,
-    net, numa, nvme, pci, power, software, usb,
+    ata, audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, irq, memory,
+    modules, net, numa, nvme, pci, power, psi, software, usb,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -38,6 +38,9 @@ pub struct HardwareSnapshot {
     pub clock: clock::ClockReport,
     pub edac: edac::EdacReport,
     pub iomem: iomem::IomemReport,
+    pub psi: psi::PsiReport,
+    pub irq: irq::IrqReport,
+    pub ata: ata::AtaReport,
     pub software: software::SoftwareInfo,
 }
 
@@ -99,6 +102,9 @@ impl HardwareSnapshot {
             clock: clock::collect(ctx),
             edac: edac::collect(ctx),
             iomem: iomem::collect(ctx),
+            psi: psi::collect(ctx),
+            irq: irq::collect(ctx),
+            ata: ata::collect(ctx),
             software: software::collect(ctx),
         }
     }
@@ -129,6 +135,9 @@ impl HardwareSnapshot {
         self.software = software::collect(ctx);
         self.clock = clock::collect(ctx);
         self.edac = edac::collect(ctx);
+        self.fs = fs::collect(ctx);
+        self.psi = psi::collect(ctx);
+        self.irq = irq::collect(ctx);
         self.collected_at_unix_ms = unix_ms();
     }
 }

@@ -31,6 +31,25 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"clock\""));
     assert!(json.contains("\"edac\""));
     assert!(json.contains("\"iomem\""));
+    assert!(json.contains("\"psi\""));
+    assert!(json.contains("\"irq\""));
+    assert!(json.contains("\"ata\""));
+    assert!(
+        snap.psi.cpu.is_some() || !snap.psi.notes.is_empty(),
+        "PSI 应可读或给出说明"
+    );
+    assert!(
+        !snap.irq.lines.is_empty(),
+        "/proc/interrupts 应至少有一行"
+    );
+    assert!(
+        snap.software.tainted.value.is_some(),
+        "kernel tainted 应可读"
+    );
+    assert!(
+        snap.fs.mounts.iter().any(|m| m.total_bytes.is_some()),
+        "至少有一个挂载点能 statvfs"
+    );
     assert!(
         snap.software.load_1.value.is_some(),
         "loadavg 应可读"
@@ -73,6 +92,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("文件系统"));
     assert!(html.contains("loadavg"));
     assert!(html.contains("clocksource"));
+    assert!(html.contains("PSI") || html.contains("tainted"));
     assert!(!html.contains("<script"));
 }
 
