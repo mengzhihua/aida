@@ -18,13 +18,13 @@
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + power + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量，避免每帧扫 PCI/USB/DMI/virtio/IOMMU/MD/SCSI/模块/iomem/ATA。
+4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + zram/zswap + power + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量，避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA。
 
 ## 各 probe 内核接口
 
 | Probe | 主路径 | 补充 |
 | --- | --- | --- |
-| CPU | `/proc/cpuinfo`，`/sys/devices/system/cpu/cpuN/` | topology siblings；cpuidle；`/proc/stat` 整机+每核；cache；vulnerabilities |
+| CPU | `/proc/cpuinfo`，`/sys/devices/system/cpu/cpuN/` | topology；cpuidle；`/proc/stat`；cache；vulnerabilities；`smt/`；`isolated` |
 | DMI | `/sys/class/dmi/id/*` | `/sys/firmware/dmi/tables/DMI` SMBIOS 结构 |
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02 |
@@ -34,6 +34,7 @@
 | Input | `/proc/bus/input/devices` | handlers → keyboard/mouse/js |
 | NUMA | `/sys/devices/system/node/nodeN` | meminfo / cpulist / distance |
 | Memory | `/proc/meminfo` | hugepages + THP；buddyinfo；vmstat；KSM；`memoryN` 热插拔块 |
+| zmem | `/sys/block/zramN` + `module/zswap/parameters` | mm_stat；不调用 zramctl |
 | EDAC | `/sys/devices/system/edac/mc/mcN` | ce_count / ue_count |
 | Power | `/sys/class/power_supply` | 电池容量/能量、AC online |
 | RAPL | `/sys/class/powercap/*/energy_uj` | 差分瓦特；回绕用 `max_energy_range_uj` |
@@ -46,13 +47,16 @@
 | PSI | `/proc/pressure/{cpu,memory,io}` | some/full avg10/60/300 |
 | IRQ | `/proc/interrupts` | `/proc/softirqs`；按合计排序 |
 | ATA | `/sys/class/ata_port` | link `sata_spd`；IDENTIFY 型号 |
-| PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `current_link_*`；MSI IRQ 数；`pci.ids` |
+| PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `current_link_*`；MSI；`sriov_*vfs`；`pci.ids` |
 | virtio | `/sys/bus/virtio/devices` | `modalias` → `virtio_ids.h` |
+| KVM | `/dev/kvm` | `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | IOMMU | `/sys/kernel/iommu_groups` | 组内 PCI 槽位名 |
-| Block | `/sys/block`（跳过 loop/ram/分区） | diskstats 差分；`queue/*` |
+| Block | `/sys/block`（跳过 loop/ram/zram/分区） | diskstats 差分；`queue/*` |
 | MD | `/proc/mdstat` | `/sys/block/mdN/md/{degraded,sync_action}` |
 | SCSI | `/sys/class/scsi_host` | proc_name / can_queue / state |
+| iSCSI | `/sys/class/iscsi_{transport,host,session}` | 不调用 iscsiadm |
 | Platform | watchdog / backlight / leds / i2c | 不调用 i2cdetect |
+| Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI | 不调用 rfkill/bluetoothctl |
 | Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy |
 
 ## 界面

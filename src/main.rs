@@ -70,7 +70,8 @@ AIDA Linux — 硬件检测与监控（sysfs/procfs，不调用 dmidecode/lspci�
   /sys/class/net、USB sysfs、/proc/bus/input/devices、NUMA node、meminfo、
   CPU vulnerabilities、/proc/diskstats、mountinfo、/proc/modules、clocksource、
   loadavg、PSI、/proc/interrupts、virtio、buddyinfo/vmstat/KSM、PTP、block queue、
-  net queues/sockstat、scsi_host、mdstat、watchdog/backlight/leds/i2c、LSM。
+  net queues/sockstat、scsi_host、mdstat、watchdog/backlight/leds/i2c、LSM、
+  zram/zswap、/dev/kvm、SMT、iSCSI transport、rfkill/蓝牙/V4L/MMC。
   RAPL 在无 powercap 时为空。PCIe current_link_* 在非 PCIe/虚拟桥上常不存在。
   EDAC 在未开 CONFIG_EDAC 时不存在；/proc/iomem 地址常需 root。
   ATA/SATA 仅在有 ata_port 时出现。TPM/hwrng/ACPI 表名通常可读。

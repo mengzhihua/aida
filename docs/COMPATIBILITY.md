@@ -68,6 +68,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 46. **空的 `/sys/kernel/iommu_groups` 表示未启用 IOMMU。** 不要当权限错误。
 47. **不要调用 `mdadm`/`lsscsi`/`i2cdetect`。** mdstat、scsi_host、i2c sysfs 足够列清单。
 48. **`/sys/kernel/security/lsm` 是逗号列表。** SELinux `enforce` 只在 selinuxfs 挂上时存在。
+49. **zram 不进常规块设备表。** 压缩统计走 `/sys/block/zramN/mm_stat`，不要调用 `zramctl`。
+50. **zswap `enabled=N` 表示未启用。** 模块在、开关关都正常；无 `module/zswap` 才是未编译。
+51. **`/dev/kvm` 常为 `root:kvm`。** 存在即可说明宿主机支持；ioctl 建 VM 仍可能要组权限。
+52. **SMT `control=notsupported` 在虚拟机上常见。** 不是采集失败。
+53. **不要调用 `iscsiadm`/`rfkill`/`bluetoothctl`/`v4l2-ctl`。** class 目录为空就写 note。
+54. **`sriov_totalvfs` 只在 PF 上存在。** virtio/普通端点没有该节点。
+55. **平台/总线 class 的 `PermissionDenied` 不是「无设备」。** 用 `access_label`，不要写成空列表。
 
 ## 测试方案
 

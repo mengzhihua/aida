@@ -444,6 +444,16 @@ impl AidaApp {
         }
         kv(
             ui,
+            "KVM",
+            &format!(
+                "{}  {}  nested {}",
+                self.snap.kvm.device.display(),
+                self.snap.kvm.vendor.display(),
+                self.snap.kvm.nested.display()
+            ),
+        );
+        kv(
+            ui,
             self.t("GPU", "GPU"),
             &if self.snap.gpu.devices.is_empty() {
                 self.snap
@@ -526,6 +536,30 @@ impl AidaApp {
                 "no"
             },
         );
+        kv(
+            ui,
+            "SMT",
+            &format!(
+                "active {}  control {}",
+                self.snap.cpu.smt_active.display(),
+                self.snap.cpu.smt_control.display()
+            ),
+        );
+        kv(ui, "online", &self.snap.cpu.online.display());
+        if self.snap.cpu.isolated.access == AccessKind::Ok {
+            kv(
+                ui,
+                "isolated",
+                &self
+                    .snap
+                    .cpu
+                    .isolated
+                    .value
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("—"),
+            );
+        }
         kv(ui, "microcode", &self.snap.cpu.microcode.display());
         if !self.cpu_hist.is_empty() {
             Plot::new("cpu_util_plot")
@@ -539,6 +573,22 @@ impl AidaApp {
         for n in &self.snap.cpu.notes {
             ui.colored_label(Color32::YELLOW, n);
         }
+        ui.separator();
+        ui.strong("KVM");
+        for n in &self.snap.kvm.notes {
+            ui.weak(n);
+        }
+        kv(ui, "/dev/kvm", &self.snap.kvm.device.display());
+        kv(ui, "module", &self.snap.kvm.module.display());
+        kv(ui, "vendor", &self.snap.kvm.vendor.display());
+        kv(ui, "nested", &self.snap.kvm.nested.display());
+        if self.snap.kvm.ept.access == AccessKind::Ok {
+            kv(ui, "EPT", &self.snap.kvm.ept.display());
+        }
+        if self.snap.kvm.npt.access == AccessKind::Ok {
+            kv(ui, "NPT", &self.snap.kvm.npt.display());
+        }
+        kv(ui, "nx_huge_pages", &self.snap.kvm.nx_huge_pages.display());
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("cpu_grid").striped(true).show(ui, |ui| {
@@ -659,6 +709,17 @@ impl AidaApp {
         kv(ui, "THP", &m.thp_enabled.display());
         kv(
             ui,
+            "zswap",
+            &format!(
+                "enabled {}  {} / {}  pool {}%",
+                self.snap.zmem.zswap.enabled.display(),
+                self.snap.zmem.zswap.compressor.display(),
+                self.snap.zmem.zswap.zpool.display(),
+                self.snap.zmem.zswap.max_pool_percent.display()
+            ),
+        );
+        kv(
+            ui,
             "KSM",
             &format!(
                 "run {}  shared {}  sharing {}  scans {}",
@@ -723,6 +784,39 @@ impl AidaApp {
                         p.nr.display(),
                         p.free.display(),
                         p.surplus.display()
+                    ),
+                );
+            }
+        }
+        for n in &self.snap.zmem.notes {
+            ui.weak(n);
+        }
+        if !self.snap.zmem.zram.is_empty() {
+            ui.separator();
+            ui.strong("zram");
+            for z in &self.snap.zmem.zram {
+                kv(
+                    ui,
+                    &z.name,
+                    &format!(
+                        "disk {}  {}  orig {}  compr {}  mem {}",
+                        z.disksize
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| z.disksize.access_label()),
+                        z.algorithm.display(),
+                        z.orig_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| z.orig_bytes.access_label()),
+                        z.compr_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| z.compr_bytes.access_label()),
+                        z.mem_used
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| z.mem_used.access_label())
                     ),
                 );
             }
@@ -1287,6 +1381,37 @@ impl AidaApp {
             );
         }
         ui.separator();
+        ui.strong("iSCSI");
+        for n in &self.snap.iscsi.notes {
+            ui.weak(n);
+        }
+        for t in &self.snap.iscsi.transports {
+            kv(
+                ui,
+                &format!("transport {}", t.name),
+                &format!("handle {}  caps {}", t.handle.display(), t.caps.display()),
+            );
+        }
+        for h in &self.snap.iscsi.hosts {
+            kv(
+                ui,
+                &h.name,
+                &format!(
+                    "{}  {}  {}",
+                    h.netdev.display(),
+                    h.ipaddress.display(),
+                    h.port_state.display()
+                ),
+            );
+        }
+        for s in &self.snap.iscsi.sessions {
+            kv(
+                ui,
+                &s.name,
+                &format!("{}  {}", s.state.display(), s.targetname.display()),
+            );
+        }
+        ui.separator();
         ui.strong("NVMe");
         if self.snap.nvme.controllers.is_empty() {
             for n in &self.snap.nvme.notes {
@@ -1559,6 +1684,28 @@ impl AidaApp {
                 }
             });
         });
+        let sriov: Vec<_> = self
+            .snap
+            .pci
+            .devices
+            .iter()
+            .filter(|d| d.sriov_totalvfs.access == AccessKind::Ok)
+            .collect();
+        if !sriov.is_empty() {
+            ui.separator();
+            ui.strong("SR-IOV");
+            for d in sriov {
+                kv(
+                    ui,
+                    &d.slot,
+                    &format!(
+                        "num {} / total {}",
+                        d.sriov_numvfs.display(),
+                        d.sriov_totalvfs.display()
+                    ),
+                );
+            }
+        }
         ui.separator();
         ui.strong("virtio");
         for n in &self.snap.virtio.notes {
@@ -1648,6 +1795,69 @@ impl AidaApp {
                 ui,
                 &a.name,
                 &format!("{}  clients {}", a.adapter_name.display(), a.clients),
+            );
+        }
+        ui.separator();
+        ui.strong(self.t("无线 / 外设总线", "Radios / extra buses"));
+        for n in &self.snap.buses.notes {
+            ui.weak(n);
+        }
+        for r in &self.snap.buses.rfkill {
+            kv(
+                ui,
+                &format!("rfkill {}", r.name),
+                &format!(
+                    "{}  state {}  hard {} soft {}",
+                    r.kind.display(),
+                    r.state.display(),
+                    r.hard.display(),
+                    r.soft.display()
+                ),
+            );
+        }
+        for b in &self.snap.buses.bluetooth {
+            kv(
+                ui,
+                &format!("BT {}", b.name),
+                &format!("{}  {}", b.dev_name.display(), b.address.display()),
+            );
+        }
+        for t in &self.snap.buses.thunderbolt {
+            kv(
+                ui,
+                &format!("TB {}", t.name),
+                &format!(
+                    "{} {}  auth {}",
+                    t.vendor.display(),
+                    t.device.display(),
+                    t.authorized.display()
+                ),
+            );
+        }
+        for v in &self.snap.buses.video {
+            kv(
+                ui,
+                &v.name,
+                &format!("{}  index {}", v.dev_name.display(), v.index.display()),
+            );
+        }
+        for m in &self.snap.buses.mmc {
+            kv(
+                ui,
+                &m.name,
+                &format!(
+                    "{}  {}  {}",
+                    m.card.as_deref().unwrap_or("—"),
+                    m.name_tag.display(),
+                    m.r#type.display()
+                ),
+            );
+        }
+        for mei in &self.snap.buses.mei {
+            kv(
+                ui,
+                &format!("MEI {}", mei.name),
+                &mei.fw_status.display(),
             );
         }
     }

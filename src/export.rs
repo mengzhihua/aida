@@ -45,6 +45,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     .unwrap_or_else(|| "n/a".into()),
             ),
             ("虚拟化", snap.cpu.hypervisor.to_string()),
+            (
+                "SMT",
+                format!(
+                    "active {} control {}",
+                    snap.cpu.smt_active.display(),
+                    snap.cpu.smt_control.display()
+                ),
+            ),
+            ("KVM", snap.kvm.device.display()),
+            ("nested", snap.kvm.nested.display()),
             ("microcode", snap.cpu.microcode.display()),
         ],
     );
@@ -157,6 +167,15 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
             ("THP", snap.memory.thp_enabled.display()),
             (
+                "zswap",
+                format!(
+                    "enabled {} {} {}",
+                    snap.zmem.zswap.enabled.display(),
+                    snap.zmem.zswap.compressor.display(),
+                    snap.zmem.zswap.zpool.display()
+                ),
+            ),
+            (
                 "KSM",
                 format!(
                     "run {} shared {} sharing {}",
@@ -176,6 +195,35 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
         ],
     );
+    if !snap.zmem.zram.is_empty() {
+        html.push_str("<table><tr><th>zram</th><th>disksize</th><th>algo</th><th>orig</th><th>compr</th></tr>");
+        for z in &snap.zmem.zram {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&z.name),
+                esc(&z
+                    .disksize
+                    .value
+                    .map(format_bytes)
+                    .unwrap_or_else(|| z.disksize.access_label())),
+                esc(&z.algorithm.display()),
+                esc(&z
+                    .orig_bytes
+                    .value
+                    .map(format_bytes)
+                    .unwrap_or_else(|| z.orig_bytes.access_label())),
+                esc(&z
+                    .compr_bytes
+                    .value
+                    .map(format_bytes)
+                    .unwrap_or_else(|| z.compr_bytes.access_label()))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.zmem.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
     if snap.memory.mem_blocks.total > 0 {
         html.push_str(&format!(
             "<p class=\"muted\">memory blocks {}/{} online, size {}</p>",
@@ -403,6 +451,47 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.platform.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
+    for r in &snap.buses.rfkill {
+        html.push_str(&format!(
+            "<p>rfkill {} {} state {}</p>",
+            esc(&r.name),
+            esc(&r.kind.display()),
+            esc(&r.state.display())
+        ));
+    }
+    for b in &snap.buses.bluetooth {
+        html.push_str(&format!(
+            "<p>BT {} {} {}</p>",
+            esc(&b.name),
+            esc(&b.dev_name.display()),
+            esc(&b.address.display())
+        ));
+    }
+    for v in &snap.buses.video {
+        html.push_str(&format!(
+            "<p>V4L {} {}</p>",
+            esc(&v.name),
+            esc(&v.dev_name.display())
+        ));
+    }
+    for m in &snap.buses.mmc {
+        html.push_str(&format!(
+            "<p>MMC {} {} {}</p>",
+            esc(&m.name),
+            esc(&m.name_tag.display()),
+            esc(&m.r#type.display())
+        ));
+    }
+    for mei in &snap.buses.mei {
+        html.push_str(&format!(
+            "<p>MEI {} {}</p>",
+            esc(&mei.name),
+            esc(&mei.fw_status.display())
+        ));
+    }
+    for n in &snap.buses.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
 
     section(&mut html, "NVMe");
     if snap.nvme.controllers.is_empty() {
@@ -455,6 +544,24 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ));
     }
     html.push_str("</table>");
+    let sriov: Vec<_> = snap
+        .pci
+        .devices
+        .iter()
+        .filter(|d| d.sriov_totalvfs.access == AccessKind::Ok)
+        .collect();
+    if !sriov.is_empty() {
+        html.push_str("<p>SR-IOV ");
+        for d in sriov {
+            html.push_str(&format!(
+                "{} {}/{} ",
+                esc(&d.slot),
+                esc(&d.sriov_numvfs.display()),
+                esc(&d.sriov_totalvfs.display())
+            ));
+        }
+        html.push_str("</p>");
+    }
 
     section(&mut html, "virtio");
     if snap.virtio.devices.is_empty() {
@@ -473,6 +580,23 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str("</table>");
     }
     for n in &snap.virtio.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "KVM");
+    kv(
+        &mut html,
+        &[
+            ("/dev/kvm", snap.kvm.device.display()),
+            ("module", snap.kvm.module.display()),
+            ("vendor", snap.kvm.vendor.display()),
+            ("nested", snap.kvm.nested.display()),
+            ("EPT", snap.kvm.ept.display()),
+            ("NPT", snap.kvm.npt.display()),
+            ("nx_huge_pages", snap.kvm.nx_huge_pages.display()),
+        ],
+    );
+    for n in &snap.kvm.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
 
@@ -793,6 +917,28 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str("</table>");
     }
     for n in &snap.scsi.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+    if !snap.iscsi.transports.is_empty() || !snap.iscsi.sessions.is_empty() {
+        html.push_str("<table><tr><th>iSCSI</th><th>详情</th></tr>");
+        for t in &snap.iscsi.transports {
+            html.push_str(&format!(
+                "<tr><td>transport {}</td><td>handle {}</td></tr>",
+                esc(&t.name),
+                esc(&t.handle.display())
+            ));
+        }
+        for s in &snap.iscsi.sessions {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{} {}</td></tr>",
+                esc(&s.name),
+                esc(&s.state.display()),
+                esc(&s.targetname.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.iscsi.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
     for b in &snap.block.devices {
