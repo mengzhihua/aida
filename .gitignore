@@ -3,6 +3,11 @@
 /report.json
 /report.html
 /aida-report.*
+aida-disk-bench-*.bin
+*.AppImage
+/AppDir
+/packaging/appdir
+/dist
 .idea/
 .vscode/
 *.swp

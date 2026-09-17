@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=AIDA Linux
+GenericName=Hardware Monitor
+GenericName[zh_CN]=硬件检测
+Comment=Linux hardware information, sensors and microbenchmarks
+Comment[zh_CN]=硬件信息、传感器监控与微基准（sysfs/procfs）
+Exec=aida gui
+Icon=aida
+Terminal=false
+Categories=System;Monitor;
+StartupNotify=true
+Keywords=hardware;sensor;cpu;gpu;benchmark;

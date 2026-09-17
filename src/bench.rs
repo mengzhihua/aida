@@ -5,8 +5,11 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::hint::black_box;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
+use std::ptr;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -20,6 +23,8 @@ pub struct BenchRequest {
     pub mem_bytes: usize,
     pub disk_bytes: usize,
     pub disk_path: Option<PathBuf>,
+    /// 尝试 O_DIRECT；失败则记录原因并保留 buffered 结果。
+    pub o_direct: bool,
 }
 
 impl Default for BenchRequest {
@@ -32,6 +37,7 @@ impl Default for BenchRequest {
             mem_bytes: 64 * 1024 * 1024,
             disk_bytes: 64 * 1024 * 1024,
             disk_path: None,
+            o_direct: true,
         }
     }
 }
@@ -77,6 +83,14 @@ pub struct MemBench {
 pub struct DiskBench {
     pub path: String,
     pub bytes: usize,
+    pub align: usize,
+    pub buffered: Option<DiskIoSample>,
+    pub direct: Option<DiskIoSample>,
+    pub direct_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DiskIoSample {
     pub write_mbs: f64,
     pub read_mbs: f64,
     pub fsync_ms: u128,
@@ -85,12 +99,14 @@ pub struct DiskBench {
 pub fn run(req: &BenchRequest) -> BenchReport {
     let mut notes = Vec::new();
     notes.push(
-        "微基准受 Turbo、调度器、后台负载和文件系统缓存影响；磁盘顺序读写在 page cache 下会偏高，只能作相对参考。"
+        "微基准受 Turbo、调度器、后台负载影响。磁盘默认先跑 buffered，再尝试 O_DIRECT；tmpfs/部分 overlay 会拒绝 O_DIRECT 并回退。"
             .into(),
     );
     let cpu = req.cpu.then(|| cpu_bench(req.duration));
     let memory = req.memory.then(|| mem_bench(req.mem_bytes));
-    let disk = req.disk.then(|| disk_bench(req.disk_bytes, req.disk_path.clone(), &mut notes));
+    let disk = req
+        .disk
+        .then(|| disk_bench(req.disk_bytes, req.disk_path.clone(), req.o_direct, &mut notes));
     BenchReport {
         cpu,
         memory,
@@ -191,59 +207,191 @@ fn timed_gbs(moved: usize, mut f: impl FnMut()) -> f64 {
     (moved as f64) / s / 1e9
 }
 
-fn disk_bench(bytes: usize, path: Option<PathBuf>, notes: &mut Vec<String>) -> DiskBench {
+fn disk_bench(
+    bytes: usize,
+    path: Option<PathBuf>,
+    want_direct: bool,
+    notes: &mut Vec<String>,
+) -> DiskBench {
     let path = path.unwrap_or_else(|| {
-        std::env::temp_dir().join(format!("aida-disk-bench-{}.bin", std::process::id()))
+        // 优先工作目录：本环境 overlay 上 O_DIRECT 可用；纯 tmpfs 的 /tmp 常 EINVAL。
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
+        cwd.join(format!("aida-disk-bench-{}.bin", std::process::id()))
     });
+    let align = 4096usize;
+    let bytes = bytes.max(align) / align * align;
     let _ = fs::remove_file(&path);
-    let chunk = vec![0xA5u8; 1024 * 1024];
-    let mut written = 0usize;
 
-    let t_write = Instant::now();
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .expect("无法创建磁盘测试文件");
-        while written < bytes {
-            let n = (bytes - written).min(chunk.len());
-            f.write_all(&chunk[..n]).ok();
-            written += n;
+    let buffered = match run_buffered(&path, bytes) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            notes.push(format!("buffered 磁盘测试失败: {e}"));
+            None
         }
-        let t_sync = Instant::now();
-        let _ = f.sync_all();
-        let fsync_ms = t_sync.elapsed().as_millis();
-        let write_s = t_write.elapsed().as_secs_f64().max(1e-9);
-        drop(f);
+    };
 
-        let t_read = Instant::now();
-        let mut f = File::open(&path).expect("无法读回磁盘测试文件");
-        let mut buf = vec![0u8; chunk.len()];
-        let mut read_n = 0usize;
-        loop {
-            match f.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => read_n += n,
-                Err(_) => break,
+    let mut direct = None;
+    let mut direct_error = None;
+    if want_direct {
+        match run_direct(&path, bytes, align) {
+            Ok(s) => {
+                notes.push(format!(
+                    "O_DIRECT 成功（align {align}）。读路径绕过 page cache，比 buffered 更接近介质。"
+                ));
+                direct = Some(s);
+            }
+            Err(e) => {
+                direct_error = Some(e.clone());
+                notes.push(format!(
+                    "O_DIRECT 不可用（{e}）。tmpfs、部分 FUSE/overlay、以及未对齐缓冲会失败；已保留 buffered 结果。"
+                ));
             }
         }
-        let read_s = t_read.elapsed().as_secs_f64().max(1e-9);
-        let _ = fs::remove_file(&path);
-        notes.push(format!(
-            "磁盘测试文件 {}，写 {} 读 {} 字节。未使用 O_DIRECT，读可能命中 page cache。",
-            path.display(),
-            written,
-            read_n
-        ));
-        return DiskBench {
-            path: path.display().to_string(),
-            bytes: written,
-            write_mbs: (written as f64) / write_s / 1e6,
-            read_mbs: (read_n as f64) / read_s / 1e6,
-            fsync_ms,
-        };
+    }
+    let _ = fs::remove_file(&path);
+    DiskBench {
+        path: path.display().to_string(),
+        bytes,
+        align,
+        buffered,
+        direct,
+        direct_error,
+    }
+}
+
+fn run_buffered(path: &std::path::Path, bytes: usize) -> Result<DiskIoSample, String> {
+    let chunk = vec![0xA5u8; 1024 * 1024];
+    let mut written = 0usize;
+    let t_write = Instant::now();
+    let mut f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    while written < bytes {
+        let n = (bytes - written).min(chunk.len());
+        f.write_all(&chunk[..n]).map_err(|e| e.to_string())?;
+        written += n;
+    }
+    let t_sync = Instant::now();
+    f.sync_all().map_err(|e| e.to_string())?;
+    let fsync_ms = t_sync.elapsed().as_millis();
+    let write_s = t_write.elapsed().as_secs_f64().max(1e-9);
+    drop(f);
+
+    let t_read = Instant::now();
+    let mut f = File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; chunk.len()];
+    let mut read_n = 0usize;
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => read_n += n,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let read_s = t_read.elapsed().as_secs_f64().max(1e-9);
+    Ok(DiskIoSample {
+        write_mbs: written as f64 / write_s / 1e6,
+        read_mbs: read_n as f64 / read_s / 1e6,
+        fsync_ms,
+    })
+}
+
+fn run_direct(path: &std::path::Path, bytes: usize, align: usize) -> Result<DiskIoSample, String> {
+    let chunk = 1024 * 1024;
+    let mut buf = AlignedBuf::new(chunk, align)?;
+    buf.fill(0x5A);
+    let _ = fs::remove_file(path);
+    let mut f = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .custom_flags(libc::O_DIRECT)
+        .open(path)
+        .map_err(|e| format!("open O_DIRECT: {e}"))?;
+
+    let t_write = Instant::now();
+    let mut written = 0usize;
+    while written < bytes {
+        let want = (bytes - written).min(chunk);
+        let n = unsafe { libc::write(f.as_raw_fd(), buf.as_ptr() as *const _, want) };
+        if n < 0 {
+            return Err(format!("write: {}", std::io::Error::last_os_error()));
+        }
+        if n as usize != want {
+            return Err(format!("short write {n} (want {want})"));
+        }
+        written += n as usize;
+    }
+    let t_sync = Instant::now();
+    f.sync_all().map_err(|e| e.to_string())?;
+    let fsync_ms = t_sync.elapsed().as_millis();
+    let write_s = t_write.elapsed().as_secs_f64().max(1e-9);
+
+    f.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let t_read = Instant::now();
+    let mut read_n = 0usize;
+    while read_n < written {
+        let want = (written - read_n).min(chunk);
+        let n = unsafe { libc::read(f.as_raw_fd(), buf.as_mut_ptr() as *mut _, want) };
+        if n < 0 {
+            return Err(format!("read: {}", std::io::Error::last_os_error()));
+        }
+        if n == 0 {
+            break;
+        }
+        read_n += n as usize;
+        black_box(buf.as_slice());
+    }
+    let read_s = t_read.elapsed().as_secs_f64().max(1e-9);
+    Ok(DiskIoSample {
+        write_mbs: written as f64 / write_s / 1e6,
+        read_mbs: read_n as f64 / read_s / 1e6,
+        fsync_ms,
+    })
+}
+
+struct AlignedBuf {
+    ptr: *mut u8,
+    size: usize,
+}
+
+impl AlignedBuf {
+    fn new(size: usize, align: usize) -> Result<Self, String> {
+        let mut ptr: *mut libc::c_void = ptr::null_mut();
+        let rc = unsafe { libc::posix_memalign(&mut ptr, align, size) };
+        if rc != 0 || ptr.is_null() {
+            return Err(format!("posix_memalign({align}, {size}) = {rc}"));
+        }
+        Ok(Self {
+            ptr: ptr as *mut u8,
+            size,
+        })
+    }
+
+    fn fill(&mut self, b: u8) {
+        unsafe { ptr::write_bytes(self.ptr, b, self.size) }
+    }
+
+    fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.size) }
+    }
+}
+
+impl Drop for AlignedBuf {
+    fn drop(&mut self) {
+        unsafe { libc::free(self.ptr as *mut libc::c_void) }
     }
 }
 
@@ -255,9 +403,19 @@ mod tests {
     fn quick_bench_runs() {
         let mut req = BenchRequest::quick();
         req.disk = true;
+        req.o_direct = true;
         let r = run(&req);
         assert!(r.cpu.unwrap().score > 0.0);
         assert!(r.memory.unwrap().copy_gbs > 0.0);
-        assert!(r.disk.unwrap().write_mbs > 0.0);
+        let disk = r.disk.unwrap();
+        assert!(disk.buffered.as_ref().unwrap().write_mbs > 0.0);
+        // overlay 上应能直写；若环境拒绝，必须留下原因而不是 panic。
+        assert!(disk.direct.is_some() || disk.direct_error.is_some());
+    }
+
+    #[test]
+    fn aligned_buf_alignment() {
+        let b = AlignedBuf::new(4096, 4096).unwrap();
+        assert_eq!(b.ptr as usize % 4096, 0);
     }
 }

@@ -277,6 +277,22 @@ pub fn parse_u64_str(s: &str) -> Option<u64> {
     }
 }
 
+pub fn read_u64(path: impl AsRef<Path>) -> Sample<u64> {
+    let s = read_trimmed(path);
+    match (s.access, s.value) {
+        (AccessKind::Ok, Some(text)) => match parse_u64_str(&text) {
+            Some(v) => Sample::ok(v, s.source),
+            None => Sample::error(s.source, "无法解析为整数"),
+        },
+        _ => Sample {
+            value: None,
+            access: s.access,
+            source: s.source,
+            hint: s.hint,
+        },
+    }
+}
+
 fn map_io_err<T: Serialize>(source: String, e: std::io::Error) -> Sample<T> {
     match e.kind() {
         ErrorKind::PermissionDenied => Sample::denied(source),
@@ -307,6 +323,13 @@ fn hint_for(source: &str, kind: AccessKind) -> Option<String> {
         ),
         AccessKind::NotFound if source.contains("/sys/class/nvme") => {
             Some("未发现 NVMe 控制器。SATA/Virtio 盘走 /sys/block，不走 nvme 类。".into())
+        }
+        AccessKind::NotFound if source.contains("/sys/class/drm") => Some(
+            "无 DRM 卡：容器/云主机常见。桌面请加载 amdgpu/i915/xe/nouveau；NVIDIA 专有驱动走 /proc/driver/nvidia。"
+                .into(),
+        ),
+        AccessKind::PermissionDenied if source.contains("/proc/driver/nvidia") => {
+            Some("NVIDIA procfs 部分节点需要 root。不要用 nvidia-smi 兜底，避免引入外部命令。".into())
         }
         _ => None,
     }

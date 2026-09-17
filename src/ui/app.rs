@@ -20,6 +20,7 @@ enum Nav {
     Summary,
     Cpu,
     Dmi,
+    Gpu,
     Sensors,
     Storage,
     Pci,
@@ -54,6 +55,7 @@ struct AidaApp {
     t0: Instant,
     bench: Option<BenchReport>,
     export_msg: Option<String>,
+    elevate_msg: Option<String>,
 }
 
 impl AidaApp {
@@ -76,6 +78,7 @@ impl AidaApp {
             t0: Instant::now(),
             bench: None,
             export_msg: None,
+            elevate_msg: None,
         }
     }
 
@@ -114,7 +117,21 @@ impl eframe::App for AidaApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(self.t("权限", "Privilege")).strong());
                 ui.colored_label(color, &self.snap.privilege.summary);
+                if !self.snap.privilege.is_root {
+                    if ui
+                        .button(self.t("以管理员身份重启", "Restart as admin"))
+                        .clicked()
+                    {
+                        if let Err(e) = crate::elevate::reexec(&["gui".into()]) {
+                            self.elevate_msg = Some(e);
+                        }
+                    }
+                }
             });
+            if let Some(m) = &self.elevate_msg {
+                ui.colored_label(Color32::from_rgb(255, 100, 100), m);
+            }
+            ui.weak(crate::elevate::plan().summary);
         });
 
         egui::SidePanel::left("tree")
@@ -128,6 +145,7 @@ impl eframe::App for AidaApp {
                 nav_btn(ui, &mut self.nav, Nav::Summary, tr(cjk, "计算机摘要", "Summary"));
                 nav_btn(ui, &mut self.nav, Nav::Cpu, tr(cjk, "处理器", "CPU"));
                 nav_btn(ui, &mut self.nav, Nav::Dmi, tr(cjk, "主板 / DMI", "Motherboard / DMI"));
+                nav_btn(ui, &mut self.nav, Nav::Gpu, tr(cjk, "显示适配器", "GPU"));
                 nav_btn(ui, &mut self.nav, Nav::Sensors, tr(cjk, "传感器", "Sensors"));
                 nav_btn(ui, &mut self.nav, Nav::Storage, tr(cjk, "存储 / NVMe", "Storage / NVMe"));
                 nav_btn(ui, &mut self.nav, Nav::Pci, tr(cjk, "PCI 设备", "PCI"));
@@ -141,6 +159,7 @@ impl eframe::App for AidaApp {
             Nav::Summary => self.ui_summary(ui),
             Nav::Cpu => self.ui_cpu(ui),
             Nav::Dmi => self.ui_dmi(ui),
+            Nav::Gpu => self.ui_gpu(ui),
             Nav::Sensors => self.ui_sensors(ui),
             Nav::Storage => self.ui_storage(ui),
             Nav::Pci => self.ui_pci(ui),
@@ -182,6 +201,26 @@ impl AidaApp {
             ui,
             self.t("PCI 设备数", "PCI devices"),
             &self.snap.pci.devices.len().to_string(),
+        );
+        kv(
+            ui,
+            self.t("GPU", "GPU"),
+            &if self.snap.gpu.devices.is_empty() {
+                self.snap
+                    .gpu
+                    .notes
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "none".into())
+            } else {
+                self.snap
+                    .gpu
+                    .devices
+                    .iter()
+                    .map(|g| format!("{} ({})", g.id, g.driver))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
         );
         kv(
             ui,
@@ -288,6 +327,69 @@ impl AidaApp {
                     ui.label(format!("[{}] {} {:?}", r.kind_name, r.handle, r.strings));
                 }
             });
+        }
+    }
+
+    fn ui_gpu(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("显示适配器", "GPU"));
+        for n in &self.snap.gpu.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        if self.snap.gpu.nvidia_kernel.access == AccessKind::Ok {
+            kv(ui, "NVIDIA kernel", &self.snap.gpu.nvidia_kernel.display());
+        }
+        for g in &self.snap.gpu.devices {
+            ui.separator();
+            ui.strong(format!("{}  [{}]", g.id, g.driver));
+            kv(ui, "PCI", &g.pci_slot.display());
+            kv(ui, "ID", &format!("{}:{}", g.vendor_id.display(), g.device_id.display()));
+            kv(
+                ui,
+                self.t("占用", "Busy"),
+                &g.busy_percent
+                    .value
+                    .map(|v| format!("{v}%"))
+                    .unwrap_or_else(|| g.busy_percent.access_label()),
+            );
+            kv(
+                ui,
+                self.t("显存", "VRAM"),
+                &match (g.vram_used_bytes.value, g.vram_total_bytes.value) {
+                    (Some(u), Some(t)) => format!(
+                        "{} / {}",
+                        crate::export::format_bytes(u),
+                        crate::export::format_bytes(t)
+                    ),
+                    _ => g.vram_total_bytes.access_label(),
+                },
+            );
+            kv(ui, "VBIOS", &g.vbios.display());
+            for c in &g.clocks {
+                kv(
+                    ui,
+                    &format!("{} MHz", c.name),
+                    &c.current_mhz
+                        .value
+                        .map(|v| {
+                            format!(
+                                "{v} (min {} max {})",
+                                c.min_mhz.display(),
+                                c.max_mhz.display()
+                            )
+                        })
+                        .unwrap_or_else(|| c.current_mhz.access_label()),
+                );
+            }
+            for conn in &g.connectors {
+                kv(
+                    ui,
+                    &conn.name,
+                    &format!("{} / {}", conn.status.display(), conn.enabled.display()),
+                );
+            }
+            for (k, v) in &g.extra {
+                kv(ui, k, &v.display());
+            }
         }
     }
 
@@ -446,8 +548,8 @@ impl AidaApp {
     fn ui_bench(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.t("基准测试", "Benchmark"));
         ui.label(self.t(
-            "用户态微基准，结果只适合本机前后对比。磁盘写临时文件，非 O_DIRECT。",
-            "In-process microbenchmarks for relative comparison only.",
+            "用户态微基准。磁盘先 buffered，再尝试 O_DIRECT（绕过 page cache）。",
+            "In-process microbenchmarks. Disk tries O_DIRECT after buffered.",
         ));
         if ui.button(self.t("运行快速测试", "Run quick bench")).clicked() {
             self.bench = Some(bench::run(&BenchRequest::quick()));
@@ -477,14 +579,28 @@ impl AidaApp {
                 );
             }
             if let Some(d) = &r.disk {
-                kv(
-                    ui,
-                    self.t("磁盘", "Disk"),
-                    &format!(
-                        "write {:.1} MB/s  read {:.1} MB/s  fsync {} ms",
-                        d.write_mbs, d.read_mbs, d.fsync_ms
-                    ),
-                );
+                if let Some(b) = &d.buffered {
+                    kv(
+                        ui,
+                        self.t("磁盘 buffered", "Disk buffered"),
+                        &format!(
+                            "write {:.1} MB/s  read {:.1} MB/s  fsync {} ms",
+                            b.write_mbs, b.read_mbs, b.fsync_ms
+                        ),
+                    );
+                }
+                if let Some(dir) = &d.direct {
+                    kv(
+                        ui,
+                        self.t("磁盘 O_DIRECT", "Disk O_DIRECT"),
+                        &format!(
+                            "write {:.1} MB/s  read {:.1} MB/s  fsync {} ms",
+                            dir.write_mbs, dir.read_mbs, dir.fsync_ms
+                        ),
+                    );
+                } else if let Some(err) = &d.direct_error {
+                    ui.colored_label(Color32::from_rgb(255, 179, 71), format!("O_DIRECT: {err}"));
+                }
             }
             for n in &r.notes {
                 ui.weak(n);
