@@ -2,16 +2,23 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第一轮（本仓库当前迭代）** 交付可编译的核心骨架，而不是一次性堆完整工程：
+**第三轮** 补齐网络统计、USB 树、输入设备、NUMA 内存、hwmon 阈值告警与 JSONL 日志。GPU / O_DIRECT / polkit / AppImage 见第二轮。
 
 | 模块 | 状态 |
 | --- | --- |
-| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs 的 demo |
+| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs |
+| GPU | DRM（amdgpu/i915/xe/nouveau）+ NVIDIA procfs，不调用 nvidia-smi |
+| 网络 | `/sys/class/net` 计数 + `getifaddrs` 地址，不调用 `ip` |
+| USB | `/sys/bus/usb/devices` 树，可选 `usb.ids` |
+| 输入设备 | `/proc/bus/input/devices` |
+| NUMA | `/sys/devices/system/node/nodeN` |
+| 传感器告警 | hwmon `*_max`/`*_crit`/`*_min`，越限写 JSONL |
 | 权限模型 | 每个字段带 `ok / permission_denied / not_found` |
-| egui 界面 | 左侧树 + 右侧详情 + 温度折线 |
-| 微基准 | CPU / 内存带宽 / 磁盘顺序读写 |
+| 提权 | `aida elevate` / GUI 按钮：pkexec，否则 sudo -E |
+| egui 界面 | 左侧树 + 右侧详情 + 温度折线 + GPU/网络/USB/NUMA 页 |
+| 微基准 | CPU / 内存带宽 / 磁盘 buffered + O_DIRECT |
 | JSON / HTML 导出 | CLI + GUI |
-| 静态编译 / AppImage | 文档中的下一轮路径，本轮先保证 glibc 动态链接可运行 |
+| AppImage | `scripts/build-appimage.sh`（glibc + linuxdeploy） |
 
 技术选型：**Rust + egui**，采集路径优先内核文件，不调用 `dmidecode`、`lspci`、`nvme-cli`、`smartctl`、`lscpu`。
 
@@ -28,19 +35,21 @@
                                   ▼
                          snapshot::collect
                                   │
-        ┌─────────────┬───────────┼───────────┬────────────┐
-        ▼             ▼           ▼           ▼            ▼
-      CPU           DMI        hwmon        NVMe         PCI …
-   /proc/cpuinfo  /sys/class   /sys/class  sysfs +     /sys/bus/pci
-   /sys/.../cpu   /dmi/id      /hwmon      ioctl
-                  SMBIOS blob              Get Log Page
+        ┌─────────────┬───────────┼───────────┬────────────┬──────────┐
+        ▼             ▼           ▼           ▼            ▼          ▼
+      CPU           DMI        hwmon        NVMe        GPU/PCI     Net/USB
+   /proc/cpuinfo  /sys/class   /sys/class  sysfs +     DRM + pci   sysfs +
+   /sys/.../cpu   /dmi/id      /hwmon      ioctl       class 03    getifaddrs
+                                  │
+                                  ├── input: /proc/bus/input/devices
+                                  └── NUMA:  /sys/devices/system/node
 ```
 
 约定：
 
 1. **所有探测函数只读文件或发 ioctl**，把结果放进 `Sample<T>`，失败原因跟着字段走。
 2. **`ProbeCtx` 把 `/proc` `/sys` `/dev` 做成可替换根**，单元测试用临时目录夹具，不 mock 整个操作系统。
-3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 只刷新传感器和 `/proc/stat`，不全量重扫 PCI。
+3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 只刷新传感器、告警、网卡速率和 `/proc/stat`，不全量重扫 PCI/USB。
 
 ## 运行
 
@@ -56,11 +65,19 @@ cargo run --release -- collect --html aida-report.html
 # 微基准（--quick 约 200ms，适合测试）
 cargo run --release -- bench --quick
 
+# 磁盘只跑 buffered
+cargo run --release -- bench --disk --no-direct
+
 # 桌面界面（需要 X11/Wayland）
 cargo run --release -- gui
+
+# 提权后重开 GUI（pkexec / sudo -E）
+cargo run --release -- elevate gui
 ```
 
 无 `DISPLAY`/`WAYLAND_DISPLAY` 时，裸跑 `aida` 会退化为 `collect`。
+
+GUI 运行时依赖：X11 或 Wayland、OpenGL/EGL、`libxkbcommon`（X11 还要 `libxkbcommon-x11`）。采集 CLI 无此依赖。
 
 无 GUI 的精简构建：
 
@@ -85,9 +102,12 @@ cargo build --release --no-default-features
 完整检测建议：
 
 ```bash
-sudo -E ./target/release/aida gui
-# 或 pkexec，便于保留 DISPLAY
+aida elevate gui
+# 或：pkexec env DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY $(command -v aida) gui
+# 无 pkexec 时：sudo -E ./target/release/aida gui
 ```
+
+策略文件：`packaging/polkit/com.aida.linux.policy`，安装方法见 [docs/PACKAGING.md](docs/PACKAGING.md)。
 
 ## 基准测试思路
 
@@ -95,14 +115,15 @@ sudo -E ./target/release/aida gui
 | --- | --- | --- |
 | CPU | 多线程整数 LCG + 浮点 `mul_add`/`sin`，按墙钟时间计 Mops/MFLOPS | Turbo、CPU 亲和性、同机后台负载 |
 | 内存 | STREAM 风格 copy / scale / triad | 编译器优化（已 `black_box`）、缓存大小、NUMA |
-| 磁盘 | 临时文件顺序写 + `fsync` + 读回 | **未开 O_DIRECT**，读常命中 page cache，数字会虚高 |
+| 磁盘 | 先 buffered 顺序写+fsync+读，再 `O_DIRECT` 对齐 4KiB | tmpfs / 部分 overlay 会 EINVAL，代码回退并写明原因 |
 
-这些是相对分，不是 SPEC、也不是 `fio`。下一轮可加 `O_DIRECT`、可选测试路径、多线程顺序/随机。
+这些是相对分，不是 SPEC、也不是 `fio`。
 
 ## 报告导出
 
-- JSON：完整 `HardwareSnapshot`（含每个字段的 `access` / `source` / `hint`）。
+- JSON：完整 `HardwareSnapshot`（含每个字段的 `access` / `source` / `hint`，以及 `net` / `usb` / `input` / `numa` / `alerts`）。
 - HTML：单文件内嵌 CSS，表格展示摘要；字段值做了 `<>&` 转义。
+- 告警日志：GUI 热刷新时把阈值状态变化追加到 `$AIDA_ALERT_LOG`，未设置则 `$XDG_STATE_HOME/aida/alerts.jsonl`（常见为 `~/.local/state/aida/alerts.jsonl`）。只在进入/离开越限时写一行，避免刷盘。
 
 ```bash
 aida collect --json out.json --html out.html
@@ -112,11 +133,13 @@ aida collect --json out.json --html out.html
 
 见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。要点：不要假设 `/sys/class/dmi` 存在（容器/部分云主机没有）；不要假设有 `pci.ids`；ARM/RISC-V 上 CPU 字段名与 x86 不同，解析按键名而不是位置。
 
-## 打包（下一轮）
+## 打包
 
-- **采集 CLI** 可以 `x86_64-unknown-linux-musl` 静态链接。
-- **GUI** 依赖 OpenGL/X11，不适合硬 musl 静态。实用路径是 glibc + [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) 打 AppImage。
-- `Cargo.toml` 已打开 `lto = thin` 与 `strip`，减小 release 体积。
+见 [docs/PACKAGING.md](docs/PACKAGING.md)。GUI 走 glibc AppImage；CLI 可另编 musl。
+
+```bash
+./scripts/build-appimage.sh
+```
 
 ## 开发
 
@@ -128,10 +151,13 @@ cargo test --features gui   # 不启动窗口，只编进 ui 模块
 模块入口：
 
 - 权限原语：`src/access.rs`
-- 探测：`src/probes/`
+- 探测：`src/probes/`（含 `net` / `usb` / `input` / `numa`）
 - 快照：`src/snapshot.rs`
 - 导出：`src/export.rs`
 - 基准：`src/bench.rs`
 - 界面：`src/ui/app.rs`
+- 提权：`src/elevate.rs`
+- 告警：`src/alerts.rs`
+- 打包：`scripts/build-appimage.sh`、`packaging/`
 
 架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

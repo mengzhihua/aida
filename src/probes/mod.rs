@@ -3,7 +3,12 @@
 pub mod block;
 pub mod cpu;
 pub mod dmi;
+pub mod gpu;
 pub mod hwmon;
+pub mod input;
+pub mod net;
+pub mod numa;
 pub mod nvme;
 pub mod pci;
 pub mod software;
+pub mod usb;

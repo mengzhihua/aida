@@ -1,16 +1,19 @@
 //! 桌面布局：模仿 AIDA64 的树形导航 + 详情表 + 传感器历史曲线。
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, RichText};
 use egui_plot::{Line, Plot, PlotPoints};
 
 use crate::access::{AccessKind, ProbeCtx};
+use crate::alerts::{AlertLevel, AlertLogger};
 use crate::bench::{self, BenchReport, BenchRequest};
 use crate::export;
 use crate::probes::cpu::CpuStatSnap;
 use crate::probes::hwmon;
+use crate::probes::net::NetSnap;
 use crate::snapshot::HardwareSnapshot;
 
 const HISTORY: usize = 120;
@@ -20,9 +23,14 @@ enum Nav {
     Summary,
     Cpu,
     Dmi,
+    Gpu,
     Sensors,
     Storage,
+    Network,
+    Usb,
+    Input,
     Pci,
+    Numa,
     Software,
     Bench,
     Export,
@@ -47,6 +55,10 @@ struct AidaApp {
     ctx: ProbeCtx,
     snap: HardwareSnapshot,
     prev_stat: Option<CpuStatSnap>,
+    prev_net: Option<Vec<NetSnap>>,
+    alert_log: AlertLogger,
+    alert_log_path: PathBuf,
+    alert_log_err: Option<String>,
     nav: Nav,
     cjk: bool,
     last_poll: Instant,
@@ -54,6 +66,7 @@ struct AidaApp {
     t0: Instant,
     bench: Option<BenchReport>,
     export_msg: Option<String>,
+    elevate_msg: Option<String>,
 }
 
 impl AidaApp {
@@ -65,10 +78,15 @@ impl AidaApp {
         // GUI 不在启动时 sleep 测利用率，改为后续帧差分。
         let snap = HardwareSnapshot::collect_cpu_sample(&ctx, false);
         let prev_stat = crate::probes::cpu::read_proc_stat(&ctx);
+        let prev_net = Some(crate::probes::net::counters(&snap.net));
         Self {
             ctx,
             snap,
             prev_stat,
+            prev_net,
+            alert_log: AlertLogger::default(),
+            alert_log_path: crate::alerts::default_log_path(),
+            alert_log_err: None,
             nav: Nav::Summary,
             cjk,
             last_poll: Instant::now(),
@@ -76,6 +94,7 @@ impl AidaApp {
             t0: Instant::now(),
             bench: None,
             export_msg: None,
+            elevate_msg: None,
         }
     }
 
@@ -87,8 +106,16 @@ impl AidaApp {
         if self.last_poll.elapsed() < Duration::from_millis(800) {
             return;
         }
+        let dt = self.last_poll.elapsed().as_secs_f64();
         self.last_poll = Instant::now();
-        self.snap.refresh_live(&self.ctx, &mut self.prev_stat);
+        self.snap
+            .refresh_live(&self.ctx, &mut self.prev_stat, &mut self.prev_net, dt);
+        let events = self
+            .alert_log
+            .ingest(self.snap.collected_at_unix_ms, &self.snap.alerts);
+        if let Err(e) = crate::alerts::append_jsonl(&self.alert_log_path, &events) {
+            self.alert_log_err = Some(e);
+        }
         let t = self.t0.elapsed().as_secs_f64();
         for (key, value) in hwmon::temperature_series(&self.snap.sensors) {
             let q = self.temps.entry(key).or_default();
@@ -114,7 +141,31 @@ impl eframe::App for AidaApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(self.t("权限", "Privilege")).strong());
                 ui.colored_label(color, &self.snap.privilege.summary);
+                if !self.snap.privilege.is_root {
+                    if ui
+                        .button(self.t("以管理员身份重启", "Restart as admin"))
+                        .clicked()
+                    {
+                        if let Err(e) = crate::elevate::reexec(&["gui".into()]) {
+                            self.elevate_msg = Some(e);
+                        }
+                    }
+                }
             });
+            if let Some(m) = &self.elevate_msg {
+                ui.colored_label(Color32::from_rgb(255, 100, 100), m);
+            }
+            if !self.snap.alerts.is_empty() {
+                ui.colored_label(
+                    Color32::from_rgb(255, 120, 80),
+                    format!(
+                        "{} {}",
+                        self.snap.alerts.len(),
+                        self.t("条传感器告警", "sensor alert(s)")
+                    ),
+                );
+            }
+            ui.weak(crate::elevate::plan().summary);
         });
 
         egui::SidePanel::left("tree")
@@ -125,25 +176,65 @@ impl eframe::App for AidaApp {
                 ui.label(RichText::new("Linux").italics().weak());
                 ui.separator();
                 let cjk = self.cjk;
-                nav_btn(ui, &mut self.nav, Nav::Summary, tr(cjk, "计算机摘要", "Summary"));
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Summary,
+                    tr(cjk, "计算机摘要", "Summary"),
+                );
                 nav_btn(ui, &mut self.nav, Nav::Cpu, tr(cjk, "处理器", "CPU"));
-                nav_btn(ui, &mut self.nav, Nav::Dmi, tr(cjk, "主板 / DMI", "Motherboard / DMI"));
-                nav_btn(ui, &mut self.nav, Nav::Sensors, tr(cjk, "传感器", "Sensors"));
-                nav_btn(ui, &mut self.nav, Nav::Storage, tr(cjk, "存储 / NVMe", "Storage / NVMe"));
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Dmi,
+                    tr(cjk, "主板 / DMI", "Motherboard / DMI"),
+                );
+                nav_btn(ui, &mut self.nav, Nav::Gpu, tr(cjk, "显示适配器", "GPU"));
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Sensors,
+                    tr(cjk, "传感器", "Sensors"),
+                );
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Storage,
+                    tr(cjk, "存储 / NVMe", "Storage / NVMe"),
+                );
+                nav_btn(ui, &mut self.nav, Nav::Network, tr(cjk, "网络", "Network"));
+                nav_btn(ui, &mut self.nav, Nav::Usb, tr(cjk, "USB", "USB"));
+                nav_btn(ui, &mut self.nav, Nav::Input, tr(cjk, "输入设备", "Input"));
                 nav_btn(ui, &mut self.nav, Nav::Pci, tr(cjk, "PCI 设备", "PCI"));
+                nav_btn(ui, &mut self.nav, Nav::Numa, tr(cjk, "NUMA 内存", "NUMA"));
                 nav_btn(ui, &mut self.nav, Nav::Software, tr(cjk, "操作系统", "OS"));
                 ui.separator();
-                nav_btn(ui, &mut self.nav, Nav::Bench, tr(cjk, "基准测试", "Benchmark"));
-                nav_btn(ui, &mut self.nav, Nav::Export, tr(cjk, "导出报告", "Export"));
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Bench,
+                    tr(cjk, "基准测试", "Benchmark"),
+                );
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Export,
+                    tr(cjk, "导出报告", "Export"),
+                );
             });
 
         egui::CentralPanel::default().show(ctx, |ui| match self.nav {
             Nav::Summary => self.ui_summary(ui),
             Nav::Cpu => self.ui_cpu(ui),
             Nav::Dmi => self.ui_dmi(ui),
+            Nav::Gpu => self.ui_gpu(ui),
             Nav::Sensors => self.ui_sensors(ui),
             Nav::Storage => self.ui_storage(ui),
+            Nav::Network => self.ui_net(ui),
+            Nav::Usb => self.ui_usb(ui),
+            Nav::Input => self.ui_input(ui),
             Nav::Pci => self.ui_pci(ui),
+            Nav::Numa => self.ui_numa(ui),
             Nav::Software => self.ui_software(ui),
             Nav::Bench => self.ui_bench(ui),
             Nav::Export => self.ui_export(ui),
@@ -167,16 +258,32 @@ impl AidaApp {
         if let Some(u) = self.snap.cpu.utilization_pct {
             kv(ui, self.t("利用率", "Utilization"), &format!("{u:.1}%"));
         }
-        kv(ui, self.t("系统厂商", "Vendor"), &self.snap.dmi.sys_vendor.display());
-        kv(ui, self.t("产品", "Product"), &self.snap.dmi.product_name.display());
-        kv(ui, self.t("操作系统", "OS"), &self.snap.software.os_name.display());
+        kv(
+            ui,
+            self.t("系统厂商", "Vendor"),
+            &self.snap.dmi.sys_vendor.display(),
+        );
+        kv(
+            ui,
+            self.t("产品", "Product"),
+            &self.snap.dmi.product_name.display(),
+        );
+        kv(
+            ui,
+            self.t("操作系统", "OS"),
+            &self.snap.software.os_name.display(),
+        );
         kv(
             ui,
             self.t("内核", "Kernel"),
             &self.snap.software.kernel_release.display(),
         );
         if let Some(kb) = self.snap.software.mem_total_kb.value {
-            kv(ui, self.t("内存", "Memory"), &crate::export::format_bytes(kb * 1024));
+            kv(
+                ui,
+                self.t("内存", "Memory"),
+                &crate::export::format_bytes(kb * 1024),
+            );
         }
         kv(
             ui,
@@ -185,9 +292,51 @@ impl AidaApp {
         );
         kv(
             ui,
+            self.t("GPU", "GPU"),
+            &if self.snap.gpu.devices.is_empty() {
+                self.snap
+                    .gpu
+                    .notes
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "none".into())
+            } else {
+                self.snap
+                    .gpu
+                    .devices
+                    .iter()
+                    .map(|g| format!("{} ({})", g.id, g.driver))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        );
+        kv(
+            ui,
             self.t("块设备", "Block devices"),
             &self.snap.block.devices.len().to_string(),
         );
+        kv(
+            ui,
+            self.t("网卡", "NICs"),
+            &self.snap.net.interfaces.len().to_string(),
+        );
+        kv(ui, "USB", &self.snap.usb.devices.len().to_string());
+        kv(
+            ui,
+            self.t("输入设备", "Input devices"),
+            &self.snap.input.devices.len().to_string(),
+        );
+        kv(ui, "NUMA", &self.snap.numa.nodes.len().to_string());
+        if !self.snap.alerts.is_empty() {
+            kv(
+                ui,
+                self.t("传感器告警", "Sensor alerts"),
+                &self.snap.alerts.len().to_string(),
+            );
+            for a in &self.snap.alerts {
+                ui.colored_label(alert_color(a.level), &a.message);
+            }
+        }
         ui.separator();
         ui.label(self.t(
             "缺字段时请看橙色权限条：普通用户看不到序列号/SMART 是预期行为。",
@@ -197,8 +346,16 @@ impl AidaApp {
 
     fn ui_cpu(&self, ui: &mut egui::Ui) {
         ui.heading(self.t("处理器", "CPU"));
-        kv(ui, self.t("型号", "Model"), &self.snap.cpu.model_name.display());
-        kv(ui, self.t("厂商", "Vendor"), &self.snap.cpu.vendor.display());
+        kv(
+            ui,
+            self.t("型号", "Model"),
+            &self.snap.cpu.model_name.display(),
+        );
+        kv(
+            ui,
+            self.t("厂商", "Vendor"),
+            &self.snap.cpu.vendor.display(),
+        );
         kv(
             ui,
             self.t("封装 / 每封装核心", "Packages / cores"),
@@ -211,35 +368,41 @@ impl AidaApp {
         kv(
             ui,
             "hypervisor",
-            if self.snap.cpu.hypervisor { "yes" } else { "no" },
+            if self.snap.cpu.hypervisor {
+                "yes"
+            } else {
+                "no"
+            },
         );
         for n in &self.snap.cpu.notes {
             ui.colored_label(Color32::YELLOW, n);
         }
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("cpu_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.strong("#");
-                    ui.strong("core");
-                    ui.strong("MHz");
-                    ui.strong("governor");
+            egui::Grid::new("cpu_grid").striped(true).show(ui, |ui| {
+                ui.strong("#");
+                ui.strong("core");
+                ui.strong("MHz");
+                ui.strong("governor");
+                ui.end_row();
+                for l in &self.snap.cpu.logical {
+                    ui.label(l.processor.to_string());
+                    ui.label(
+                        l.core_id
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                    );
+                    let mhz = l
+                        .scaling_cur_khz
+                        .value
+                        .map(|k| format!("{:.0}", k as f64 / 1000.0))
+                        .or_else(|| l.mhz_from_cpuinfo.map(|m| format!("{m:.0}")))
+                        .unwrap_or_else(|| l.scaling_cur_khz.access_label());
+                    ui.label(mhz);
+                    ui.label(l.governor.display());
                     ui.end_row();
-                    for l in &self.snap.cpu.logical {
-                        ui.label(l.processor.to_string());
-                        ui.label(l.core_id.map(|c| c.to_string()).unwrap_or_else(|| "-".into()));
-                        let mhz = l
-                            .scaling_cur_khz
-                            .value
-                            .map(|k| format!("{:.0}", k as f64 / 1000.0))
-                            .or_else(|| l.mhz_from_cpuinfo.map(|m| format!("{m:.0}")))
-                            .unwrap_or_else(|| l.scaling_cur_khz.access_label());
-                        ui.label(mhz);
-                        ui.label(l.governor.display());
-                        ui.end_row();
-                    }
-                });
+                }
+            });
             ui.separator();
             ui.strong(self.t("缓存 (cpu0)", "Caches (cpu0)"));
             for c in &self.snap.cpu.caches {
@@ -259,12 +422,40 @@ impl AidaApp {
 
     fn ui_dmi(&self, ui: &mut egui::Ui) {
         ui.heading("DMI / SMBIOS");
-        kv(ui, "BIOS", &format!("{} {}", self.snap.dmi.bios_vendor.display(), self.snap.dmi.bios_version.display()));
-        kv(ui, self.t("厂商", "Vendor"), &self.snap.dmi.sys_vendor.display());
-        kv(ui, self.t("产品", "Product"), &self.snap.dmi.product_name.display());
-        field_row(ui, self.t("序列号", "Serial"), &self.snap.dmi.product_serial);
+        kv(
+            ui,
+            "BIOS",
+            &format!(
+                "{} {}",
+                self.snap.dmi.bios_vendor.display(),
+                self.snap.dmi.bios_version.display()
+            ),
+        );
+        kv(
+            ui,
+            self.t("厂商", "Vendor"),
+            &self.snap.dmi.sys_vendor.display(),
+        );
+        kv(
+            ui,
+            self.t("产品", "Product"),
+            &self.snap.dmi.product_name.display(),
+        );
+        field_row(
+            ui,
+            self.t("序列号", "Serial"),
+            &self.snap.dmi.product_serial,
+        );
         field_row(ui, "UUID", &self.snap.dmi.product_uuid);
-        kv(ui, self.t("主板", "Board"), &format!("{} {}", self.snap.dmi.board_vendor.display(), self.snap.dmi.board_name.display()));
+        kv(
+            ui,
+            self.t("主板", "Board"),
+            &format!(
+                "{} {}",
+                self.snap.dmi.board_vendor.display(),
+                self.snap.dmi.board_name.display()
+            ),
+        );
         for n in &self.snap.dmi.notes {
             ui.colored_label(Color32::from_rgb(255, 179, 71), n);
         }
@@ -291,8 +482,93 @@ impl AidaApp {
         }
     }
 
+    fn ui_gpu(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("显示适配器", "GPU"));
+        for n in &self.snap.gpu.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        if self.snap.gpu.nvidia_kernel.access == AccessKind::Ok {
+            kv(ui, "NVIDIA kernel", &self.snap.gpu.nvidia_kernel.display());
+        }
+        for g in &self.snap.gpu.devices {
+            ui.separator();
+            ui.strong(format!("{}  [{}]", g.id, g.driver));
+            kv(ui, "PCI", &g.pci_slot.display());
+            kv(
+                ui,
+                "ID",
+                &format!("{}:{}", g.vendor_id.display(), g.device_id.display()),
+            );
+            kv(
+                ui,
+                self.t("占用", "Busy"),
+                &g.busy_percent
+                    .value
+                    .map(|v| format!("{v}%"))
+                    .unwrap_or_else(|| g.busy_percent.access_label()),
+            );
+            kv(
+                ui,
+                self.t("显存", "VRAM"),
+                &match (g.vram_used_bytes.value, g.vram_total_bytes.value) {
+                    (Some(u), Some(t)) => format!(
+                        "{} / {}",
+                        crate::export::format_bytes(u),
+                        crate::export::format_bytes(t)
+                    ),
+                    _ => g.vram_total_bytes.access_label(),
+                },
+            );
+            kv(ui, "VBIOS", &g.vbios.display());
+            for c in &g.clocks {
+                kv(
+                    ui,
+                    &format!("{} MHz", c.name),
+                    &c.current_mhz
+                        .value
+                        .map(|v| {
+                            format!(
+                                "{v} (min {} max {})",
+                                c.min_mhz.display(),
+                                c.max_mhz.display()
+                            )
+                        })
+                        .unwrap_or_else(|| c.current_mhz.access_label()),
+                );
+            }
+            for conn in &g.connectors {
+                kv(
+                    ui,
+                    &conn.name,
+                    &format!("{} / {}", conn.status.display(), conn.enabled.display()),
+                );
+            }
+            for (k, v) in &g.extra {
+                kv(ui, k, &v.display());
+            }
+        }
+    }
+
     fn ui_sensors(&self, ui: &mut egui::Ui) {
         ui.heading(self.t("传感器", "Sensors"));
+        if !self.snap.alerts.is_empty() {
+            ui.colored_label(
+                Color32::from_rgb(255, 120, 80),
+                self.t("当前越限", "Threshold alerts"),
+            );
+            for a in &self.snap.alerts {
+                ui.colored_label(alert_color(a.level), &a.message);
+            }
+            ui.separator();
+        }
+        ui.weak(format!(
+            "{}: {}",
+            self.t("告警日志", "Alert log"),
+            self.alert_log_path.display()
+        ));
+        if let Some(e) = &self.alert_log_err {
+            ui.colored_label(Color32::from_rgb(255, 100, 100), e);
+        }
         for n in &self.snap.sensors.notes {
             ui.colored_label(Color32::from_rgb(255, 179, 71), n);
         }
@@ -315,7 +591,21 @@ impl AidaApp {
                         .value
                         .map(|v| format!("{v:.3} {}", ch.unit))
                         .unwrap_or_else(|| ch.raw.access_label());
-                    kv(ui, &ch.label, &val);
+                    let limits = [
+                        ch.min.map(|v| format!("min {v:.1}")),
+                        ch.max.map(|v| format!("max {v:.1}")),
+                        ch.crit.map(|v| format!("crit {v:.1}")),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                    let shown = if limits.is_empty() {
+                        val
+                    } else {
+                        format!("{val}  ({limits})")
+                    };
+                    kv(ui, &ch.label, &shown);
                 }
             }
             for tz in &self.snap.sensors.thermal_zones {
@@ -387,6 +677,182 @@ impl AidaApp {
         }
     }
 
+    fn ui_net(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("网络", "Network"));
+        ui.weak(self.t(
+            "来自 /sys/class/net 与 getifaddrs，不调用 ip/ifconfig。",
+            "From /sys/class/net and getifaddrs; no ip/ifconfig.",
+        ));
+        for n in &self.snap.net.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        egui::ScrollArea::both().show(ui, |ui| {
+            egui::Grid::new("net").striped(true).show(ui, |ui| {
+                ui.strong(self.t("接口", "iface"));
+                ui.strong(self.t("状态", "state"));
+                ui.strong(self.t("类型", "type"));
+                ui.strong("Mb/s");
+                ui.strong("RX");
+                ui.strong("TX");
+                ui.strong(self.t("地址", "addr"));
+                ui.end_row();
+                for i in &self.snap.net.interfaces {
+                    ui.label(&i.name);
+                    ui.label(i.operstate.display());
+                    ui.label(&i.kind);
+                    ui.label(
+                        i.speed_mbps
+                            .value
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| i.speed_mbps.access_label()),
+                    );
+                    let rx = i.rx_bps.map(crate::export::format_bps).unwrap_or_else(|| {
+                        i.rx_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| i.rx_bytes.access_label())
+                    });
+                    let tx = i.tx_bps.map(crate::export::format_bps).unwrap_or_else(|| {
+                        i.tx_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| i.tx_bytes.access_label())
+                    });
+                    ui.label(rx);
+                    ui.label(tx);
+                    ui.label(i.addresses.join(", "));
+                    ui.end_row();
+                }
+            });
+            for i in &self.snap.net.interfaces {
+                ui.collapsing(&i.name, |ui| {
+                    kv(ui, "MAC", &i.mac.display());
+                    kv(ui, "MTU", &i.mtu.display());
+                    kv(ui, "duplex", &i.duplex.display());
+                    kv(ui, "carrier", &i.carrier.display());
+                    kv(ui, "driver", &i.driver.display());
+                    kv(
+                        ui,
+                        self.t("累计 RX", "RX bytes"),
+                        &i.rx_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| i.rx_bytes.access_label()),
+                    );
+                    kv(
+                        ui,
+                        self.t("累计 TX", "TX bytes"),
+                        &i.tx_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| i.tx_bytes.access_label()),
+                    );
+                    kv(ui, "RX err", &i.rx_errors.display());
+                    kv(ui, "TX err", &i.tx_errors.display());
+                });
+            }
+        });
+    }
+
+    fn ui_usb(&self, ui: &mut egui::Ui) {
+        ui.heading("USB");
+        for n in &self.snap.usb.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        egui::ScrollArea::both().show(ui, |ui| {
+            egui::Grid::new("usb").striped(true).show(ui, |ui| {
+                ui.strong(self.t("节点", "node"));
+                ui.strong(self.t("父", "parent"));
+                ui.strong("ID");
+                ui.strong(self.t("产品", "product"));
+                ui.strong(self.t("速度", "speed"));
+                ui.strong("serial");
+                ui.end_row();
+                for d in &self.snap.usb.devices {
+                    let indent = if d.sys_name.starts_with("usb") {
+                        0
+                    } else {
+                        1 + d.sys_name.bytes().filter(|b| *b == b'.').count()
+                    };
+                    ui.label(format!("{}{}", "  ".repeat(indent), d.sys_name));
+                    ui.label(d.parent.as_deref().unwrap_or("—"));
+                    ui.label(format!(
+                        "{}:{}",
+                        d.vendor_id.display(),
+                        d.product_id.display()
+                    ));
+                    let product = d
+                        .product
+                        .value
+                        .clone()
+                        .or_else(|| d.product_name.clone())
+                        .or_else(|| d.vendor_name.clone())
+                        .unwrap_or_else(|| d.product.access_label());
+                    ui.label(product);
+                    ui.label(d.speed.display());
+                    field_row_cell(ui, &d.serial);
+                    ui.end_row();
+                }
+            });
+        });
+    }
+
+    fn ui_input(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("输入设备", "Input"));
+        for n in &self.snap.input.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        egui::ScrollArea::both().show(ui, |ui| {
+            egui::Grid::new("input").striped(true).show(ui, |ui| {
+                ui.strong(self.t("名称", "name"));
+                ui.strong(self.t("类型", "kind"));
+                ui.strong("handlers");
+                ui.strong("phys");
+                ui.end_row();
+                for d in &self.snap.input.devices {
+                    ui.label(&d.name);
+                    ui.label(d.kinds.join(", "));
+                    ui.label(d.handlers.join(" "));
+                    ui.label(d.phys.as_deref().unwrap_or("—"));
+                    ui.end_row();
+                }
+            });
+        });
+    }
+
+    fn ui_numa(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("NUMA 内存", "NUMA"));
+        for n in &self.snap.numa.notes {
+            ui.weak(n);
+        }
+        egui::Grid::new("numa").striped(true).show(ui, |ui| {
+            ui.strong("node");
+            ui.strong("cpulist");
+            ui.strong(self.t("内存", "memory"));
+            ui.strong(self.t("空闲", "free"));
+            ui.strong("distance");
+            ui.end_row();
+            for n in &self.snap.numa.nodes {
+                ui.label(n.id.to_string());
+                ui.label(n.cpulist.display());
+                ui.label(
+                    n.mem_total_kb
+                        .value
+                        .map(|v| crate::export::format_bytes(v * 1024))
+                        .unwrap_or_else(|| n.mem_total_kb.access_label()),
+                );
+                ui.label(
+                    n.mem_free_kb
+                        .value
+                        .map(|v| crate::export::format_bytes(v * 1024))
+                        .unwrap_or_else(|| n.mem_free_kb.access_label()),
+                );
+                ui.label(n.distance.display());
+                ui.end_row();
+            }
+        });
+    }
+
     fn ui_pci(&self, ui: &mut egui::Ui) {
         ui.heading("PCI");
         for n in &self.snap.pci.notes {
@@ -421,7 +887,11 @@ impl AidaApp {
         ui.heading(self.t("操作系统", "OS"));
         kv(ui, "OS", &self.snap.software.os_name.display());
         kv(ui, "ID", &self.snap.software.os_id.display());
-        kv(ui, self.t("内核", "Kernel"), &self.snap.software.kernel_release.display());
+        kv(
+            ui,
+            self.t("内核", "Kernel"),
+            &self.snap.software.kernel_release.display(),
+        );
         kv(ui, "hostname", &self.snap.software.hostname.display());
         kv(
             ui,
@@ -446,13 +916,19 @@ impl AidaApp {
     fn ui_bench(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.t("基准测试", "Benchmark"));
         ui.label(self.t(
-            "用户态微基准，结果只适合本机前后对比。磁盘写临时文件，非 O_DIRECT。",
-            "In-process microbenchmarks for relative comparison only.",
+            "用户态微基准。磁盘先 buffered，再尝试 O_DIRECT（绕过 page cache）。",
+            "In-process microbenchmarks. Disk tries O_DIRECT after buffered.",
         ));
-        if ui.button(self.t("运行快速测试", "Run quick bench")).clicked() {
+        if ui
+            .button(self.t("运行快速测试", "Run quick bench"))
+            .clicked()
+        {
             self.bench = Some(bench::run(&BenchRequest::quick()));
         }
-        if ui.button(self.t("运行标准测试 (~2s)", "Run standard bench")).clicked() {
+        if ui
+            .button(self.t("运行标准测试 (~2s)", "Run standard bench"))
+            .clicked()
+        {
             self.bench = Some(bench::run(&BenchRequest::default()));
         }
         if let Some(r) = &self.bench {
@@ -477,14 +953,28 @@ impl AidaApp {
                 );
             }
             if let Some(d) = &r.disk {
-                kv(
-                    ui,
-                    self.t("磁盘", "Disk"),
-                    &format!(
-                        "write {:.1} MB/s  read {:.1} MB/s  fsync {} ms",
-                        d.write_mbs, d.read_mbs, d.fsync_ms
-                    ),
-                );
+                if let Some(b) = &d.buffered {
+                    kv(
+                        ui,
+                        self.t("磁盘 buffered", "Disk buffered"),
+                        &format!(
+                            "write {:.1} MB/s  read {:.1} MB/s  fsync {} ms",
+                            b.write_mbs, b.read_mbs, b.fsync_ms
+                        ),
+                    );
+                }
+                if let Some(dir) = &d.direct {
+                    kv(
+                        ui,
+                        self.t("磁盘 O_DIRECT", "Disk O_DIRECT"),
+                        &format!(
+                            "write {:.1} MB/s  read {:.1} MB/s  fsync {} ms",
+                            dir.write_mbs, dir.read_mbs, dir.fsync_ms
+                        ),
+                    );
+                } else if let Some(err) = &d.direct_error {
+                    ui.colored_label(Color32::from_rgb(255, 179, 71), format!("O_DIRECT: {err}"));
+                }
             }
             for n in &r.notes {
                 ui.weak(n);
@@ -540,7 +1030,41 @@ fn kv(ui: &mut egui::Ui, k: &str, v: &str) {
     });
 }
 
-fn field_row<T: serde::Serialize + std::fmt::Display>(ui: &mut egui::Ui, k: &str, s: &crate::Sample<T>) {
+fn alert_color(level: AlertLevel) -> Color32 {
+    match level {
+        AlertLevel::Ok => Color32::from_rgb(120, 200, 140),
+        AlertLevel::Low => Color32::from_rgb(120, 180, 255),
+        AlertLevel::High => Color32::from_rgb(255, 179, 71),
+        AlertLevel::Crit => Color32::from_rgb(255, 100, 100),
+    }
+}
+
+fn field_row_cell<T: serde::Serialize + std::fmt::Display>(
+    ui: &mut egui::Ui,
+    s: &crate::Sample<T>,
+) {
+    match s.access {
+        AccessKind::Ok => {
+            if let Some(v) = &s.value {
+                ui.label(v.to_string());
+            } else {
+                ui.weak("empty");
+            }
+        }
+        AccessKind::PermissionDenied => {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), s.access_label());
+        }
+        _ => {
+            ui.weak(s.access_label());
+        }
+    }
+}
+
+fn field_row<T: serde::Serialize + std::fmt::Display>(
+    ui: &mut egui::Ui,
+    k: &str,
+    s: &crate::Sample<T>,
+) {
     ui.horizontal(|ui| {
         ui.strong(format!("{k}:"));
         match s.access {

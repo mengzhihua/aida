@@ -16,8 +16,27 @@ fn live_snapshot_json_and_html() {
     );
     let json = export::to_json_pretty(&snap).expect("json");
     assert!(json.contains("\"app\": \"aida\""));
+    assert!(json.contains("\"gpu\""));
+    assert!(json.contains("\"net\""));
+    assert!(json.contains("\"usb\""));
+    assert!(json.contains("\"input\""));
+    assert!(json.contains("\"numa\""));
+    assert!(json.contains("\"alerts\""));
+    assert!(
+        !snap.net.interfaces.is_empty(),
+        "至少应有 lo 或其它 /sys/class/net 接口"
+    );
+    assert!(
+        !snap.numa.nodes.is_empty(),
+        "至少应有 NUMA node0（非 NUMA 内核也会导出 node0）"
+    );
     let html = export::to_html(&snap);
     assert!(html.contains("AIDA Linux"));
+    assert!(html.contains("GPU"));
+    assert!(html.contains("网络"));
+    assert!(html.contains("USB"));
+    assert!(html.contains("NUMA"));
+    assert!(html.contains("告警"));
     assert!(!html.contains("<script"));
 }
 

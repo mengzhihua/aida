@@ -27,6 +27,11 @@ fn main() -> ExitCode {
         Some("collect") => cmd_collect(&args[1..]),
         Some("bench") => cmd_bench(&args[1..]),
         Some("gui") => cmd_gui(),
+        Some("elevate") => cmd_elevate(&args[1..]),
+        Some("version") | Some("--version") | Some("-V") => {
+            println!("aida {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
         None => {
             if cfg!(feature = "gui")
                 && (env::var_os("DISPLAY").is_some() || env::var_os("WAYLAND_DISPLAY").is_some())
@@ -56,12 +61,17 @@ AIDA Linux — 硬件检测与监控（sysfs/procfs，不调用 dmidecode/lspci�
   aida collect         采集快照，默认打印 JSON
   aida collect --html [FILE]
   aida collect --json [FILE]
-  aida bench [--quick] [--cpu] [--memory] [--disk]
+  aida bench [--quick] [--cpu] [--memory] [--disk] [--no-direct]
+  aida elevate [gui|collect|bench ...]   通过 pkexec/sudo 提权重启
+  aida version
 
 权限:
-  普通用户可读 CPU、大部分 PCI、块设备容量、os-release。
-  DMI 序列号/UUID、SMBIOS 表、NVMe SMART 通常需要 root 或 disk 组。
-  缺权限时字段标记为 permission_denied，不会伪造数据。"
+  普通用户可读 CPU、大部分 PCI、块设备容量、os-release、DRM 公开节点、
+  /sys/class/net、USB sysfs、/proc/bus/input/devices、NUMA node。
+  DMI 序列号/UUID、SMBIOS 表、NVMe SMART、部分 USB serial 通常需要 root 或 disk 组。
+  桌面请用 `aida elevate gui`（pkexec），不要对 GUI 裸 sudo 以免丢掉 DISPLAY。
+  缺权限时字段标记为 permission_denied，不会伪造数据。
+  GUI 传感器越限会追加 JSONL 到 $AIDA_ALERT_LOG 或 ~/.local/state/aida/alerts.jsonl。"
     );
 }
 
@@ -172,6 +182,7 @@ fn cmd_bench(args: &[String]) -> ExitCode {
                 }
                 req.disk = true;
             }
+            "--no-direct" => req.o_direct = false,
             "-h" | "--help" => {
                 print_help();
                 return ExitCode::SUCCESS;
@@ -182,13 +193,43 @@ fn cmd_bench(args: &[String]) -> ExitCode {
             }
         }
     }
-    eprintln!("运行微基准（线程={}）…", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    eprintln!(
+        "运行微基准（线程={}）…",
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    );
     let report = bench::run(&req);
     match serde_json::to_string_pretty(&report) {
         Ok(s) => {
             println!("{s}");
             ExitCode::SUCCESS
         }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_elevate(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        print_help();
+        return ExitCode::SUCCESS;
+    }
+    let rest = if args.is_empty() {
+        vec!["gui".into()]
+    } else {
+        args.to_vec()
+    };
+    if rest.first().map(|s| s.as_str()) == Some("elevate") {
+        eprintln!("拒绝嵌套 elevate");
+        return ExitCode::from(2);
+    }
+    let plan = aida::elevate::plan();
+    eprintln!("{}", plan.summary);
+    match aida::elevate::reexec(&rest) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e}");
             ExitCode::from(1)
@@ -210,7 +251,9 @@ fn cmd_gui() -> ExitCode {
     }
     #[cfg(not(feature = "gui"))]
     {
-        eprintln!("此二进制未启用 gui feature。请 `cargo build --features gui` 或使用 aida collect。");
+        eprintln!(
+            "此二进制未启用 gui feature。请 `cargo build --features gui` 或使用 aida collect。"
+        );
         ExitCode::from(1)
     }
 }
