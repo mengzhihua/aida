@@ -45,8 +45,20 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     .unwrap_or_else(|| "n/a".into()),
             ),
             ("虚拟化", snap.cpu.hypervisor.to_string()),
+            ("microcode", snap.cpu.microcode.display()),
         ],
     );
+    if !snap.cpu.vulnerabilities.is_empty() {
+        html.push_str("<table><tr><th>漏洞</th><th>状态</th></tr>");
+        for v in &snap.cpu.vulnerabilities {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(&v.name),
+                esc(&v.status.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
 
     section(&mut html, "DMI / 主板");
     kv(
@@ -76,6 +88,58 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     );
     for n in &snap.dmi.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "固件");
+    kv(
+        &mut html,
+        &[
+            ("接口", snap.firmware.interface.display()),
+            ("Secure Boot", snap.firmware.secure_boot.display()),
+            ("fw_platform_size", snap.firmware.fw_platform_size.display()),
+        ],
+    );
+    for n in &snap.firmware.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "内存");
+    kv(
+        &mut html,
+        &[
+            ("物理", kb_html(&snap.memory.total_kb)),
+            ("可用", kb_html(&snap.memory.available_kb)),
+            ("空闲", kb_html(&snap.memory.free_kb)),
+            (
+                "Buffers / Cached",
+                format!(
+                    "{} / {}",
+                    kb_html(&snap.memory.buffers_kb),
+                    kb_html(&snap.memory.cached_kb)
+                ),
+            ),
+            (
+                "Swap",
+                format!(
+                    "{} / {}",
+                    kb_html(&snap.memory.swap_total_kb),
+                    kb_html(&snap.memory.swap_free_kb)
+                ),
+            ),
+            ("THP", snap.memory.thp_enabled.display()),
+        ],
+    );
+    if !snap.memory.hugepages.is_empty() {
+        html.push_str("<table><tr><th>页大小</th><th>nr</th><th>free</th></tr>");
+        for p in &snap.memory.hugepages {
+            html.push_str(&format!(
+                "<tr><td>{} KiB</td><td>{}</td><td>{}</td></tr>",
+                p.size_kb,
+                esc(&p.nr.display()),
+                esc(&p.free.display())
+            ));
+        }
+        html.push_str("</table>");
     }
 
     section(&mut html, "告警");
@@ -130,6 +194,64 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str("<tr><td colspan=\"7\" class=\"warn\">无 hwmon 数据</td></tr>");
     }
     html.push_str("</table>");
+
+    if !snap.sensors.cooling.is_empty() {
+        html.push_str("<table><tr><th>冷却</th><th>类型</th><th>状态</th></tr>");
+        for c in &snap.sensors.cooling {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}/{}</td></tr>",
+                esc(&c.name),
+                esc(&c.r#type.display()),
+                esc(&c.cur_state.display()),
+                esc(&c.max_state.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+
+    section(&mut html, "电源");
+    if snap.power.supplies.is_empty() {
+        html.push_str("<p class=\"muted\">无电源类设备</p>");
+    }
+    for s in &snap.power.supplies {
+        kv(
+            &mut html,
+            &[
+                ("名称", s.name.clone()),
+                ("类型", s.kind.display()),
+                ("状态", s.status.display()),
+                (
+                    "电量",
+                    s.capacity_pct
+                        .value
+                        .map(|v| format!("{v}%"))
+                        .unwrap_or_else(|| s.capacity_pct.access_label()),
+                ),
+                ("电压", s.voltage_v.display()),
+            ],
+        );
+    }
+    for n in &snap.power.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "声卡");
+    if snap.audio.cards.is_empty() {
+        html.push_str("<p class=\"muted\">无 ALSA 声卡</p>");
+    }
+    html.push_str("<table><tr><th>#</th><th>id</th><th>名称</th></tr>");
+    for c in &snap.audio.cards {
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+            c.index,
+            esc(&c.id),
+            esc(&c.name)
+        ));
+    }
+    html.push_str("</table>");
+    for n in &snap.audio.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
 
     section(&mut html, "NVMe");
     if snap.nvme.controllers.is_empty() {
@@ -323,7 +445,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
 
     section(&mut html, "存储");
-    html.push_str("<table><tr><th>设备</th><th>类型</th><th>容量</th><th>型号</th></tr>");
+    html.push_str(
+        "<table><tr><th>设备</th><th>类型</th><th>容量</th><th>型号</th><th>读</th><th>写</th></tr>",
+    );
     for b in &snap.block.devices {
         let size = b
             .size_bytes
@@ -331,11 +455,21 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .map(format_bytes)
             .unwrap_or_else(|| b.size_bytes.access_label());
         html.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             esc(&b.name),
             esc(&b.r#type),
             esc(&size),
-            esc(&b.model.display())
+            esc(&b.model.display()),
+            esc(&b
+                .rd_bytes
+                .value
+                .map(format_bytes)
+                .unwrap_or_else(|| b.rd_bytes.access_label())),
+            esc(&b
+                .wr_bytes
+                .value
+                .map(format_bytes)
+                .unwrap_or_else(|| b.wr_bytes.access_label()))
         ));
     }
     html.push_str("</table>");
@@ -402,6 +536,12 @@ fn alert_level_label(level: AlertLevel) -> &'static str {
 
 fn opt_f(v: Option<f64>) -> String {
     v.map(|x| format!("{x:.3}")).unwrap_or_else(|| "—".into())
+}
+
+fn kb_html(s: &crate::Sample<u64>) -> String {
+    s.value
+        .map(|v| format_bytes(v * 1024))
+        .unwrap_or_else(|| s.access_label())
 }
 
 /// 字节/秒，用于网卡差分速率。

@@ -11,6 +11,7 @@ use crate::access::{AccessKind, ProbeCtx};
 use crate::alerts::{AlertLevel, AlertLogger};
 use crate::bench::{self, BenchReport, BenchRequest};
 use crate::export;
+use crate::probes::block::DiskSnap;
 use crate::probes::cpu::CpuStatSnap;
 use crate::probes::hwmon;
 use crate::probes::net::NetSnap;
@@ -23,12 +24,15 @@ enum Nav {
     Summary,
     Cpu,
     Dmi,
+    Memory,
     Gpu,
     Sensors,
+    Power,
     Storage,
     Network,
     Usb,
     Input,
+    Audio,
     Pci,
     Numa,
     Software,
@@ -56,6 +60,7 @@ struct AidaApp {
     snap: HardwareSnapshot,
     prev_stat: Option<CpuStatSnap>,
     prev_net: Option<Vec<NetSnap>>,
+    prev_disk: Option<Vec<DiskSnap>>,
     alert_log: AlertLogger,
     alert_log_path: PathBuf,
     alert_log_err: Option<String>,
@@ -63,6 +68,9 @@ struct AidaApp {
     cjk: bool,
     last_poll: Instant,
     temps: HashMap<String, VecDeque<[f64; 2]>>,
+    cpu_hist: VecDeque<[f64; 2]>,
+    net_hist: HashMap<String, VecDeque<[f64; 2]>>,
+    disk_hist: HashMap<String, VecDeque<[f64; 2]>>,
     t0: Instant,
     bench: Option<BenchReport>,
     export_msg: Option<String>,
@@ -79,11 +87,13 @@ impl AidaApp {
         let snap = HardwareSnapshot::collect_cpu_sample(&ctx, false);
         let prev_stat = crate::probes::cpu::read_proc_stat(&ctx);
         let prev_net = Some(crate::probes::net::counters(&snap.net));
+        let prev_disk = Some(crate::probes::block::counters(&snap.block));
         Self {
             ctx,
             snap,
             prev_stat,
             prev_net,
+            prev_disk,
             alert_log: AlertLogger::default(),
             alert_log_path: crate::alerts::default_log_path(),
             alert_log_err: None,
@@ -91,6 +101,9 @@ impl AidaApp {
             cjk,
             last_poll: Instant::now(),
             temps: HashMap::new(),
+            cpu_hist: VecDeque::new(),
+            net_hist: HashMap::new(),
+            disk_hist: HashMap::new(),
             t0: Instant::now(),
             bench: None,
             export_msg: None,
@@ -108,8 +121,13 @@ impl AidaApp {
         }
         let dt = self.last_poll.elapsed().as_secs_f64();
         self.last_poll = Instant::now();
-        self.snap
-            .refresh_live(&self.ctx, &mut self.prev_stat, &mut self.prev_net, dt);
+        self.snap.refresh_live(
+            &self.ctx,
+            &mut self.prev_stat,
+            &mut self.prev_net,
+            &mut self.prev_disk,
+            dt,
+        );
         let events = self
             .alert_log
             .ingest(self.snap.collected_at_unix_ms, &self.snap.alerts);
@@ -117,11 +135,42 @@ impl AidaApp {
             self.alert_log_err = Some(e);
         }
         let t = self.t0.elapsed().as_secs_f64();
+        if let Some(u) = self.snap.cpu.utilization_pct {
+            push_hist(&mut self.cpu_hist, t, u as f64);
+        }
         for (key, value) in hwmon::temperature_series(&self.snap.sensors) {
-            let q = self.temps.entry(key).or_default();
-            q.push_back([t, value]);
-            while q.len() > HISTORY {
-                q.pop_front();
+            push_hist(self.temps.entry(key).or_default(), t, value);
+        }
+        for i in &self.snap.net.interfaces {
+            if let Some(bps) = i.rx_bps {
+                push_hist(
+                    self.net_hist.entry(format!("{} RX", i.name)).or_default(),
+                    t,
+                    bps,
+                );
+            }
+            if let Some(bps) = i.tx_bps {
+                push_hist(
+                    self.net_hist.entry(format!("{} TX", i.name)).or_default(),
+                    t,
+                    bps,
+                );
+            }
+        }
+        for d in &self.snap.block.devices {
+            if let Some(bps) = d.rd_bps {
+                push_hist(
+                    self.disk_hist.entry(format!("{} rd", d.name)).or_default(),
+                    t,
+                    bps,
+                );
+            }
+            if let Some(bps) = d.wr_bps {
+                push_hist(
+                    self.disk_hist.entry(format!("{} wr", d.name)).or_default(),
+                    t,
+                    bps,
+                );
             }
         }
     }
@@ -189,6 +238,7 @@ impl eframe::App for AidaApp {
                     Nav::Dmi,
                     tr(cjk, "主板 / DMI", "Motherboard / DMI"),
                 );
+                nav_btn(ui, &mut self.nav, Nav::Memory, tr(cjk, "内存", "Memory"));
                 nav_btn(ui, &mut self.nav, Nav::Gpu, tr(cjk, "显示适配器", "GPU"));
                 nav_btn(
                     ui,
@@ -196,6 +246,7 @@ impl eframe::App for AidaApp {
                     Nav::Sensors,
                     tr(cjk, "传感器", "Sensors"),
                 );
+                nav_btn(ui, &mut self.nav, Nav::Power, tr(cjk, "电源 / 电池", "Power"));
                 nav_btn(
                     ui,
                     &mut self.nav,
@@ -205,6 +256,7 @@ impl eframe::App for AidaApp {
                 nav_btn(ui, &mut self.nav, Nav::Network, tr(cjk, "网络", "Network"));
                 nav_btn(ui, &mut self.nav, Nav::Usb, tr(cjk, "USB", "USB"));
                 nav_btn(ui, &mut self.nav, Nav::Input, tr(cjk, "输入设备", "Input"));
+                nav_btn(ui, &mut self.nav, Nav::Audio, tr(cjk, "声卡", "Audio"));
                 nav_btn(ui, &mut self.nav, Nav::Pci, tr(cjk, "PCI 设备", "PCI"));
                 nav_btn(ui, &mut self.nav, Nav::Numa, tr(cjk, "NUMA 内存", "NUMA"));
                 nav_btn(ui, &mut self.nav, Nav::Software, tr(cjk, "操作系统", "OS"));
@@ -227,12 +279,15 @@ impl eframe::App for AidaApp {
             Nav::Summary => self.ui_summary(ui),
             Nav::Cpu => self.ui_cpu(ui),
             Nav::Dmi => self.ui_dmi(ui),
+            Nav::Memory => self.ui_memory(ui),
             Nav::Gpu => self.ui_gpu(ui),
             Nav::Sensors => self.ui_sensors(ui),
+            Nav::Power => self.ui_power(ui),
             Nav::Storage => self.ui_storage(ui),
             Nav::Network => self.ui_net(ui),
             Nav::Usb => self.ui_usb(ui),
             Nav::Input => self.ui_input(ui),
+            Nav::Audio => self.ui_audio(ui),
             Nav::Pci => self.ui_pci(ui),
             Nav::Numa => self.ui_numa(ui),
             Nav::Software => self.ui_software(ui),
@@ -278,13 +333,31 @@ impl AidaApp {
             self.t("内核", "Kernel"),
             &self.snap.software.kernel_release.display(),
         );
-        if let Some(kb) = self.snap.software.mem_total_kb.value {
+        if let Some(kb) = self.snap.memory.total_kb.value {
+            let avail = self
+                .snap
+                .memory
+                .available_kb
+                .value
+                .map(|v| crate::export::format_bytes(v * 1024))
+                .unwrap_or_else(|| "—".into());
             kv(
                 ui,
                 self.t("内存", "Memory"),
-                &crate::export::format_bytes(kb * 1024),
+                &format!("{}  (avail {avail})", crate::export::format_bytes(kb * 1024)),
             );
         }
+        kv(
+            ui,
+            self.t("固件", "Firmware"),
+            &self
+                .snap
+                .firmware
+                .interface
+                .value
+                .clone()
+                .unwrap_or_else(|| self.snap.firmware.interface.access_label()),
+        );
         kv(
             ui,
             self.t("PCI 设备数", "PCI devices"),
@@ -374,6 +447,16 @@ impl AidaApp {
                 "no"
             },
         );
+        kv(ui, "microcode", &self.snap.cpu.microcode.display());
+        if !self.cpu_hist.is_empty() {
+            Plot::new("cpu_util_plot")
+                .height(140.0)
+                .legend(egui_plot::Legend::default())
+                .show(ui, |plot| {
+                    let pts: PlotPoints = self.cpu_hist.iter().copied().map(|p| [p[0], p[1]]).collect();
+                    plot.line(Line::new(pts).name("%"));
+                });
+        }
         for n in &self.snap.cpu.notes {
             ui.colored_label(Color32::YELLOW, n);
         }
@@ -383,6 +466,7 @@ impl AidaApp {
                 ui.strong("#");
                 ui.strong("core");
                 ui.strong("MHz");
+                ui.strong("%");
                 ui.strong("governor");
                 ui.end_row();
                 for l in &self.snap.cpu.logical {
@@ -399,6 +483,11 @@ impl AidaApp {
                         .or_else(|| l.mhz_from_cpuinfo.map(|m| format!("{m:.0}")))
                         .unwrap_or_else(|| l.scaling_cur_khz.access_label());
                     ui.label(mhz);
+                    ui.label(
+                        l.utilization_pct
+                            .map(|u| format!("{u:.0}"))
+                            .unwrap_or_else(|| "—".into()),
+                    );
                     ui.label(l.governor.display());
                     ui.end_row();
                 }
@@ -417,7 +506,140 @@ impl AidaApp {
             ui.collapsing("flags", |ui| {
                 ui.label(self.snap.cpu.flags.join(" "));
             });
+            if !self.snap.cpu.vulnerabilities.is_empty() {
+                ui.collapsing(self.t("CPU 漏洞缓解", "CPU vulnerabilities"), |ui| {
+                    for v in &self.snap.cpu.vulnerabilities {
+                        kv(ui, &v.name, &v.status.display());
+                    }
+                });
+            }
         });
+    }
+
+    fn ui_memory(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("内存", "Memory"));
+        for n in &self.snap.memory.notes {
+            ui.weak(n);
+        }
+        let m = &self.snap.memory;
+        kv(
+            ui,
+            self.t("物理", "Physical"),
+            &kb_pair(&m.total_kb, &m.available_kb),
+        );
+        kv(ui, "MemFree", &kb_disp(&m.free_kb));
+        kv(
+            ui,
+            "Buffers / Cached",
+            &format!("{} / {}", kb_disp(&m.buffers_kb), kb_disp(&m.cached_kb)),
+        );
+        kv(
+            ui,
+            "Anon / Shmem",
+            &format!("{} / {}", kb_disp(&m.anon_kb), kb_disp(&m.shmem_kb)),
+        );
+        kv(
+            ui,
+            "Dirty / Mapped",
+            &format!("{} / {}", kb_disp(&m.dirty_kb), kb_disp(&m.mapped_kb)),
+        );
+        kv(
+            ui,
+            "Swap",
+            &format!("{} / {}", kb_disp(&m.swap_total_kb), kb_disp(&m.swap_free_kb)),
+        );
+        kv(
+            ui,
+            "Committed",
+            &format!(
+                "{} / limit {}",
+                kb_disp(&m.committed_as_kb),
+                kb_disp(&m.commit_limit_kb)
+            ),
+        );
+        kv(ui, "THP", &m.thp_enabled.display());
+        if !m.hugepages.is_empty() {
+            ui.separator();
+            ui.strong("hugepages");
+            for p in &m.hugepages {
+                kv(
+                    ui,
+                    &format!("{} KiB", p.size_kb),
+                    &format!(
+                        "nr {}  free {}  surplus {}",
+                        p.nr.display(),
+                        p.free.display(),
+                        p.surplus.display()
+                    ),
+                );
+            }
+        }
+    }
+
+    fn ui_power(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("电源 / 电池", "Power"));
+        for n in &self.snap.power.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        for s in &self.snap.power.supplies {
+            ui.separator();
+            ui.strong(&s.name);
+            kv(ui, self.t("类型", "type"), &s.kind.display());
+            kv(ui, self.t("状态", "status"), &s.status.display());
+            if s.capacity_pct.access == AccessKind::Ok {
+                kv(
+                    ui,
+                    self.t("电量", "capacity"),
+                    &s.capacity_pct
+                        .value
+                        .map(|v| format!("{v}%"))
+                        .unwrap_or_else(|| s.capacity_pct.access_label()),
+                );
+            }
+            if s.online.access == AccessKind::Ok {
+                kv(ui, "online", &s.online.display());
+            }
+            if s.voltage_v.access == AccessKind::Ok {
+                kv(
+                    ui,
+                    "V",
+                    &s.voltage_v
+                        .value
+                        .map(|v| format!("{v:.2}"))
+                        .unwrap_or_else(|| s.voltage_v.access_label()),
+                );
+            }
+            if s.energy_now_wh.access == AccessKind::Ok {
+                kv(
+                    ui,
+                    "Wh",
+                    &format!(
+                        "{} / {}",
+                        s.energy_now_wh.display(),
+                        s.energy_full_wh.display()
+                    ),
+                );
+            }
+            field_row(ui, "serial", &s.serial);
+            kv(ui, "model", &s.model.display());
+            kv(ui, "cycles", &s.cycle_count.display());
+        }
+    }
+
+    fn ui_audio(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("声卡", "Audio"));
+        for n in &self.snap.audio.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        for c in &self.snap.audio.cards {
+            ui.separator();
+            ui.strong(format!("#{} {}", c.index, c.id));
+            kv(ui, self.t("名称", "name"), &c.name);
+            if let Some(e) = &c.extra {
+                ui.weak(e);
+            }
+            kv(ui, "sys id", &c.sys_id.display());
+        }
     }
 
     fn ui_dmi(&self, ui: &mut egui::Ui) {
@@ -618,17 +840,33 @@ impl AidaApp {
                         .unwrap_or_else(|| tz.temp_c.access_label()),
                 );
             }
+            if !self.snap.sensors.cooling.is_empty() {
+                ui.separator();
+                ui.strong(self.t("冷却设备", "Cooling"));
+                for c in &self.snap.sensors.cooling {
+                    kv(
+                        ui,
+                        &format!("{} ({})", c.name, c.r#type.display()),
+                        &format!("{}/{}", c.cur_state.display(), c.max_state.display()),
+                    );
+                }
+            }
         });
     }
 
     fn ui_storage(&self, ui: &mut egui::Ui) {
         ui.heading(self.t("存储", "Storage"));
+        if !self.disk_hist.is_empty() {
+            plot_lines(ui, "disk_io_plot", &self.disk_hist, 140.0);
+        }
         ui.strong("Block");
         egui::Grid::new("blk").striped(true).show(ui, |ui| {
             ui.strong("name");
             ui.strong("type");
             ui.strong("size");
             ui.strong("model");
+            ui.strong("rd");
+            ui.strong("wr");
             ui.end_row();
             for b in &self.snap.block.devices {
                 ui.label(&b.name);
@@ -640,6 +878,26 @@ impl AidaApp {
                         .unwrap_or_else(|| b.size_bytes.access_label()),
                 );
                 ui.label(b.model.display());
+                ui.label(
+                    b.rd_bps
+                        .map(crate::export::format_bps)
+                        .unwrap_or_else(|| {
+                            b.rd_bytes
+                                .value
+                                .map(crate::export::format_bytes)
+                                .unwrap_or_else(|| b.rd_bytes.access_label())
+                        }),
+                );
+                ui.label(
+                    b.wr_bps
+                        .map(crate::export::format_bps)
+                        .unwrap_or_else(|| {
+                            b.wr_bytes
+                                .value
+                                .map(crate::export::format_bytes)
+                                .unwrap_or_else(|| b.wr_bytes.access_label())
+                        }),
+                );
                 ui.end_row();
             }
         });
@@ -683,6 +941,9 @@ impl AidaApp {
             "来自 /sys/class/net 与 getifaddrs，不调用 ip/ifconfig。",
             "From /sys/class/net and getifaddrs; no ip/ifconfig.",
         ));
+        if !self.net_hist.is_empty() {
+            plot_lines(ui, "net_rate_plot", &self.net_hist, 140.0);
+        }
         for n in &self.snap.net.notes {
             ui.colored_label(Color32::from_rgb(255, 179, 71), n);
         }
@@ -905,6 +1166,21 @@ impl AidaApp {
                 .unwrap_or_else(|| self.snap.software.mem_total_kb.access_label()),
         );
         kv(ui, "desktop", &self.snap.software.desktop.display());
+        kv(
+            ui,
+            self.t("固件", "Firmware"),
+            &self
+                .snap
+                .firmware
+                .interface
+                .value
+                .clone()
+                .unwrap_or_else(|| self.snap.firmware.interface.access_label()),
+        );
+        kv(ui, "Secure Boot", &self.snap.firmware.secure_boot.display());
+        for n in &self.snap.firmware.notes {
+            ui.weak(n);
+        }
         ui.collapsing("cmdline", |ui| {
             ui.label(self.snap.software.cmdline.display());
         });
@@ -1015,6 +1291,40 @@ fn tr<'a>(cjk: bool, zh: &'a str, en: &'a str) -> &'a str {
     } else {
         en
     }
+}
+
+fn push_hist(q: &mut VecDeque<[f64; 2]>, t: f64, v: f64) {
+    q.push_back([t, v]);
+    while q.len() > HISTORY {
+        q.pop_front();
+    }
+}
+
+fn plot_lines(
+    ui: &mut egui::Ui,
+    id: &str,
+    series: &HashMap<String, VecDeque<[f64; 2]>>,
+    height: f32,
+) {
+    Plot::new(id)
+        .height(height)
+        .legend(egui_plot::Legend::default())
+        .show(ui, |plot| {
+            for (name, q) in series {
+                let pts: PlotPoints = q.iter().copied().map(|p| [p[0], p[1]]).collect();
+                plot.line(Line::new(pts).name(name));
+            }
+        });
+}
+
+fn kb_disp(s: &crate::Sample<u64>) -> String {
+    s.value
+        .map(|v| crate::export::format_bytes(v * 1024))
+        .unwrap_or_else(|| s.access_label())
+}
+
+fn kb_pair(total: &crate::Sample<u64>, avail: &crate::Sample<u64>) -> String {
+    format!("{}  avail {}", kb_disp(total), kb_disp(avail))
 }
 
 fn nav_btn(ui: &mut egui::Ui, current: &mut Nav, id: Nav, label: &str) {

@@ -39,6 +39,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 17. **`/proc/bus/input/devices` 在无头虚拟机里经常不存在。** 提示路径即可。
 18. **NUMA `meminfo` 行是 `Node 0 MemTotal:`**，不能当 `/proc/meminfo` 的 `MemTotal:` 去切。
 19. **告警日志只在状态变化时写一行 JSONL。** 持续越限不会刷盘；恢复再写 `ok`。
+20. **`/proc/stat` 的 `cpu` 行与 `cpu0` 行不要混用。** 整机利用率用前者，每核用后者。
+21. **`/proc/diskstats` 的扇区按 512 字节计**（即使盘是 4K）。差分前先乘 512。
+22. **Secure Boot efivar 前 4 字节是属性。** 真正的开关是第 5 个字节。
+23. **无 `power_supply` 不是 bug。** 多数服务器/容器没有电池节点。
 
 ## 测试方案
 

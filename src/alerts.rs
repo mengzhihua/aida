@@ -192,6 +192,7 @@ mod tests {
                 channels: vec![ch("t", 100.0, Some(80.0), Some(95.0))],
             }],
             thermal_zones: vec![],
+            cooling: vec![],
             notes: vec![],
         };
         let a = evaluate(&sensors);

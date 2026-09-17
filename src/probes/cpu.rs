@@ -22,11 +22,20 @@ pub struct CpuInfo {
     pub bugs: Vec<String>,
     pub address_sizes: Sample<String>,
     pub hypervisor: bool,
+    pub microcode: Sample<String>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
     pub utilization_pct: Option<f32>,
+    /// `/sys/devices/system/cpu/vulnerabilities/*`
+    pub vulnerabilities: Vec<CpuVuln>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CpuVuln {
+    pub name: String,
+    pub status: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -41,6 +50,7 @@ pub struct LogicalCpu {
     pub scaling_max_khz: Sample<u64>,
     pub governor: Sample<String>,
     pub online: Sample<String>,
+    pub utilization_pct: Option<f32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -57,6 +67,8 @@ pub struct CpuCache {
 pub struct CpuStatSnap {
     pub total: u64,
     pub idle: u64,
+    /// (logical id, total, idle)
+    pub per_cpu: Vec<(u32, u64, u64)>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> CpuInfo {
@@ -101,6 +113,10 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         .map(|v| Sample::ok(v, cpuinfo_path.display().to_string()))
         .unwrap_or_else(|| Sample::missing(cpuinfo_path.display().to_string()));
     let hypervisor = flags.iter().any(|f| f == "hypervisor");
+    let microcode = first
+        .and_then(|m| m.get("microcode").cloned())
+        .map(|v| Sample::ok(v, cpuinfo_path.display().to_string()))
+        .unwrap_or_else(|| Sample::missing(cpuinfo_path.display().to_string()));
 
     let mut logical = Vec::new();
     let mut packages = std::collections::BTreeSet::new();
@@ -132,6 +148,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
             scaling_max_khz: read_u64(cpu_dir.join("cpufreq/cpuinfo_max_freq")),
             governor: access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor")),
             online: access::read_trimmed(cpu_dir.join("online")),
+            utilization_pct: None,
         });
     }
 
@@ -153,6 +170,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
                             scaling_max_khz: read_u64(cpu_dir.join("cpufreq/cpuinfo_max_freq")),
                             governor: access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor")),
                             online: access::read_trimmed(cpu_dir.join("online")),
+                            utilization_pct: None,
                         });
                     }
                 }
@@ -177,6 +195,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
             let a = read_proc_stat(ctx);
             std::thread::sleep(d);
             let b = read_proc_stat(ctx);
+            apply_per_cpu(&mut logical, &a, &b);
             utilization(&a, &b)
         }
         _ => None,
@@ -186,47 +205,90 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
     if hypervisor {
         notes.push("cpuinfo flags 含 hypervisor，当前像是虚拟机/容器 CPU。".into());
     }
-    if logical.iter().all(|l| l.scaling_cur_khz.access == AccessKind::NotFound) {
-        notes.push("无 cpufreq sysfs：虚拟机或内核未启用 CPU 频率驱动，频率只能看 cpuinfo 的 cpu MHz。".into());
+    if logical
+        .iter()
+        .all(|l| l.scaling_cur_khz.access == AccessKind::NotFound)
+    {
+        notes.push(
+            "无 cpufreq sysfs：虚拟机或内核未启用 CPU 频率驱动，频率只能看 cpuinfo 的 cpu MHz。"
+                .into(),
+        );
     }
 
     CpuInfo {
         model_name,
         vendor,
         logical_cpus: logical.len(),
-        physical_packages: if packages.is_empty() { 1 } else { packages.len() },
+        physical_packages: if packages.is_empty() {
+            1
+        } else {
+            packages.len()
+        },
         cores_per_package,
         flags,
         bugs,
         address_sizes,
         hypervisor,
+        microcode,
         logical,
         caches,
         utilization_pct,
+        vulnerabilities: collect_vulns(ctx),
         notes,
     }
 }
 
 pub fn read_proc_stat(ctx: &ProbeCtx) -> Option<CpuStatSnap> {
     let text = fs::read_to_string(ctx.proc_path("stat")).ok()?;
-    let line = text.lines().find(|l| l.starts_with("cpu "))?;
-    let mut nums = line.split_whitespace().skip(1).filter_map(|s| s.parse::<u64>().ok());
-    let user = nums.next()?;
-    let nice = nums.next()?;
-    let system = nums.next()?;
-    let idle = nums.next()?;
-    let iowait = nums.next().unwrap_or(0);
-    let irq = nums.next().unwrap_or(0);
-    let softirq = nums.next().unwrap_or(0);
-    let steal = nums.next().unwrap_or(0);
-    let guest = nums.next().unwrap_or(0);
-    let guest_nice = nums.next().unwrap_or(0);
-    let idle_all = idle + iowait;
-    let total = user + nice + system + idle + iowait + irq + softirq + steal + guest + guest_nice;
+    let mut all = None;
+    let mut per_cpu = Vec::new();
+    for line in text.lines() {
+        if !line.starts_with("cpu") {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let label = it.next()?;
+        let nums: Vec<u64> = it.filter_map(|s| s.parse().ok()).collect();
+        if nums.len() < 4 {
+            continue;
+        }
+        let idle = nums[3] + nums.get(4).copied().unwrap_or(0);
+        let total: u64 = nums.iter().take(10).sum();
+        if label == "cpu" {
+            all = Some((total, idle));
+        } else if let Some(rest) = label.strip_prefix("cpu") {
+            if let Ok(id) = rest.parse::<u32>() {
+                per_cpu.push((id, total, idle));
+            }
+        }
+    }
+    let (total, idle) = all?;
     Some(CpuStatSnap {
         total,
-        idle: idle_all,
+        idle,
+        per_cpu,
     })
+}
+
+pub fn apply_per_cpu(
+    logical: &mut [LogicalCpu],
+    a: &Option<CpuStatSnap>,
+    b: &Option<CpuStatSnap>,
+) {
+    let (Some(a), Some(b)) = (a, b) else {
+        return;
+    };
+    for l in logical {
+        let pa = a.per_cpu.iter().find(|x| x.0 == l.processor);
+        let pb = b.per_cpu.iter().find(|x| x.0 == l.processor);
+        if let (Some(pa), Some(pb)) = (pa, pb) {
+            let dt = pb.1.saturating_sub(pa.1);
+            if dt > 0 {
+                let di = pb.2.saturating_sub(pa.2);
+                l.utilization_pct = Some(((dt - di) as f32) * 100.0 / dt as f32);
+            }
+        }
+    }
 }
 
 pub fn utilization(a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) -> Option<f32> {
@@ -238,6 +300,23 @@ pub fn utilization(a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) -> Option<f
     }
     let di = b.idle.saturating_sub(a.idle);
     Some(((dt - di) as f32) * 100.0 / dt as f32)
+}
+
+fn collect_vulns(ctx: &ProbeCtx) -> Vec<CpuVuln> {
+    let root = ctx.sys_path("devices/system/cpu/vulnerabilities");
+    let names = match access::list_dir_names(&root).value {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    let mut out: Vec<CpuVuln> = names
+        .into_iter()
+        .map(|name| CpuVuln {
+            status: access::read_trimmed(root.join(&name)),
+            name,
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 fn read_u64(path: std::path::PathBuf) -> Sample<u64> {
