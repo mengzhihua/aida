@@ -156,8 +156,57 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ),
             ),
             ("THP", snap.memory.thp_enabled.display()),
+            (
+                "KSM",
+                format!(
+                    "run {} shared {} sharing {}",
+                    snap.memory.ksm.run.display(),
+                    snap.memory.ksm.pages_shared.display(),
+                    snap.memory.ksm.pages_sharing.display()
+                ),
+            ),
+            (
+                "vmstat",
+                format!(
+                    "pgfault {} maj {} oom {}",
+                    snap.memory.vmstat.pgfault.display(),
+                    snap.memory.vmstat.pgmajfault.display(),
+                    snap.memory.vmstat.oom_kill.display()
+                ),
+            ),
         ],
     );
+    if snap.memory.mem_blocks.total > 0 {
+        html.push_str(&format!(
+            "<p class=\"muted\">memory blocks {}/{} online, size {}</p>",
+            snap.memory.mem_blocks.online,
+            snap.memory.mem_blocks.total,
+            esc(&snap
+                .memory
+                .mem_blocks
+                .block_size_bytes
+                .value
+                .map(format_bytes)
+                .unwrap_or_else(|| snap.memory.mem_blocks.block_size_bytes.access_label()))
+        ));
+    }
+    if !snap.memory.buddy.is_empty() {
+        html.push_str("<table><tr><th>node</th><th>zone</th><th>buddy free</th></tr>");
+        for z in &snap.memory.buddy {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                z.node,
+                esc(&z.zone),
+                esc(&z
+                    .free_counts
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" "))
+            ));
+        }
+        html.push_str("</table>");
+    }
     if !snap.memory.hugepages.is_empty() {
         html.push_str("<table><tr><th>页大小</th><th>nr</th><th>free</th></tr>");
         for p in &snap.memory.hugepages {
@@ -280,6 +329,29 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.power.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
+    if !snap.rapl.zones.is_empty() {
+        html.push_str("<table><tr><th>RAPL</th><th>功率</th><th>限制</th><th>energy_uj</th></tr>");
+        for z in &snap.rapl.zones {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(z.label.value.as_deref().unwrap_or(&z.name)),
+                esc(&z
+                    .power_w
+                    .map(|w| format!("{w:.2} W"))
+                    .unwrap_or_else(|| "n/a".into())),
+                esc(&z
+                    .power_limit_uw
+                    .value
+                    .map(|u| format!("{:.1} W", u as f64 / 1_000_000.0))
+                    .unwrap_or_else(|| z.power_limit_uw.access_label())),
+                esc(&z.energy_uj.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.rapl.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
 
     section(&mut html, "声卡");
     if snap.audio.cards.is_empty() {
@@ -350,6 +422,26 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
     html.push_str("</table>");
 
+    section(&mut html, "virtio");
+    if snap.virtio.devices.is_empty() {
+        html.push_str("<p class=\"muted\">无 virtio 设备</p>");
+    } else {
+        html.push_str("<table><tr><th>节点</th><th>类型</th><th>驱动</th><th>status</th></tr>");
+        for d in &snap.virtio.devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&d.name),
+                esc(&d.kind),
+                esc(&d.driver.display()),
+                esc(&d.status.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.virtio.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+
     section(&mut html, "GPU");
     if snap.gpu.devices.is_empty() {
         html.push_str("<p class=\"warn\">未发现 GPU / DRM 设备</p>");
@@ -411,7 +503,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
 
     section(&mut html, "网络");
-    html.push_str("<table><tr><th>接口</th><th>状态</th><th>类型</th><th>速率</th><th>地址</th><th>RX / TX</th></tr>");
+    html.push_str(
+        "<table><tr><th>接口</th><th>状态</th><th>类型</th><th>速率</th><th>队列</th><th>地址</th><th>RX / TX</th></tr>",
+    );
     for i in &snap.net.interfaces {
         let speed = i
             .speed_mbps
@@ -423,7 +517,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             _ => i.rx_bytes.access_label(),
         };
         html.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>rx {} tx {}</td><td>{}</td><td>{}</td></tr>",
             esc(&i.name),
             esc(&i.operstate.display()),
             esc(&if i.wireless {
@@ -432,14 +526,39 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 i.kind.clone()
             }),
             esc(&speed),
+            i.rx_queues,
+            i.tx_queues,
             esc(&i.addresses.join(", ")),
             esc(&rx_tx)
         ));
     }
     if snap.net.interfaces.is_empty() {
-        html.push_str("<tr><td colspan=\"6\" class=\"warn\">无网卡</td></tr>");
+        html.push_str("<tr><td colspan=\"7\" class=\"warn\">无网卡</td></tr>");
     }
     html.push_str("</table>");
+    html.push_str(&format!(
+        "<p class=\"muted\">sockstat sockets {} TCP {} TIME_WAIT {} UDP {}</p>",
+        snap.net
+            .sockstat
+            .sockets_used
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .sockstat
+            .tcp_inuse
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .sockstat
+            .tcp_tw
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .sockstat
+            .udp_inuse
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into())
+    ));
     for n in &snap.net.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
@@ -546,6 +665,21 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ));
     }
     html.push_str("</table>");
+    for b in &snap.block.devices {
+        html.push_str(&format!(
+            "<p class=\"muted\">{} queue phys/log {}/{} nr {} cache {} discard {}</p>",
+            esc(&b.name),
+            esc(&b.physical_block_size.display()),
+            esc(&b.logical_block_size.display()),
+            esc(&b.nr_requests.display()),
+            esc(&b.write_cache.display()),
+            esc(&b
+                .discard_max_bytes
+                .value
+                .map(format_bytes)
+                .unwrap_or_else(|| b.discard_max_bytes.access_label()))
+        ));
+    }
     if !snap.ata.ports.is_empty() {
         html.push_str("<table><tr><th>ATA</th><th>链路</th><th>设备</th></tr>");
         for p in &snap.ata.ports {
@@ -653,6 +787,25 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
             ("clocksource", snap.clock.current.display()),
             ("available_clocksource", snap.clock.available.display()),
+            (
+                "PTP",
+                if snap.clock.ptps.is_empty() {
+                    "—".into()
+                } else {
+                    snap.clock
+                        .ptps
+                        .iter()
+                        .map(|p| {
+                            format!(
+                                "{} {}",
+                                p.name,
+                                p.clock_name.display()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            ),
             ("模块数", snap.modules.modules.len().to_string()),
             (
                 "tainted",
@@ -688,6 +841,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 esc(&l.irq),
                 l.total,
                 esc(&l.extra)
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.irq.softirqs.is_empty() {
+        html.push_str("<table><tr><th>softirq</th><th>合计</th></tr>");
+        for l in snap.irq.softirqs.iter().take(8) {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(&l.irq),
+                l.total
             ));
         }
         html.push_str("</table>");

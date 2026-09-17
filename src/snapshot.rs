@@ -6,9 +6,10 @@ use crate::access::{Privilege, ProbeCtx};
 use crate::alerts::{self, Alert};
 use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
+use crate::probes::rapl::RaplSnap;
 use crate::probes::{
     ata, audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, irq, memory,
-    modules, net, numa, nvme, pci, power, psi, software, usb,
+    modules, net, numa, nvme, pci, power, psi, rapl, software, usb, virtio,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -25,12 +26,14 @@ pub struct HardwareSnapshot {
     pub alerts: Vec<Alert>,
     pub nvme: nvme::NvmeReport,
     pub pci: pci::PciReport,
+    pub virtio: virtio::VirtioReport,
     pub gpu: gpu::GpuReport,
     pub net: net::NetReport,
     pub usb: usb::UsbReport,
     pub input: input::InputReport,
     pub audio: audio::AudioReport,
     pub power: power::PowerReport,
+    pub rapl: rapl::RaplReport,
     pub numa: numa::NumaReport,
     pub block: block::BlockReport,
     pub fs: fs::FsReport,
@@ -60,19 +63,25 @@ impl HardwareSnapshot {
         } else {
             None
         };
+        let rapl_prev = if sample_util {
+            Some(rapl::counters(&rapl::collect(ctx)))
+        } else {
+            None
+        };
         let cpu = if sample_util {
             cpu::collect(ctx)
         } else {
             cpu::collect_with_util(ctx, None)
         };
-        let (net, block) = if sample_util {
+        let (net, block, rapl) = if sample_util {
             std::thread::sleep(std::time::Duration::from_millis(120));
             (
                 net::collect_with_prev(ctx, net_prev.as_deref(), 0.12),
                 block::collect_with_prev(ctx, disk_prev.as_deref(), 0.12),
+                rapl::collect_with_prev(ctx, rapl_prev.as_deref(), 0.12),
             )
         } else {
-            (net::collect(ctx), block::collect(ctx))
+            (net::collect(ctx), block::collect(ctx), rapl::collect(ctx))
         };
         let sensors = hwmon::collect(ctx);
         let alerts = alerts::evaluate(&sensors);
@@ -89,12 +98,14 @@ impl HardwareSnapshot {
             alerts,
             nvme: nvme::collect(ctx),
             pci: pci::collect(ctx),
+            virtio: virtio::collect(ctx),
             gpu: gpu::collect(ctx),
             net,
             usb: usb::collect(ctx),
             input: input::collect(ctx),
             audio: audio::collect(ctx),
             power: power::collect(ctx),
+            rapl,
             numa: numa::collect(ctx),
             block,
             fs: fs::collect(ctx),
@@ -115,6 +126,7 @@ impl HardwareSnapshot {
         prev_stat: &mut Option<cpu::CpuStatSnap>,
         prev_net: &mut Option<Vec<NetSnap>>,
         prev_disk: &mut Option<Vec<DiskSnap>>,
+        prev_rapl: &mut Option<Vec<RaplSnap>>,
         dt_sec: f64,
     ) {
         let now = cpu::read_proc_stat(ctx);
@@ -132,6 +144,8 @@ impl HardwareSnapshot {
         *prev_disk = Some(block::counters(&self.block));
         self.memory = memory::collect(ctx);
         self.power = power::collect(ctx);
+        self.rapl = rapl::collect_with_prev(ctx, prev_rapl.as_deref(), dt_sec);
+        *prev_rapl = Some(rapl::counters(&self.rapl));
         self.software = software::collect(ctx);
         self.clock = clock::collect(ctx);
         self.edac = edac::collect(ctx);

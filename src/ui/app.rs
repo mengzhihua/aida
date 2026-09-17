@@ -15,6 +15,7 @@ use crate::probes::block::DiskSnap;
 use crate::probes::cpu::CpuStatSnap;
 use crate::probes::hwmon;
 use crate::probes::net::NetSnap;
+use crate::probes::rapl::RaplSnap;
 use crate::snapshot::HardwareSnapshot;
 
 const HISTORY: usize = 120;
@@ -62,6 +63,7 @@ struct AidaApp {
     prev_stat: Option<CpuStatSnap>,
     prev_net: Option<Vec<NetSnap>>,
     prev_disk: Option<Vec<DiskSnap>>,
+    prev_rapl: Option<Vec<RaplSnap>>,
     alert_log: AlertLogger,
     alert_log_path: PathBuf,
     alert_log_err: Option<String>,
@@ -72,6 +74,7 @@ struct AidaApp {
     cpu_hist: VecDeque<[f64; 2]>,
     net_hist: HashMap<String, VecDeque<[f64; 2]>>,
     disk_hist: HashMap<String, VecDeque<[f64; 2]>>,
+    rapl_hist: HashMap<String, VecDeque<[f64; 2]>>,
     t0: Instant,
     bench: Option<BenchReport>,
     export_msg: Option<String>,
@@ -89,12 +92,14 @@ impl AidaApp {
         let prev_stat = crate::probes::cpu::read_proc_stat(&ctx);
         let prev_net = Some(crate::probes::net::counters(&snap.net));
         let prev_disk = Some(crate::probes::block::counters(&snap.block));
+        let prev_rapl = Some(crate::probes::rapl::counters(&snap.rapl));
         Self {
             ctx,
             snap,
             prev_stat,
             prev_net,
             prev_disk,
+            prev_rapl,
             alert_log: AlertLogger::default(),
             alert_log_path: crate::alerts::default_log_path(),
             alert_log_err: None,
@@ -105,6 +110,7 @@ impl AidaApp {
             cpu_hist: VecDeque::new(),
             net_hist: HashMap::new(),
             disk_hist: HashMap::new(),
+            rapl_hist: HashMap::new(),
             t0: Instant::now(),
             bench: None,
             export_msg: None,
@@ -127,6 +133,7 @@ impl AidaApp {
             &mut self.prev_stat,
             &mut self.prev_net,
             &mut self.prev_disk,
+            &mut self.prev_rapl,
             dt,
         );
         let events = self
@@ -172,6 +179,16 @@ impl AidaApp {
                     t,
                     bps,
                 );
+            }
+        }
+        for z in &self.snap.rapl.zones {
+            if let Some(w) = z.power_w {
+                let label = z
+                    .label
+                    .value
+                    .clone()
+                    .unwrap_or_else(|| z.name.clone());
+                push_hist(self.rapl_hist.entry(label).or_default(), t, w);
             }
         }
     }
@@ -403,6 +420,20 @@ impl AidaApp {
             self.t("PCI 设备数", "PCI devices"),
             &self.snap.pci.devices.len().to_string(),
         );
+        if !self.snap.virtio.devices.is_empty() {
+            kv(
+                ui,
+                "virtio",
+                &self
+                    .snap
+                    .virtio
+                    .devices
+                    .iter()
+                    .map(|d| format!("{} {}", d.name, d.kind))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
         kv(
             ui,
             self.t("GPU", "GPU"),
@@ -616,6 +647,60 @@ impl AidaApp {
             ),
         );
         kv(ui, "THP", &m.thp_enabled.display());
+        kv(
+            ui,
+            "KSM",
+            &format!(
+                "run {}  shared {}  sharing {}  scans {}",
+                m.ksm.run.display(),
+                m.ksm.pages_shared.display(),
+                m.ksm.pages_sharing.display(),
+                m.ksm.full_scans.display()
+            ),
+        );
+        if m.mem_blocks.total > 0 {
+            kv(
+                ui,
+                self.t("热插拔块", "memory blocks"),
+                &format!(
+                    "{} online / {}  block {}",
+                    m.mem_blocks.online,
+                    m.mem_blocks.total,
+                    m.mem_blocks
+                        .block_size_bytes
+                        .value
+                        .map(crate::export::format_bytes)
+                        .unwrap_or_else(|| m.mem_blocks.block_size_bytes.access_label())
+                ),
+            );
+        }
+        kv(
+            ui,
+            "vmstat",
+            &format!(
+                "fault {}  maj {}  in {}  out {}  oom {}",
+                m.vmstat.pgfault.display(),
+                m.vmstat.pgmajfault.display(),
+                m.vmstat.pgpgin.display(),
+                m.vmstat.pgpgout.display(),
+                m.vmstat.oom_kill.display()
+            ),
+        );
+        if !m.buddy.is_empty() {
+            ui.separator();
+            ui.strong("buddyinfo");
+            for z in &m.buddy {
+                kv(
+                    ui,
+                    &format!("N{} {}", z.node, z.zone),
+                    &z.free_counts
+                        .iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+            }
+        }
         if !m.hugepages.is_empty() {
             ui.separator();
             ui.strong("hugepages");
@@ -701,6 +786,34 @@ impl AidaApp {
             field_row(ui, "serial", &s.serial);
             kv(ui, "model", &s.model.display());
             kv(ui, "cycles", &s.cycle_count.display());
+        }
+        ui.separator();
+        ui.strong("RAPL / powercap");
+        for n in &self.snap.rapl.notes {
+            ui.weak(n);
+        }
+        if !self.rapl_hist.is_empty() {
+            plot_lines(ui, "rapl_plot", &self.rapl_hist, 120.0);
+        }
+        for z in &self.snap.rapl.zones {
+            kv(
+                ui,
+                z.label.value.as_deref().unwrap_or(&z.name),
+                &format!(
+                    "{}  limit {}  max {}",
+                    z.power_w
+                        .map(|w| format!("{w:.2} W"))
+                        .unwrap_or_else(|| "n/a".into()),
+                    z.power_limit_uw
+                        .value
+                        .map(|u| format!("{:.1} W", u as f64 / 1_000_000.0))
+                        .unwrap_or_else(|| z.power_limit_uw.access_label()),
+                    z.max_power_uw
+                        .value
+                        .map(|u| format!("{:.1} W", u as f64 / 1_000_000.0))
+                        .unwrap_or_else(|| z.max_power_uw.access_label())
+                ),
+            );
         }
     }
 
@@ -1060,6 +1173,21 @@ impl AidaApp {
             }
         });
         for b in &self.snap.block.devices {
+            ui.weak(format!(
+                "{}  phys/log {}/{}  nr {}  dax {}  cache {}  discard {}",
+                b.name,
+                b.physical_block_size.display(),
+                b.logical_block_size.display(),
+                b.nr_requests.display(),
+                b.dax.display(),
+                b.write_cache.display(),
+                b.discard_max_bytes
+                    .value
+                    .map(crate::export::format_bytes)
+                    .unwrap_or_else(|| b.discard_max_bytes.access_label())
+            ));
+        }
+        for b in &self.snap.block.devices {
             if !b.partitions.is_empty() {
                 ui.weak(format!(
                     "{}: {}",
@@ -1207,6 +1335,11 @@ impl AidaApp {
                     kv(ui, "wireless", if i.wireless { "yes" } else { "no" });
                     kv(
                         ui,
+                        self.t("队列", "queues"),
+                        &format!("rx {}  tx {}", i.rx_queues, i.tx_queues),
+                    );
+                    kv(
+                        ui,
                         self.t("累计 RX", "RX bytes"),
                         &i.rx_bytes
                             .value
@@ -1226,6 +1359,26 @@ impl AidaApp {
                 });
             }
         });
+        let ss = &self.snap.net.sockstat;
+        kv(
+            ui,
+            "sockstat",
+            &format!(
+                "sockets {}  TCP {} (TIME_WAIT {})  UDP {}",
+                ss.sockets_used
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                ss.tcp_inuse
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                ss.tcp_tw
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                ss.udp_inuse
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into())
+            ),
+        );
     }
 
     fn ui_usb(&self, ui: &mut egui::Ui) {
@@ -1355,6 +1508,23 @@ impl AidaApp {
                 }
             });
         });
+        ui.separator();
+        ui.strong("virtio");
+        for n in &self.snap.virtio.notes {
+            ui.weak(n);
+        }
+        for d in &self.snap.virtio.devices {
+            kv(
+                ui,
+                &d.name,
+                &format!(
+                    "{}  {}  status {}",
+                    d.kind,
+                    d.driver.display(),
+                    d.status.display()
+                ),
+            );
+        }
     }
 
     fn ui_software(&self, ui: &mut egui::Ui) {
@@ -1433,6 +1603,17 @@ impl AidaApp {
         }
         for r in &self.snap.clock.rtcs {
             kv(ui, &format!("RTC {}", r.name), &r.rtc_name.display());
+        }
+        for p in &self.snap.clock.ptps {
+            kv(
+                ui,
+                &format!("PTP {}", p.name),
+                &format!(
+                    "{}  pps {}",
+                    p.clock_name.display(),
+                    p.pps_available.display()
+                ),
+            );
         }
         kv(
             ui,
@@ -1518,6 +1699,13 @@ impl AidaApp {
                     }
                 },
             );
+        }
+        if !self.snap.irq.softirqs.is_empty() {
+            ui.collapsing("softirq", |ui| {
+                for l in self.snap.irq.softirqs.iter().take(16) {
+                    kv(ui, &l.irq, &l.total.to_string());
+                }
+            });
         }
         ui.collapsing("cmdline", |ui| {
             ui.label(self.snap.software.cmdline.display());

@@ -22,5 +22,7 @@ pub mod nvme;
 pub mod pci;
 pub mod power;
 pub mod psi;
+pub mod rapl;
 pub mod software;
 pub mod usb;
+pub mod virtio;

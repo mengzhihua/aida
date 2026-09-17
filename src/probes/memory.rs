@@ -22,7 +22,49 @@ pub struct MemoryReport {
     pub committed_as_kb: Sample<u64>,
     pub thp_enabled: Sample<String>,
     pub hugepages: Vec<HugePagePool>,
+    pub buddy: Vec<BuddyZone>,
+    pub vmstat: Vmstat,
+    pub ksm: KsmInfo,
+    pub mem_blocks: MemoryBlocks,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BuddyZone {
+    pub node: u32,
+    pub zone: String,
+    /// order 0, 1, 2… 的空闲块个数（见 `/proc/buddyinfo`）。
+    pub free_counts: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Vmstat {
+    pub nr_free_pages: Sample<u64>,
+    pub pgfault: Sample<u64>,
+    pub pgmajfault: Sample<u64>,
+    pub pgpgin: Sample<u64>,
+    pub pgpgout: Sample<u64>,
+    pub pswpin: Sample<u64>,
+    pub pswpout: Sample<u64>,
+    pub oom_kill: Sample<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KsmInfo {
+    pub run: Sample<String>,
+    pub pages_shared: Sample<u64>,
+    pub pages_sharing: Sample<u64>,
+    pub pages_unshared: Sample<u64>,
+    pub full_scans: Sample<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryBlocks {
+    /// 内核 ABI 为十六进制；已换算成字节。
+    pub block_size_bytes: Sample<u64>,
+    pub total: usize,
+    pub online: usize,
+    pub offline: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -41,6 +83,10 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
     if hugepages.is_empty() {
         notes.push("未发现 hugepages-* 池（内核未启用大页时正常）。".into());
     }
+    let buddy = parse_buddyinfo(&access::read_trimmed(ctx.proc_path("buddyinfo")));
+    let vmstat = parse_vmstat(&access::read_trimmed(ctx.proc_path("vmstat")));
+    let ksm = read_ksm(ctx);
+    let mem_blocks = read_memory_blocks(ctx);
     if let (Some(total), Some(avail)) = (mem.total_kb.value, mem.available_kb.value) {
         if total > 0 {
             let used_pct = 100.0 * (total.saturating_sub(avail) as f64) / total as f64;
@@ -66,6 +112,10 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
         committed_as_kb: mem.committed_as_kb,
         thp_enabled,
         hugepages,
+        buddy,
+        vmstat,
+        ksm,
+        mem_blocks,
         notes,
     }
 }
@@ -169,6 +219,163 @@ fn read_hugepages(ctx: &ProbeCtx) -> Vec<HugePagePool> {
     out
 }
 
+pub fn parse_buddyinfo(sample: &Sample<String>) -> Vec<BuddyZone> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with("Node ") {
+            continue;
+        }
+        let Some((left, rest)) = line.split_once(", zone") else {
+            continue;
+        };
+        let node = left
+            .trim_start_matches("Node ")
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        let mut toks = rest.split_whitespace();
+        let zone = toks.next().unwrap_or("?").to_string();
+        let free_counts: Vec<u64> = toks.filter_map(|t| t.parse().ok()).collect();
+        if free_counts.is_empty() {
+            continue;
+        }
+        out.push(BuddyZone {
+            node,
+            zone,
+            free_counts,
+        });
+    }
+    out
+}
+
+fn parse_vmstat(sample: &Sample<String>) -> Vmstat {
+    let miss = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let pick = |map: &std::collections::BTreeMap<&str, u64>, key: &str| {
+        map.get(key)
+            .copied()
+            .map(|v| Sample::ok(v, sample.source.clone()))
+            .unwrap_or_else(miss)
+    };
+    let Some(text) = sample.value.as_deref() else {
+        return Vmstat {
+            nr_free_pages: miss(),
+            pgfault: miss(),
+            pgmajfault: miss(),
+            pgpgin: miss(),
+            pgpgout: miss(),
+            pswpin: miss(),
+            pswpout: miss(),
+            oom_kill: miss(),
+        };
+    };
+    let mut map = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        if let (Some(k), Some(v)) = (it.next(), it.next()) {
+            if let Ok(n) = v.parse::<u64>() {
+                map.insert(k, n);
+            }
+        }
+    }
+    Vmstat {
+        nr_free_pages: pick(&map, "nr_free_pages"),
+        pgfault: pick(&map, "pgfault"),
+        pgmajfault: pick(&map, "pgmajfault"),
+        pgpgin: pick(&map, "pgpgin"),
+        pgpgout: pick(&map, "pgpgout"),
+        pswpin: pick(&map, "pswpin"),
+        pswpout: pick(&map, "pswpout"),
+        oom_kill: pick(&map, "oom_kill"),
+    }
+}
+
+fn read_ksm(ctx: &ProbeCtx) -> KsmInfo {
+    let dir = ctx.sys_path("kernel/mm/ksm");
+    KsmInfo {
+        run: access::read_trimmed(dir.join("run")),
+        pages_shared: access::read_u64(dir.join("pages_shared")),
+        pages_sharing: access::read_u64(dir.join("pages_sharing")),
+        pages_unshared: access::read_u64(dir.join("pages_unshared")),
+        full_scans: access::read_u64(dir.join("full_scans")),
+    }
+}
+
+fn read_memory_blocks(ctx: &ProbeCtx) -> MemoryBlocks {
+    let root = ctx.sys_path("devices/system/memory");
+    let block_size_bytes = match access::read_trimmed(root.join("block_size_bytes")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(s),
+            source,
+            ..
+        } => match parse_hex_u64(&s) {
+            Some(v) => Sample::ok(v, source),
+            None => Sample::error(source, "无法解析十六进制 block_size_bytes"),
+        },
+        s => Sample {
+            value: None,
+            access: s.access,
+            source: s.source,
+            hint: s.hint,
+        },
+    };
+    let names = match access::list_dir_names(&root).value {
+        Some(n) => n,
+        None => {
+            return MemoryBlocks {
+                block_size_bytes,
+                total: 0,
+                online: 0,
+                offline: 0,
+            };
+        }
+    };
+    let mut total = 0usize;
+    let mut online = 0usize;
+    let mut offline = 0usize;
+    for name in names.into_iter().filter(|n| n.starts_with("memory")) {
+        if !name
+            .trim_start_matches("memory")
+            .chars()
+            .all(|c| c.is_ascii_digit())
+        {
+            continue;
+        }
+        total += 1;
+        match access::read_trimmed(root.join(&name).join("state")).value.as_deref() {
+            Some("online") => online += 1,
+            Some("offline") => offline += 1,
+            Some(s) if s.starts_with("online") => online += 1,
+            _ => {}
+        }
+    }
+    MemoryBlocks {
+        block_size_bytes,
+        total,
+        online,
+        offline,
+    }
+}
+
+/// `/sys/devices/system/memory/block_size_bytes` 按 ABI 是十六进制。
+fn parse_hex_u64(s: &str) -> Option<u64> {
+    let t = s
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| s.trim().strip_prefix("0X"))
+        .unwrap_or_else(|| s.trim());
+    u64::from_str_radix(t, 16).ok()
+}
+
 fn read_u64(path: std::path::PathBuf) -> Sample<u64> {
     let s = access::read_trimmed(&path);
     match (s.access, s.value.as_deref()) {
@@ -210,6 +417,29 @@ mod tests {
             "always [madvise] never\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/buddyinfo"),
+            "Node 0, zone      DMA      1      0      2 \nNode 0, zone   Normal     10      4      1 \n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/vmstat"),
+            "nr_free_pages 100\npgfault 50\npgmajfault 2\npgpgin 3\npgpgout 4\npswpin 0\npswpout 0\noom_kill 0\n",
+        )
+        .unwrap();
+        let ksm = root.join("sys/kernel/mm/ksm");
+        fs::create_dir_all(&ksm).unwrap();
+        fs::write(ksm.join("run"), "0\n").unwrap();
+        fs::write(ksm.join("pages_shared"), "0\n").unwrap();
+        fs::write(ksm.join("pages_sharing"), "0\n").unwrap();
+        fs::write(ksm.join("pages_unshared"), "0\n").unwrap();
+        fs::write(ksm.join("full_scans"), "7\n").unwrap();
+        let mem = root.join("sys/devices/system/memory");
+        fs::create_dir_all(mem.join("memory0")).unwrap();
+        fs::create_dir_all(mem.join("memory1")).unwrap();
+        fs::write(mem.join("block_size_bytes"), "8000000\n").unwrap();
+        fs::write(mem.join("memory0/state"), "online\n").unwrap();
+        fs::write(mem.join("memory1/state"), "offline\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -223,6 +453,16 @@ mod tests {
         assert_eq!(r.hugepages.len(), 1);
         assert_eq!(r.hugepages[0].nr.value, Some(2));
         assert!(r.thp_enabled.value.as_deref().unwrap().contains("madvise"));
+        assert_eq!(r.buddy.len(), 2);
+        assert_eq!(r.buddy[1].zone, "Normal");
+        assert_eq!(r.buddy[1].free_counts, vec![10, 4, 1]);
+        assert_eq!(r.vmstat.pgfault.value, Some(50));
+        assert_eq!(r.ksm.run.value.as_deref(), Some("0"));
+        assert_eq!(r.ksm.full_scans.value, Some(7));
+        assert_eq!(r.mem_blocks.block_size_bytes.value, Some(0x8000000));
+        assert_eq!(r.mem_blocks.total, 2);
+        assert_eq!(r.mem_blocks.online, 1);
+        assert_eq!(r.mem_blocks.offline, 1);
         let _ = fs::remove_dir_all(&root);
     }
 }

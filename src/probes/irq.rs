@@ -8,6 +8,7 @@ use crate::access::{self, ProbeCtx};
 pub struct IrqReport {
     pub cpu_count: usize,
     pub lines: Vec<IrqLine>,
+    pub softirqs: Vec<IrqLine>,
     pub notes: Vec<String>,
 }
 
@@ -29,14 +30,24 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
             return IrqReport {
                 cpu_count: 0,
                 lines: Vec::new(),
+                softirqs: Vec::new(),
                 notes,
             };
         }
     };
     lines.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
+    let softirqs = match access::read_trimmed(ctx.proc_path("softirqs")).value {
+        Some(text) => {
+            let (_, mut v) = parse_interrupts(&text);
+            v.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
+            v
+        }
+        None => Vec::new(),
+    };
     IrqReport {
         cpu_count,
         lines,
+        softirqs,
         notes,
     }
 }
@@ -85,6 +96,7 @@ pub fn parse_interrupts(text: &str) -> (usize, Vec<IrqLine>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::access::ProbeCtx;
 
     #[test]
     fn parses_per_cpu_and_err() {
@@ -104,5 +116,35 @@ ERR:          0
         assert_eq!(virtio.total, 1);
         let err = lines.iter().find(|l| l.irq == "ERR").unwrap();
         assert_eq!(err.total, 0);
+    }
+
+    #[test]
+    fn collect_softirqs_fixture() {
+        let root = std::env::temp_dir().join(format!("aida-irq-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(
+            root.join("proc/interrupts"),
+            "           CPU0       CPU1\n 24:          2          0   IO-APIC\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/softirqs"),
+            "                    CPU0       CPU1\n          HI:          0          1\n       TIMER:         10          5\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.cpu_count, 2);
+        assert_eq!(r.lines.len(), 1);
+        assert_eq!(r.softirqs.len(), 2);
+        assert_eq!(r.softirqs[0].irq, "TIMER");
+        assert_eq!(r.softirqs[0].total, 15);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

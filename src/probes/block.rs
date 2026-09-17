@@ -19,6 +19,12 @@ pub struct BlockDevice {
     pub vendor: Sample<String>,
     pub serial: Sample<String>,
     pub queue_scheduler: Sample<String>,
+    pub physical_block_size: Sample<u64>,
+    pub logical_block_size: Sample<u64>,
+    pub nr_requests: Sample<u64>,
+    pub discard_max_bytes: Sample<u64>,
+    pub dax: Sample<String>,
+    pub write_cache: Sample<String>,
     pub removable: Sample<String>,
     pub r#type: String,
     pub rd_ios: Sample<u64>,
@@ -137,6 +143,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             vendor: access::read_trimmed(dir.join("device/vendor")),
             serial: access::read_trimmed(dir.join("serial")),
             queue_scheduler: access::read_trimmed(dir.join("queue/scheduler")),
+            physical_block_size: access::read_u64(dir.join("queue/physical_block_size")),
+            logical_block_size: access::read_u64(dir.join("queue/logical_block_size")),
+            nr_requests: access::read_u64(dir.join("queue/nr_requests")),
+            discard_max_bytes: access::read_u64(dir.join("queue/discard_max_bytes")),
+            dax: access::read_trimmed(dir.join("queue/dax")),
+            write_cache: access::read_trimmed(dir.join("queue/write_cache")),
             removable: access::read_trimmed(dir.join("removable")),
             rd_ios: io
                 .map(|s| Sample::ok(s.rd_ios, "/proc/diskstats"))
@@ -316,6 +328,12 @@ mod tests {
         std::fs::create_dir_all(dir.join("queue")).unwrap();
         std::fs::write(dir.join("size"), "2048\n").unwrap();
         std::fs::write(dir.join("queue/rotational"), "0\n").unwrap();
+        std::fs::write(dir.join("queue/physical_block_size"), "512\n").unwrap();
+        std::fs::write(dir.join("queue/logical_block_size"), "512\n").unwrap();
+        std::fs::write(dir.join("queue/nr_requests"), "256\n").unwrap();
+        std::fs::write(dir.join("queue/discard_max_bytes"), "0\n").unwrap();
+        std::fs::write(dir.join("queue/dax"), "0\n").unwrap();
+        std::fs::write(dir.join("queue/write_cache"), "write through\n").unwrap();
         std::fs::create_dir_all(root.join("proc")).unwrap();
         std::fs::write(
             root.join("proc/diskstats"),
@@ -338,6 +356,9 @@ mod tests {
         assert_eq!(r.devices.len(), 1);
         assert_eq!(r.devices[0].rd_bytes.value, Some(200 * 512));
         assert_eq!(r.devices[0].rd_bps, Some(100.0 * 512.0));
+        assert_eq!(r.devices[0].physical_block_size.value, Some(512));
+        assert_eq!(r.devices[0].nr_requests.value, Some(256));
+        assert_eq!(r.devices[0].write_cache.value.as_deref(), Some("write through"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

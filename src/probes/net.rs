@@ -13,6 +13,7 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 #[derive(Clone, Debug, Serialize)]
 pub struct NetReport {
     pub interfaces: Vec<NetIface>,
+    pub sockstat: SockStat,
     pub notes: Vec<String>,
 }
 
@@ -38,6 +39,16 @@ pub struct NetIface {
     pub tx_bps: Option<f64>,
     pub addresses: Vec<String>,
     pub wireless: bool,
+    pub rx_queues: usize,
+    pub tx_queues: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SockStat {
+    pub sockets_used: Option<u64>,
+    pub tcp_inuse: Option<u64>,
+    pub tcp_tw: Option<u64>,
+    pub udp_inuse: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +76,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             notes.push(s.access_label());
             return NetReport {
                 interfaces: Vec::new(),
+                sockstat: parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat"))),
                 notes,
             };
         }
@@ -125,6 +137,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             }
             _ => (None, None),
         };
+        let (rx_queues, tx_queues) = count_queues(&dir.join("queues"));
         interfaces.push(NetIface {
             kind,
             driver: read_driver(&dir),
@@ -144,10 +157,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             tx_bps,
             addresses: addrs.get(&name).cloned().unwrap_or_default(),
             wireless: dir.join("wireless").exists(),
+            rx_queues,
+            tx_queues,
             name,
         });
     }
-    NetReport { interfaces, notes }
+    NetReport {
+        interfaces,
+        sockstat: parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat"))),
+        notes,
+    }
 }
 
 pub fn counters(report: &NetReport) -> Vec<NetSnap> {
@@ -162,6 +181,46 @@ pub fn counters(report: &NetReport) -> Vec<NetSnap> {
             })
         })
         .collect()
+}
+
+fn count_queues(dir: &std::path::Path) -> (usize, usize) {
+    let names = match access::list_dir_names(dir).value {
+        Some(n) => n,
+        None => return (0, 0),
+    };
+    let rx = names.iter().filter(|n| n.starts_with("rx-")).count();
+    let tx = names.iter().filter(|n| n.starts_with("tx-")).count();
+    (rx, tx)
+}
+
+pub fn parse_sockstat(sample: &Sample<String>) -> SockStat {
+    let Some(text) = sample.value.as_deref() else {
+        return SockStat::default();
+    };
+    let mut out = SockStat::default();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        let Some(kind) = it.next() else {
+            continue;
+        };
+        let kind = kind.trim_end_matches(':');
+        let mut map = std::collections::BTreeMap::new();
+        while let (Some(k), Some(v)) = (it.next(), it.next()) {
+            if let Ok(n) = v.parse::<u64>() {
+                map.insert(k, n);
+            }
+        }
+        match kind {
+            "sockets" => out.sockets_used = map.get("used").copied(),
+            "TCP" => {
+                out.tcp_inuse = map.get("inuse").copied();
+                out.tcp_tw = map.get("tw").copied();
+            }
+            "UDP" => out.udp_inuse = map.get("inuse").copied(),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn read_driver(dir: &std::path::Path) -> Sample<String> {
@@ -250,6 +309,14 @@ mod tests {
         fs::write(iface.join("statistics/tx_packets"), "20\n").unwrap();
         fs::write(iface.join("statistics/rx_errors"), "0\n").unwrap();
         fs::write(iface.join("statistics/tx_errors"), "0\n").unwrap();
+        fs::create_dir_all(iface.join("queues/rx-0")).unwrap();
+        fs::create_dir_all(iface.join("queues/tx-0")).unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::write(
+            root.join("proc/net/sockstat"),
+            "sockets: used 12\nTCP: inuse 3 orphan 0 tw 1 alloc 4 mem 0\nUDP: inuse 2 mem 0\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -268,6 +335,10 @@ mod tests {
         assert!(!r.interfaces[0].wireless);
         assert_eq!(r.interfaces[0].rx_bps, Some(500.0));
         assert_eq!(r.interfaces[0].tx_bps, Some(1500.0));
+        assert_eq!(r.interfaces[0].rx_queues, 1);
+        assert_eq!(r.interfaces[0].tx_queues, 1);
+        assert_eq!(r.sockstat.tcp_inuse, Some(3));
+        assert_eq!(r.sockstat.udp_inuse, Some(2));
         fs::create_dir_all(iface.join("wireless")).unwrap();
         let r2 = collect(&ctx);
         assert!(r2.interfaces[0].wireless);
