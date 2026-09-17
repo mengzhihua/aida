@@ -42,6 +42,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"lsm\""));
     assert!(json.contains("\"softirqs\""));
     assert!(json.contains("\"ptps\""));
+    assert!(json.contains("\"zswap\""));
+    assert!(json.contains("\"kvm\""));
+    assert!(json.contains("\"iscsi\""));
+    assert!(json.contains("\"rfkill\""));
+    assert!(json.contains("\"smt_control\""));
     assert!(
         !snap.irq.softirqs.is_empty(),
         "/proc/softirqs 应至少有一行"
@@ -78,6 +83,18 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.software.load_1.value.is_some(),
         "loadavg 应可读"
+    );
+    assert!(
+        snap.cpu.smt_control.access != aida::access::AccessKind::Error,
+        "SMT control 不应是读取失败"
+    );
+    assert!(
+        snap.zmem.zswap.enabled.access != aida::access::AccessKind::Error,
+        "zswap enabled 不应是读取失败"
+    );
+    assert!(
+        snap.kvm.device.value.is_some() || !snap.kvm.notes.is_empty(),
+        "/dev/kvm 应存在或给出说明"
     );
     assert!(
         !snap.fs.mounts.is_empty(),
@@ -124,6 +141,8 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("IOMMU"));
     assert!(html.contains("平台"));
     assert!(html.contains("LSM"));
+    assert!(html.contains("KVM"));
+    assert!(html.contains("zswap"));
     assert!(!html.contains("<script"));
 }
 

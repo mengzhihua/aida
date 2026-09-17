@@ -8,9 +8,9 @@ use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
 use crate::probes::rapl::RaplSnap;
 use crate::probes::{
-    ata, audio, block, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, iommu, irq,
-    md, memory, modules, net, numa, nvme, pci, platform, power, psi, rapl, scsi, software, usb,
-    virtio,
+    ata, audio, block, buses, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, iommu,
+    irq, iscsi, kvm, md, memory, modules, net, numa, nvme, pci, platform, power, psi, rapl, scsi,
+    software, usb, virtio, zmem,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -28,6 +28,7 @@ pub struct HardwareSnapshot {
     pub nvme: nvme::NvmeReport,
     pub pci: pci::PciReport,
     pub virtio: virtio::VirtioReport,
+    pub kvm: kvm::KvmReport,
     pub iommu: iommu::IommuReport,
     pub gpu: gpu::GpuReport,
     pub net: net::NetReport,
@@ -48,7 +49,10 @@ pub struct HardwareSnapshot {
     pub ata: ata::AtaReport,
     pub md: md::MdReport,
     pub scsi: scsi::ScsiReport,
+    pub iscsi: iscsi::IscsiReport,
+    pub zmem: zmem::ZmemReport,
     pub platform: platform::PlatformReport,
+    pub buses: buses::BusesReport,
     pub software: software::SoftwareInfo,
 }
 
@@ -116,6 +120,7 @@ impl HardwareSnapshot {
             nvme: nvme::collect(ctx),
             pci: pci::collect(ctx),
             virtio: virtio::collect(ctx),
+            kvm: kvm::collect(ctx),
             iommu: iommu::collect(ctx),
             gpu: gpu::collect(ctx),
             net,
@@ -136,7 +141,10 @@ impl HardwareSnapshot {
             ata: ata::collect(ctx),
             md: md::collect(ctx),
             scsi: scsi::collect(ctx),
+            iscsi: iscsi::collect(ctx),
+            zmem: zmem::collect(ctx),
             platform: platform::collect(ctx),
+            buses: buses::collect(ctx),
             software: software::collect(ctx),
         }
     }
@@ -174,6 +182,7 @@ impl HardwareSnapshot {
         self.psi = psi::collect(ctx);
         self.irq = irq::collect(ctx);
         self.platform = platform::collect(ctx);
+        self.zmem = zmem::collect(ctx);
         self.collected_at_unix_ms = unix_ms();
     }
 }

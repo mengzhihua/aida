@@ -32,12 +32,38 @@ pub struct PciDevice {
     pub current_link_width: Sample<String>,
     pub max_link_speed: Sample<String>,
     pub max_link_width: Sample<String>,
-    pub msi_irqs: usize,
+    pub msi_irqs: Sample<u64>,
+    pub sriov_totalvfs: Sample<u64>,
+    pub sriov_numvfs: Sample<u64>,
     pub local_cpulist: Sample<String>,
     pub driver: Sample<String>,
     pub vendor_name: Option<String>,
     pub device_name: Option<String>,
     pub class_name: String,
+}
+
+impl PciDevice {
+    /// 表格用的链路摘要。缺 `current_link_*` / `msi_irqs` 时用破折号，避免把整条 sysfs 路径铺进列里。
+    pub fn link_label(&self) -> String {
+        let msi = compact_field(&self.msi_irqs);
+        match self.current_link_speed.value.as_deref() {
+            Some(s) => format!(
+                "{} x{} msi {}",
+                s,
+                compact_field(&self.current_link_width),
+                msi
+            ),
+            None => format!("— msi {msi}"),
+        }
+    }
+}
+
+fn compact_field<T: Serialize + std::fmt::Display>(s: &Sample<T>) -> String {
+    match (&s.value, s.access) {
+        (Some(v), AccessKind::Ok) => v.to_string(),
+        (_, AccessKind::NotFound) => "—".into(),
+        _ => s.display(),
+    }
 }
 
 pub fn collect(ctx: &ProbeCtx) -> PciReport {
@@ -96,10 +122,22 @@ pub fn collect(ctx: &ProbeCtx) -> PciReport {
             current_link_width: access::read_trimmed(dir.join("current_link_width")),
             max_link_speed: access::read_trimmed(dir.join("max_link_speed")),
             max_link_width: access::read_trimmed(dir.join("max_link_width")),
-            msi_irqs: access::list_dir_names(dir.join("msi_irqs"))
-                .value
-                .map(|n| n.len())
-                .unwrap_or(0),
+            msi_irqs: match access::list_dir_names(dir.join("msi_irqs")) {
+                Sample {
+                    access: AccessKind::Ok,
+                    value: Some(n),
+                    source,
+                    ..
+                } => Sample::ok(n.len() as u64, source),
+                s => Sample {
+                    value: None,
+                    access: s.access,
+                    source: s.source,
+                    hint: s.hint,
+                },
+            },
+            sriov_totalvfs: access::read_u64(dir.join("sriov_totalvfs")),
+            sriov_numvfs: access::read_u64(dir.join("sriov_numvfs")),
             local_cpulist: access::read_trimmed(dir.join("local_cpulist")),
             driver,
             vendor_name,
@@ -297,5 +335,37 @@ mod tests {
         assert_eq!(d.as_deref(), Some("Star Lake Host Bridge"));
         let (v2, _) = lookup(None, "1af4", "1042");
         assert!(v2.unwrap().contains("Virtio"));
+    }
+
+    #[test]
+    fn missing_link_and_msi_stay_compact() {
+        let d = PciDevice {
+            slot: "0000:00:03.0".into(),
+            vendor_id: "1af4".into(),
+            device_id: "1041".into(),
+            class_code: "020000".into(),
+            revision: Sample::missing("revision"),
+            subsystem_vendor: Sample::missing("subsystem_vendor"),
+            subsystem_device: Sample::missing("subsystem_device"),
+            irq: Sample::missing("irq"),
+            numa_node: Sample::missing("numa_node"),
+            enable: Sample::ok("1".into(), "enable"),
+            current_link_speed: Sample::missing("current_link_speed"),
+            current_link_width: Sample::missing("current_link_width"),
+            max_link_speed: Sample::missing("max_link_speed"),
+            max_link_width: Sample::missing("max_link_width"),
+            msi_irqs: Sample::missing("msi_irqs"),
+            sriov_totalvfs: Sample::missing("sriov_totalvfs"),
+            sriov_numvfs: Sample::missing("sriov_numvfs"),
+            local_cpulist: Sample::missing("local_cpulist"),
+            driver: Sample::ok("virtio-pci".into(), "driver"),
+            vendor_name: Some("Red Hat, Inc. (Virtio)".into()),
+            device_name: None,
+            class_name: "Network".into(),
+        };
+        let label = d.link_label();
+        assert_eq!(label, "— msi —");
+        assert!(!label.contains("current_link"));
+        assert!(!label.contains("msi_irqs"));
     }
 }

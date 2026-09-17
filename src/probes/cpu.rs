@@ -23,6 +23,10 @@ pub struct CpuInfo {
     pub address_sizes: Sample<String>,
     pub hypervisor: bool,
     pub microcode: Sample<String>,
+    pub smt_active: Sample<String>,
+    pub smt_control: Sample<String>,
+    pub isolated: Sample<String>,
+    pub online: Sample<String>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
@@ -217,6 +221,18 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         );
     }
 
+    let smt_active = access::read_trimmed(ctx.sys_path("devices/system/cpu/smt/active"));
+    let smt_control = access::read_trimmed(ctx.sys_path("devices/system/cpu/smt/control"));
+    let isolated = access::read_trimmed(ctx.sys_path("devices/system/cpu/isolated"));
+    let online = access::read_trimmed(ctx.sys_path("devices/system/cpu/online"));
+    if smt_control
+        .value
+        .as_deref()
+        .is_some_and(|v| v == "notsupported" || v == "not implemented")
+    {
+        notes.push("SMT sysfs 为 notsupported（虚拟机或未开 CONFIG_HOTPLUG_SMT 时常见）。".into());
+    }
+
     CpuInfo {
         model_name,
         vendor,
@@ -232,6 +248,10 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         address_sizes,
         hypervisor,
         microcode,
+        smt_active,
+        smt_control,
+        isolated,
+        online,
         logical,
         caches,
         utilization_pct,
