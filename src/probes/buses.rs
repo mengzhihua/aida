@@ -13,7 +13,27 @@ pub struct BusesReport {
     pub video: Vec<VideoDev>,
     pub mmc: Vec<MmcHost>,
     pub mei: Vec<MeiDev>,
+    pub serial: Vec<SerialPort>,
+    pub tty_drivers: Vec<TtyDriver>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SerialPort {
+    pub name: String,
+    pub uartclk: Sample<u64>,
+    pub irq: Sample<String>,
+    pub typ: Sample<String>,
+    pub port: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TtyDriver {
+    pub name: String,
+    pub device: String,
+    pub major: String,
+    pub minors: String,
+    pub kind: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -92,6 +112,8 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
     let video = read_video(ctx, &mut notes);
     let mmc = read_mmc(ctx, &mut notes);
     let mei = read_mei(ctx, &mut notes);
+    let serial = read_serial(ctx, &mut notes);
+    let tty_drivers = parse_tty_drivers(&access::read_trimmed(ctx.proc_path("tty/drivers")));
     BusesReport {
         rfkill,
         bluetooth,
@@ -99,6 +121,8 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         video,
         mmc,
         mei,
+        serial,
+        tty_drivers,
         notes,
     }
 }
@@ -277,6 +301,62 @@ fn read_mei(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<MeiDev> {
     out
 }
 
+fn is_serial_tty(name: &str) -> bool {
+    name.starts_with("ttyS")
+        || name.starts_with("ttyUSB")
+        || name.starts_with("ttyACM")
+        || name.starts_with("ttyAMA")
+        || name.starts_with("ttyO")
+        || name.starts_with("hvc")
+}
+
+fn read_serial(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<SerialPort> {
+    let root = ctx.sys_path("class/tty");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => return Vec::new(),
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for name in names.into_iter().filter(|n| is_serial_tty(n)) {
+        let dir = root.join(&name);
+        out.push(SerialPort {
+            uartclk: access::read_u64(dir.join("uartclk")),
+            irq: access::read_trimmed(dir.join("irq")),
+            typ: access::read_trimmed(dir.join("type")),
+            port: access::read_trimmed(dir.join("port")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// `/proc/tty/drivers`：`serial /dev/ttyS 4 64 serial`
+pub fn parse_tty_drivers(sample: &Sample<String>) -> Vec<TtyDriver> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 5 {
+            continue;
+        }
+        out.push(TtyDriver {
+            name: cols[0].to_string(),
+            device: cols[1].to_string(),
+            major: cols[2].to_string(),
+            minors: cols[3].to_string(),
+            kind: cols[4].to_string(),
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +395,23 @@ mod tests {
         assert_eq!(r.video[0].dev_name.value.as_deref(), Some("USB Camera"));
         assert_eq!(r.mmc[0].name_tag.value.as_deref(), Some("SD32G"));
         assert_eq!(r.mei[0].name, "mei0");
+        let tty = root.join("sys/class/tty/ttyS0");
+        fs::create_dir_all(&tty).unwrap();
+        fs::write(tty.join("uartclk"), "1843200\n").unwrap();
+        fs::write(tty.join("irq"), "4\n").unwrap();
+        fs::write(tty.join("type"), "4\n").unwrap();
+        fs::create_dir_all(root.join("sys/class/tty/tty0")).unwrap();
+        fs::create_dir_all(root.join("proc/tty")).unwrap();
+        fs::write(
+            root.join("proc/tty/drivers"),
+            "serial               /dev/ttyS       4      64 serial\n",
+        )
+        .unwrap();
+        let r2 = collect(&ctx);
+        assert_eq!(r2.serial.len(), 1);
+        assert_eq!(r2.serial[0].name, "ttyS0");
+        assert_eq!(r2.serial[0].uartclk.value, Some(1843200));
+        assert_eq!(r2.tty_drivers[0].kind, "serial");
         let _ = fs::remove_dir_all(&root);
     }
 

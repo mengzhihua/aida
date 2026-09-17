@@ -7,7 +7,18 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 #[derive(Clone, Debug, Serialize)]
 pub struct ScsiReport {
     pub hosts: Vec<ScsiHost>,
+    pub devices: Vec<ScsiDevice>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ScsiDevice {
+    pub name: String,
+    pub vendor: Sample<String>,
+    pub model: Sample<String>,
+    pub rev: Sample<String>,
+    pub type_code: Sample<String>,
+    pub state: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -39,6 +50,7 @@ pub fn collect(ctx: &ProbeCtx) -> ScsiReport {
             }
             return ScsiReport {
                 hosts: Vec::new(),
+                devices: read_devices(ctx, &mut notes),
                 notes,
             };
         }
@@ -61,7 +73,42 @@ pub fn collect(ctx: &ProbeCtx) -> ScsiReport {
     if hosts.is_empty() {
         notes.push("scsi_host 目录为空。".into());
     }
-    ScsiReport { hosts, notes }
+    let devices = read_devices(ctx, &mut notes);
+    ScsiReport {
+        hosts,
+        devices,
+        notes,
+    }
+}
+
+fn read_devices(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<ScsiDevice> {
+    let root = ctx.sys_path("class/scsi_device");
+    let names = match access::list_dir_names(&root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n,
+        s if s.access == AccessKind::NotFound => return Vec::new(),
+        s => {
+            notes.push(s.access_label());
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for name in names {
+        let dir = root.join(&name).join("device");
+        out.push(ScsiDevice {
+            vendor: access::read_trimmed(dir.join("vendor")),
+            model: access::read_trimmed(dir.join("model")),
+            rev: access::read_trimmed(dir.join("rev")),
+            type_code: access::read_trimmed(dir.join("type")),
+            state: access::read_trimmed(dir.join("state")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 #[cfg(test)]
@@ -86,10 +133,20 @@ mod tests {
             etc: root.join("etc"),
             usr_share: root.join("usr/share"),
         };
+        let lun = root.join("sys/class/scsi_device/0:0:0:0/device");
+        fs::create_dir_all(&lun).unwrap();
+        fs::write(lun.join("vendor"), "ATA\n").unwrap();
+        fs::write(lun.join("model"), "VBOX HARDDISK\n").unwrap();
+        fs::write(lun.join("rev"), "1.0\n").unwrap();
+        fs::write(lun.join("type"), "0\n").unwrap();
+        fs::write(lun.join("state"), "running\n").unwrap();
         let r = collect(&ctx);
         assert_eq!(r.hosts.len(), 1);
         assert_eq!(r.hosts[0].proc_name.value.as_deref(), Some("ahci"));
         assert_eq!(r.hosts[0].can_queue.value, Some(32));
+        assert_eq!(r.devices.len(), 1);
+        assert_eq!(r.devices[0].name, "0:0:0:0");
+        assert_eq!(r.devices[0].model.value.as_deref(), Some("VBOX HARDDISK"));
         let _ = fs::remove_dir_all(&root);
     }
 }

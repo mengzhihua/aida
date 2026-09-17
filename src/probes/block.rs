@@ -7,7 +7,16 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 #[derive(Clone, Debug, Serialize)]
 pub struct BlockReport {
     pub devices: Vec<BlockDevice>,
+    pub loops: Vec<LoopDevice>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LoopDevice {
+    pub name: String,
+    pub size_bytes: Sample<u64>,
+    pub backing_file: Sample<String>,
+    pub autoclear: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -67,6 +76,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             notes.push(s.access_label());
             return BlockReport {
                 devices: Vec::new(),
+                loops: Vec::new(),
                 notes,
             };
         }
@@ -74,8 +84,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
 
     let stats = parse_diskstats(ctx);
     let mut devices = Vec::new();
+    let mut loops = Vec::new();
+    let mut unused_loops = 0usize;
     for name in names {
-        if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("zram") {
+        if name.starts_with("loop") {
+            if let Some(lp) = read_loop(&root.join(&name), &name) {
+                loops.push(lp);
+            } else {
+                unused_loops += 1;
+            }
+            continue;
+        }
+        if name.starts_with("ram") || name.starts_with("zram") {
             continue;
         }
         // 跳过分区：sda1 / nvme0n1p1 / vda1。保留 nvme0n1 / vda / sda。
@@ -163,7 +183,48 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             partitions,
         });
     }
-    BlockReport { devices, notes }
+    loops.sort_by(|a, b| a.name.cmp(&b.name));
+    if unused_loops > 0 {
+        notes.push(format!(
+            "{unused_loops} 个 loop 空闲（无 backing_file）。不要调用 losetup。"
+        ));
+    }
+    BlockReport {
+        devices,
+        loops,
+        notes,
+    }
+}
+
+fn read_loop(dir: &std::path::Path, name: &str) -> Option<LoopDevice> {
+    let backing = access::read_trimmed(dir.join("loop/backing_file"));
+    let has_backing = backing.access == AccessKind::Ok && backing.value.is_some();
+    if !has_backing {
+        return None;
+    }
+    let size = match access::read_trimmed(dir.join("size")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(s),
+            source,
+            ..
+        } => match s.parse::<u64>() {
+            Ok(sectors) => Sample::ok(sectors.saturating_mul(512), source),
+            Err(_) => Sample::error(source, "无法解析 size"),
+        },
+        s => Sample {
+            value: None,
+            access: s.access,
+            source: s.source,
+            hint: s.hint,
+        },
+    };
+    Some(LoopDevice {
+        size_bytes: size,
+        backing_file: backing,
+        autoclear: access::read_trimmed(dir.join("loop/autoclear")),
+        name: name.to_string(),
+    })
 }
 
 pub fn counters(report: &BlockReport) -> Vec<DiskSnap> {
@@ -386,6 +447,36 @@ mod tests {
         assert_eq!(r.devices[0].partitions.len(), 1);
         assert_eq!(r.devices[0].partitions[0].name, "vda1");
         assert_eq!(r.devices[0].partitions[0].size_bytes.value, Some(1024 * 512));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn loop_with_backing_skips_empty() {
+        let root = std::env::temp_dir().join(format!("aida-loop-{}", std::process::id()));
+        let l0 = root.join("sys/block/loop0");
+        std::fs::create_dir_all(l0.join("loop")).unwrap();
+        std::fs::write(l0.join("size"), "0\n").unwrap();
+        let l1 = root.join("sys/block/loop1");
+        std::fs::create_dir_all(l1.join("loop")).unwrap();
+        std::fs::write(l1.join("size"), "2048\n").unwrap();
+        std::fs::write(l1.join("loop/backing_file"), "/tmp/disk.img\n").unwrap();
+        std::fs::write(l1.join("loop/autoclear"), "0\n").unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(root.join("proc/diskstats"), "").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.devices.is_empty());
+        assert_eq!(r.loops.len(), 1);
+        assert_eq!(r.loops[0].name, "loop1");
+        assert_eq!(r.loops[0].backing_file.value.as_deref(), Some("/tmp/disk.img"));
+        assert_eq!(r.loops[0].size_bytes.value, Some(2048 * 512));
+        assert!(r.notes.iter().any(|n| n.contains("loop")));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

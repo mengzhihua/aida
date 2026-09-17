@@ -53,6 +53,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"cgroup\""));
     assert!(json.contains("\"zones\""));
     assert!(json.contains("\"ext4\""));
+    assert!(json.contains("\"lockdown\""));
+    assert!(json.contains("\"crypto\""));
+    assert!(json.contains("\"conntrack_count\""));
+    assert!(json.contains("\"tcp_congestion\""));
+    assert!(json.contains("\"self_ns\""));
     assert!(
         !snap.irq.softirqs.is_empty(),
         "/proc/softirqs 应至少有一行"
@@ -123,6 +128,18 @@ fn live_snapshot_json_and_html() {
         "cgroup v2 应可读或给出说明"
     );
     assert!(
+        snap.crypto.total >= 1,
+        "/proc/crypto 应至少有一个算法"
+    );
+    assert!(
+        snap.net.tcp_congestion.value.is_some(),
+        "tcp_congestion_control 应可读"
+    );
+    assert!(
+        !snap.ns.self_ns.is_empty(),
+        "/proc/self/ns 应至少有一个命名空间"
+    );
+    assert!(
         !snap.memory.zones.is_empty(),
         "zoneinfo 应至少有一个 zone"
     );
@@ -175,6 +192,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("zswap"));
     assert!(html.contains("TCP") || html.contains("softnet"));
     assert!(html.contains("cgroup") || html.contains("file-nr"));
+    assert!(html.contains("conntrack") || html.contains("crypto") || html.contains("lockdown"));
     assert!(!html.contains("<script"));
 }
 

@@ -18,6 +18,11 @@ pub struct NetReport {
     pub softnet: Softnet,
     pub bridges: Vec<Bridge>,
     pub bonds: Vec<Bond>,
+    pub conntrack_count: Sample<u64>,
+    pub conntrack_max: Sample<u64>,
+    pub tcp_congestion: Sample<String>,
+    pub tcp_available_congestion: Sample<String>,
+    pub tcpext: TcpExt,
     pub notes: Vec<String>,
 }
 
@@ -70,6 +75,20 @@ pub struct Snmp {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
+pub struct TcpExt {
+    pub timewait: Option<u64>,
+    pub listen_overflows: Option<u64>,
+    pub listen_drops: Option<u64>,
+    pub timeouts: Option<u64>,
+    pub abort_on_timeout: Option<u64>,
+    pub orig_data_sent: Option<u64>,
+    pub delivered: Option<u64>,
+    pub rcv_coalesce: Option<u64>,
+    pub in_octets: Option<u64>,
+    pub out_octets: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Softnet {
     pub processed: u64,
     pub dropped: u64,
@@ -111,6 +130,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let snmp = parse_snmp(&access::read_trimmed(ctx.proc_path("net/snmp")));
     let softnet = parse_softnet(&access::read_trimmed(ctx.proc_path("net/softnet_stat")));
     let sockstat = parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat")));
+    let tcpext = parse_netstat(&access::read_trimmed(ctx.proc_path("net/netstat")));
+    let conntrack_count = access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_count"));
+    let conntrack_max = access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_max"));
+    let tcp_congestion = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_congestion_control"));
+    let tcp_available_congestion =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_available_congestion_control"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -127,6 +152,11 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 softnet,
                 bridges: Vec::new(),
                 bonds: Vec::new(),
+                conntrack_count,
+                conntrack_max,
+                tcp_congestion,
+                tcp_available_congestion,
+                tcpext,
                 notes,
             };
         }
@@ -251,6 +281,11 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         softnet,
         bridges,
         bonds,
+        conntrack_count,
+        conntrack_max,
+        tcp_congestion,
+        tcp_available_congestion,
+        tcpext,
         notes,
     }
 }
@@ -341,6 +376,41 @@ pub fn parse_snmp(sample: &Sample<String>) -> Snmp {
         tcp_retrans: pick("Tcp.RetransSegs"),
         udp_in: pick("Udp.InDatagrams"),
         udp_out: pick("Udp.OutDatagrams"),
+    }
+}
+
+/// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
+pub fn parse_netstat(sample: &Sample<String>) -> TcpExt {
+    let Some(text) = sample.value.as_deref() else {
+        return TcpExt::default();
+    };
+    let mut map = std::collections::BTreeMap::<String, u64>::new();
+    let mut lines = text.lines().peekable();
+    while let Some(header) = lines.next() {
+        let Some(values) = lines.next() else { break };
+        let mut h = header.split_whitespace();
+        let mut v = values.split_whitespace();
+        let Some(proto) = h.next() else { continue };
+        let _ = v.next();
+        let proto = proto.trim_end_matches(':');
+        for (key, val) in h.zip(v) {
+            if let Ok(n) = val.parse::<u64>() {
+                map.insert(format!("{proto}.{key}"), n);
+            }
+        }
+    }
+    let pick = |k: &str| map.get(k).copied();
+    TcpExt {
+        timewait: pick("TcpExt.TW"),
+        listen_overflows: pick("TcpExt.ListenOverflows"),
+        listen_drops: pick("TcpExt.ListenDrops"),
+        timeouts: pick("TcpExt.TCPTimeouts"),
+        abort_on_timeout: pick("TcpExt.TCPAbortOnTimeout"),
+        orig_data_sent: pick("TcpExt.TCPOrigDataSent"),
+        delivered: pick("TcpExt.TCPDelivered"),
+        rcv_coalesce: pick("TcpExt.TCPRcvCoalesce"),
+        in_octets: pick("IpExt.InOctets"),
+        out_octets: pick("IpExt.OutOctets"),
     }
 }
 
@@ -538,6 +608,45 @@ mod tests {
         assert_eq!(r.interfaces[0].kind, "Bridge");
         assert_eq!(r.bridges[0].name, "br0");
         assert_eq!(r.bridges[0].members, vec!["eth0"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn netstat_and_conntrack_fixture() {
+        let ext = parse_netstat(&Sample::ok(
+            "TcpExt: TW ListenOverflows ListenDrops TCPTimeouts TCPAbortOnTimeout TCPOrigDataSent TCPDelivered TCPRcvCoalesce\nTcpExt: 10 1 2 3 4 100 90 50\nIpExt: InOctets OutOctets\nIpExt: 1000 2000\n".into(),
+            "netstat",
+        ));
+        assert_eq!(ext.timewait, Some(10));
+        assert_eq!(ext.listen_overflows, Some(1));
+        assert_eq!(ext.in_octets, Some(1000));
+        assert_eq!(ext.out_octets, Some(2000));
+        assert_eq!(ext.delivered, Some(90));
+
+        let root = std::env::temp_dir().join(format!("aida-net-ct-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/net")).unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/netfilter")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4")).unwrap();
+        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_count"), "53\n").unwrap();
+        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_max"), "262144\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_congestion_control"), "cubic\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_available_congestion_control"),
+            "reno cubic\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.conntrack_count.value, Some(53));
+        assert_eq!(r.conntrack_max.value, Some(262144));
+        assert_eq!(r.tcp_congestion.value.as_deref(), Some("cubic"));
         let _ = fs::remove_dir_all(&root);
     }
 }
