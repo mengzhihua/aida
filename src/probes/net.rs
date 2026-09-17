@@ -14,6 +14,15 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 pub struct NetReport {
     pub interfaces: Vec<NetIface>,
     pub sockstat: SockStat,
+    pub snmp: Snmp,
+    pub softnet: Softnet,
+    pub bridges: Vec<Bridge>,
+    pub bonds: Vec<Bond>,
+    pub conntrack_count: Sample<u64>,
+    pub conntrack_max: Sample<u64>,
+    pub tcp_congestion: Sample<String>,
+    pub tcp_available_congestion: Sample<String>,
+    pub tcpext: TcpExt,
     pub notes: Vec<String>,
 }
 
@@ -51,6 +60,59 @@ pub struct SockStat {
     pub udp_inuse: Option<u64>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Snmp {
+    pub ip_forwarding: Option<u64>,
+    pub ip_in_receives: Option<u64>,
+    pub ip_in_delivers: Option<u64>,
+    pub ip_out_requests: Option<u64>,
+    pub tcp_curr_estab: Option<u64>,
+    pub tcp_in_segs: Option<u64>,
+    pub tcp_out_segs: Option<u64>,
+    pub tcp_retrans: Option<u64>,
+    pub udp_in: Option<u64>,
+    pub udp_out: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct TcpExt {
+    pub timewait: Option<u64>,
+    pub listen_overflows: Option<u64>,
+    pub listen_drops: Option<u64>,
+    pub timeouts: Option<u64>,
+    pub abort_on_timeout: Option<u64>,
+    pub orig_data_sent: Option<u64>,
+    pub delivered: Option<u64>,
+    pub rcv_coalesce: Option<u64>,
+    pub in_octets: Option<u64>,
+    pub out_octets: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Softnet {
+    pub processed: u64,
+    pub dropped: u64,
+    pub time_squeeze: u64,
+    pub cpus: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Bridge {
+    pub name: String,
+    pub bridge_id: Sample<String>,
+    pub stp_state: Sample<String>,
+    pub forward_delay: Sample<String>,
+    pub members: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Bond {
+    pub name: String,
+    pub mode: Sample<String>,
+    pub slaves: Sample<String>,
+    pub active_slave: Sample<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct NetSnap {
     pub name: String,
@@ -65,6 +127,15 @@ pub fn collect(ctx: &ProbeCtx) -> NetReport {
 pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) -> NetReport {
     let mut notes = Vec::new();
     let addrs = interface_addresses();
+    let snmp = parse_snmp(&access::read_trimmed(ctx.proc_path("net/snmp")));
+    let softnet = parse_softnet(&access::read_trimmed(ctx.proc_path("net/softnet_stat")));
+    let sockstat = parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat")));
+    let tcpext = parse_netstat(&access::read_trimmed(ctx.proc_path("net/netstat")));
+    let conntrack_count = access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_count"));
+    let conntrack_max = access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_max"));
+    let tcp_congestion = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_congestion_control"));
+    let tcp_available_congestion =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_available_congestion_control"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -76,33 +147,52 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             notes.push(s.access_label());
             return NetReport {
                 interfaces: Vec::new(),
-                sockstat: parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat"))),
+                sockstat,
+                snmp,
+                softnet,
+                bridges: Vec::new(),
+                bonds: Vec::new(),
+                conntrack_count,
+                conntrack_max,
+                tcp_congestion,
+                tcp_available_congestion,
+                tcpext,
                 notes,
             };
         }
     };
     let mut interfaces = Vec::new();
+    let mut bridges = Vec::new();
+    let mut bonds = Vec::new();
     for name in names {
         let dir = root.join(&name);
         let kind_code = access::read_trimmed(dir.join("type"));
-        let kind = match kind_code
-            .value
-            .as_deref()
-            .and_then(|s| s.parse::<u32>().ok())
-        {
-            Some(1) => "Ethernet",
-            Some(772) => "Loopback",
-            Some(776) => "Sit / tunnel",
-            Some(778) => "GRE",
-            Some(803) => "IEEE 802.11",
-            Some(823) => "WireGuard",
-            Some(n) => {
-                let _ = n;
-                "Other"
+        let kind = {
+            let mut k = match kind_code
+                .value
+                .as_deref()
+                .and_then(|s| s.parse::<u32>().ok())
+            {
+                Some(1) => "Ethernet",
+                Some(772) => "Loopback",
+                Some(776) => "Sit / tunnel",
+                Some(778) => "GRE",
+                Some(803) => "IEEE 802.11",
+                Some(823) => "WireGuard",
+                Some(n) => {
+                    let _ = n;
+                    "Other"
+                }
+                None => "Unknown",
             }
-            None => "Unknown",
-        }
-        .to_string();
+            .to_string();
+            if dir.join("bridge").is_dir() {
+                k = "Bridge".into();
+            } else if dir.join("bonding").is_dir() {
+                k = "Bond".into();
+            }
+            k
+        };
         let speed = match access::read_trimmed(dir.join("speed")) {
             Sample {
                 access: AccessKind::Ok,
@@ -138,6 +228,28 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             _ => (None, None),
         };
         let (rx_queues, tx_queues) = count_queues(&dir.join("queues"));
+        if dir.join("bridge").is_dir() {
+            let br = dir.join("bridge");
+            let members = access::list_dir_names(dir.join("brif"))
+                .value
+                .unwrap_or_default();
+            bridges.push(Bridge {
+                bridge_id: access::read_trimmed(br.join("bridge_id")),
+                stp_state: access::read_trimmed(br.join("stp_state")),
+                forward_delay: access::read_trimmed(br.join("forward_delay")),
+                members,
+                name: name.clone(),
+            });
+        }
+        if dir.join("bonding").is_dir() {
+            let b = dir.join("bonding");
+            bonds.push(Bond {
+                mode: access::read_trimmed(b.join("mode")),
+                slaves: access::read_trimmed(b.join("slaves")),
+                active_slave: access::read_trimmed(b.join("active_slave")),
+                name: name.clone(),
+            });
+        }
         interfaces.push(NetIface {
             kind,
             driver: read_driver(&dir),
@@ -164,7 +276,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     }
     NetReport {
         interfaces,
-        sockstat: parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat"))),
+        sockstat,
+        snmp,
+        softnet,
+        bridges,
+        bonds,
+        conntrack_count,
+        conntrack_max,
+        tcp_congestion,
+        tcp_available_congestion,
+        tcpext,
         notes,
     }
 }
@@ -219,6 +340,103 @@ pub fn parse_sockstat(sample: &Sample<String>) -> SockStat {
             "UDP" => out.udp_inuse = map.get("inuse").copied(),
             _ => {}
         }
+    }
+    out
+}
+
+/// `/proc/net/snmp` 两行一组：字段名行 + 数值行。
+pub fn parse_snmp(sample: &Sample<String>) -> Snmp {
+    let Some(text) = sample.value.as_deref() else {
+        return Snmp::default();
+    };
+    let mut map = std::collections::BTreeMap::<String, i64>::new();
+    let mut lines = text.lines().peekable();
+    while let Some(header) = lines.next() {
+        let Some(values) = lines.next() else { break };
+        let mut h = header.split_whitespace();
+        let mut v = values.split_whitespace();
+        let Some(proto) = h.next() else { continue };
+        let _ = v.next(); // same proto token
+        let proto = proto.trim_end_matches(':');
+        for (key, val) in h.zip(v) {
+            if let Ok(n) = val.parse::<i64>() {
+                map.insert(format!("{proto}.{key}"), n);
+            }
+        }
+    }
+    let pick = |k: &str| map.get(k).copied().map(|n| n.max(0) as u64);
+    Snmp {
+        ip_forwarding: pick("Ip.Forwarding"),
+        ip_in_receives: pick("Ip.InReceives"),
+        ip_in_delivers: pick("Ip.InDelivers"),
+        ip_out_requests: pick("Ip.OutRequests"),
+        tcp_curr_estab: pick("Tcp.CurrEstab"),
+        tcp_in_segs: pick("Tcp.InSegs"),
+        tcp_out_segs: pick("Tcp.OutSegs"),
+        tcp_retrans: pick("Tcp.RetransSegs"),
+        udp_in: pick("Udp.InDatagrams"),
+        udp_out: pick("Udp.OutDatagrams"),
+    }
+}
+
+/// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
+pub fn parse_netstat(sample: &Sample<String>) -> TcpExt {
+    let Some(text) = sample.value.as_deref() else {
+        return TcpExt::default();
+    };
+    let mut map = std::collections::BTreeMap::<String, u64>::new();
+    let mut lines = text.lines().peekable();
+    while let Some(header) = lines.next() {
+        let Some(values) = lines.next() else { break };
+        let mut h = header.split_whitespace();
+        let mut v = values.split_whitespace();
+        let Some(proto) = h.next() else { continue };
+        let _ = v.next();
+        let proto = proto.trim_end_matches(':');
+        for (key, val) in h.zip(v) {
+            if let Ok(n) = val.parse::<u64>() {
+                map.insert(format!("{proto}.{key}"), n);
+            }
+        }
+    }
+    let pick = |k: &str| map.get(k).copied();
+    TcpExt {
+        timewait: pick("TcpExt.TW"),
+        listen_overflows: pick("TcpExt.ListenOverflows"),
+        listen_drops: pick("TcpExt.ListenDrops"),
+        timeouts: pick("TcpExt.TCPTimeouts"),
+        abort_on_timeout: pick("TcpExt.TCPAbortOnTimeout"),
+        orig_data_sent: pick("TcpExt.TCPOrigDataSent"),
+        delivered: pick("TcpExt.TCPDelivered"),
+        rcv_coalesce: pick("TcpExt.TCPRcvCoalesce"),
+        in_octets: pick("IpExt.InOctets"),
+        out_octets: pick("IpExt.OutOctets"),
+    }
+}
+
+/// `/proc/net/softnet_stat`：每 CPU 一行十六进制，列 0 processed、1 dropped、2 time_squeeze。
+pub fn parse_softnet(sample: &Sample<String>) -> Softnet {
+    let Some(text) = sample.value.as_deref() else {
+        return Softnet::default();
+    };
+    let mut out = Softnet::default();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        let Some(processed) = it.next().and_then(|s| u64::from_str_radix(s, 16).ok()) else {
+            continue;
+        };
+        let dropped = it
+            .next()
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+            .unwrap_or(0);
+        let squeeze = it
+            .next()
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+            .unwrap_or(0);
+        out.processed += processed;
+        out.dropped += dropped;
+        out.time_squeeze += squeeze;
+        out.cpus += 1;
     }
     out
 }
@@ -342,6 +560,93 @@ mod tests {
         fs::create_dir_all(iface.join("wireless")).unwrap();
         let r2 = collect(&ctx);
         assert!(r2.interfaces[0].wireless);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn snmp_softnet_and_bridge() {
+        let snmp = parse_snmp(&Sample::ok(
+            "Ip: Forwarding InReceives InDelivers OutRequests\nIp: 1 10 9 8\nTcp: CurrEstab InSegs OutSegs RetransSegs\nTcp: 3 100 90 1\nUdp: InDatagrams OutDatagrams\nUdp: 4 5\n".into(),
+            "snmp",
+        ));
+        assert_eq!(snmp.ip_forwarding, Some(1));
+        assert_eq!(snmp.tcp_curr_estab, Some(3));
+        assert_eq!(snmp.udp_out, Some(5));
+        let sn = parse_softnet(&Sample::ok(
+            "0000000a 00000001 00000002 0 0 0\n00000005 00000000 00000000 0 0 0\n".into(),
+            "softnet",
+        ));
+        assert_eq!(sn.processed, 15);
+        assert_eq!(sn.dropped, 1);
+        assert_eq!(sn.time_squeeze, 2);
+        assert_eq!(sn.cpus, 2);
+
+        let root = std::env::temp_dir().join(format!("aida-net-br-{}", std::process::id()));
+        let br = root.join("sys/class/net/br0");
+        fs::create_dir_all(br.join("statistics")).unwrap();
+        fs::create_dir_all(br.join("bridge")).unwrap();
+        fs::create_dir_all(br.join("brif/eth0")).unwrap();
+        fs::write(br.join("type"), "1\n").unwrap();
+        fs::write(br.join("operstate"), "up\n").unwrap();
+        fs::write(br.join("bridge/bridge_id"), "8000.aabb\n").unwrap();
+        fs::write(br.join("bridge/stp_state"), "0\n").unwrap();
+        fs::write(br.join("statistics/rx_bytes"), "0\n").unwrap();
+        fs::write(br.join("statistics/tx_bytes"), "0\n").unwrap();
+        fs::write(br.join("statistics/rx_packets"), "0\n").unwrap();
+        fs::write(br.join("statistics/tx_packets"), "0\n").unwrap();
+        fs::write(br.join("statistics/rx_errors"), "0\n").unwrap();
+        fs::write(br.join("statistics/tx_errors"), "0\n").unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.interfaces[0].kind, "Bridge");
+        assert_eq!(r.bridges[0].name, "br0");
+        assert_eq!(r.bridges[0].members, vec!["eth0"]);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn netstat_and_conntrack_fixture() {
+        let ext = parse_netstat(&Sample::ok(
+            "TcpExt: TW ListenOverflows ListenDrops TCPTimeouts TCPAbortOnTimeout TCPOrigDataSent TCPDelivered TCPRcvCoalesce\nTcpExt: 10 1 2 3 4 100 90 50\nIpExt: InOctets OutOctets\nIpExt: 1000 2000\n".into(),
+            "netstat",
+        ));
+        assert_eq!(ext.timewait, Some(10));
+        assert_eq!(ext.listen_overflows, Some(1));
+        assert_eq!(ext.in_octets, Some(1000));
+        assert_eq!(ext.out_octets, Some(2000));
+        assert_eq!(ext.delivered, Some(90));
+
+        let root = std::env::temp_dir().join(format!("aida-net-ct-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/net")).unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/netfilter")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4")).unwrap();
+        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_count"), "53\n").unwrap();
+        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_max"), "262144\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_congestion_control"), "cubic\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_available_congestion_control"),
+            "reno cubic\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.conntrack_count.value, Some(53));
+        assert_eq!(r.conntrack_max.value, Some(262144));
+        assert_eq!(r.tcp_congestion.value.as_deref(), Some("cubic"));
         let _ = fs::remove_dir_all(&root);
     }
 }

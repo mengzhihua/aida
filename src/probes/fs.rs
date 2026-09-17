@@ -8,7 +8,17 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 pub struct FsReport {
     pub mounts: Vec<Mount>,
     pub swaps: Vec<Swap>,
+    pub ext4: Vec<Ext4Fs>,
+    pub xfs_stats: Sample<String>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Ext4Fs {
+    pub name: String,
+    pub lifetime_write_kbytes: Sample<u64>,
+    pub session_write_kbytes: Sample<u64>,
+    pub errors_count: Sample<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -57,12 +67,16 @@ pub fn collect(ctx: &ProbeCtx) -> FsReport {
         }
     }
     let swaps = parse_swaps(&access::read_trimmed(ctx.proc_path("swaps")));
+    let ext4 = read_ext4(ctx);
+    let xfs_stats = xfs_rw_summary(ctx);
     if mounts.is_empty() && notes.is_empty() {
         notes.push("mountinfo 为空。".into());
     }
     FsReport {
         mounts,
         swaps,
+        ext4,
+        xfs_stats,
         notes,
     }
 }
@@ -133,6 +147,53 @@ pub fn usage_of(path: &str) -> Option<(u64, u64, u64)> {
     Some((total, used, avail))
 }
 
+fn read_ext4(ctx: &ProbeCtx) -> Vec<Ext4Fs> {
+    let root = ctx.sys_path("fs/ext4");
+    let names = match access::list_dir_names(&root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        if name == "features" {
+            continue;
+        }
+        let dir = root.join(&name);
+        out.push(Ext4Fs {
+            lifetime_write_kbytes: access::read_u64(dir.join("lifetime_write_kbytes")),
+            session_write_kbytes: access::read_u64(dir.join("session_write_kbytes")),
+            errors_count: access::read_u64(dir.join("errors_count")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn xfs_rw_summary(ctx: &ProbeCtx) -> Sample<String> {
+    let sample = access::read_trimmed(ctx.sys_path("fs/xfs/stats/stats"));
+    match sample.value.as_deref() {
+        Some(text) => {
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("rw ") {
+                    return Sample::ok(rest.trim().to_string(), sample.source);
+                }
+            }
+            Sample::ok(String::new(), sample.source)
+        }
+        None => Sample {
+            value: None,
+            access: sample.access,
+            source: sample.source,
+            hint: sample.hint,
+        },
+    }
+}
+
 fn parse_swaps(sample: &Sample<String>) -> Vec<Swap> {
     let Some(text) = sample.value.as_deref() else {
         return Vec::new();
@@ -197,5 +258,34 @@ mod tests {
         assert!(total > 0);
         assert!(used <= total);
         assert!(avail <= total);
+    }
+
+    #[test]
+    fn ext4_sysfs_fixture() {
+        let root = std::env::temp_dir().join(format!("aida-fs-{}", std::process::id()));
+        let e = root.join("sys/fs/ext4/vda");
+        std::fs::create_dir_all(&e).unwrap();
+        std::fs::create_dir_all(root.join("sys/fs/ext4/features")).unwrap();
+        std::fs::write(e.join("lifetime_write_kbytes"), "100\n").unwrap();
+        std::fs::write(e.join("session_write_kbytes"), "10\n").unwrap();
+        std::fs::write(e.join("errors_count"), "0\n").unwrap();
+        std::fs::create_dir_all(root.join("sys/fs/xfs/stats")).unwrap();
+        std::fs::write(root.join("sys/fs/xfs/stats/stats"), "rw 3 4\nattr 0 0\n").unwrap();
+        std::fs::create_dir_all(root.join("proc/self")).unwrap();
+        std::fs::write(root.join("proc/self/mountinfo"), "").unwrap();
+        std::fs::write(root.join("proc/swaps"), "Filename Type Size Used Priority\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ext4.len(), 1);
+        assert_eq!(r.ext4[0].name, "vda");
+        assert_eq!(r.ext4[0].lifetime_write_kbytes.value, Some(100));
+        assert_eq!(r.xfs_stats.value.as_deref(), Some("3 4"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

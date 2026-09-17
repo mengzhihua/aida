@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::access::{self, ProbeCtx};
+use crate::access::{self, ProbeCtx, Sample};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct IrqReport {
@@ -18,6 +18,7 @@ pub struct IrqLine {
     pub counts: Vec<u64>,
     pub total: u64,
     pub extra: String,
+    pub affinity: Sample<String>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> IrqReport {
@@ -31,6 +32,11 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
         }
     };
     lines.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
+    for line in &mut lines {
+        if line.irq.chars().all(|c| c.is_ascii_digit()) {
+            line.affinity = access::read_trimmed(ctx.proc_path(format!("irq/{}/smp_affinity_list", line.irq)));
+        }
+    }
     let soft_sample = access::read_trimmed(ctx.proc_path("softirqs"));
     let softirqs = match (soft_sample.access, soft_sample.value.as_deref()) {
         (crate::access::AccessKind::Ok, Some(text)) => {
@@ -87,6 +93,7 @@ pub fn parse_interrupts(text: &str) -> (usize, Vec<IrqLine>) {
             counts,
             total,
             extra: rest.join(" "),
+            affinity: Sample::missing("smp_affinity_list"),
         });
     }
     (n, out)
@@ -95,7 +102,7 @@ pub fn parse_interrupts(text: &str) -> (usize, Vec<IrqLine>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::access::ProbeCtx;
+    use crate::access::{AccessKind, ProbeCtx};
 
     #[test]
     fn parses_per_cpu_and_err() {
@@ -115,6 +122,7 @@ ERR:          0
         assert_eq!(virtio.total, 1);
         let err = lines.iter().find(|l| l.irq == "ERR").unwrap();
         assert_eq!(err.total, 0);
+        assert_eq!(err.affinity.access, AccessKind::NotFound);
     }
 
     #[test]
@@ -144,6 +152,10 @@ ERR:          0
         assert_eq!(r.softirqs.len(), 2);
         assert_eq!(r.softirqs[0].irq, "TIMER");
         assert_eq!(r.softirqs[0].total, 15);
+        std::fs::create_dir_all(root.join("proc/irq/24")).unwrap();
+        std::fs::write(root.join("proc/irq/24/smp_affinity_list"), "0-1\n").unwrap();
+        let r2 = collect(&ctx);
+        assert_eq!(r2.lines[0].affinity.value.as_deref(), Some("0-1"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
