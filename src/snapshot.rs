@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::access::{Privilege, ProbeCtx};
-use crate::probes::{block, cpu, dmi, hwmon, nvme, pci, software};
+use crate::probes::{block, cpu, dmi, gpu, hwmon, nvme, pci, software};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct HardwareSnapshot {
@@ -16,6 +16,7 @@ pub struct HardwareSnapshot {
     pub sensors: hwmon::SensorReport,
     pub nvme: nvme::NvmeReport,
     pub pci: pci::PciReport,
+    pub gpu: gpu::GpuReport,
     pub block: block::BlockReport,
     pub software: software::SoftwareInfo,
 }
@@ -41,6 +42,7 @@ impl HardwareSnapshot {
             sensors: hwmon::collect(ctx),
             nvme: nvme::collect(ctx),
             pci: pci::collect(ctx),
+            gpu: gpu::collect(ctx),
             block: block::collect(ctx),
             software: software::collect(ctx),
         }
@@ -51,6 +53,7 @@ impl HardwareSnapshot {
         self.cpu.utilization_pct = cpu::utilization(prev_stat, &now);
         *prev_stat = now;
         self.sensors = hwmon::collect(ctx);
+        self.gpu = gpu::collect(ctx);
         self.cpu.logical = cpu::collect_with_util(ctx, None).logical;
         self.collected_at_unix_ms = unix_ms();
     }

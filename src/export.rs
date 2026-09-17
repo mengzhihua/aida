@@ -135,6 +135,40 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
     html.push_str("</table>");
 
+    section(&mut html, "GPU");
+    if snap.gpu.devices.is_empty() {
+        html.push_str("<p class=\"warn\">未发现 GPU / DRM 设备</p>");
+    }
+    for g in &snap.gpu.devices {
+        kv(
+            &mut html,
+            &[
+                ("节点", g.id.clone()),
+                ("驱动", g.driver.clone()),
+                ("PCI", g.pci_slot.display()),
+                ("ID", format!("{}:{}", g.vendor_id.display(), g.device_id.display())),
+                (
+                    "占用",
+                    g.busy_percent
+                        .value
+                        .map(|v| format!("{v}%"))
+                        .unwrap_or_else(|| g.busy_percent.access_label()),
+                ),
+                (
+                    "显存",
+                    match (g.vram_used_bytes.value, g.vram_total_bytes.value) {
+                        (Some(u), Some(t)) => format!("{} / {}", format_bytes(u), format_bytes(t)),
+                        _ => g.vram_total_bytes.access_label(),
+                    },
+                ),
+                ("VBIOS", g.vbios.display()),
+            ],
+        );
+    }
+    for n in &snap.gpu.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
     section(&mut html, "存储");
     html.push_str("<table><tr><th>设备</th><th>类型</th><th>容量</th><th>型号</th></tr>");
     for b in &snap.block.devices {

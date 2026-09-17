@@ -10,6 +10,8 @@
 | hwmon 驱动 | 需 `linux-modules-extra` 或自己加载 coretemp/k10temp | 内核包较全 | 较全 | 虚拟机常无 |
 | NVMe 节点权限 | `root:disk` 0660 | 同左 | 同左 | 无 NVMe 时走 virtio `vd*` |
 | 桌面 | GNOME 下 `pkexec` 保 DISPLAY 比裸 `sudo` 稳 | 同 | 同 | 无 GUI |
+| DRM | `amdgpu`/`i915` 节点较稳 | 同，另有 `xe` | 同 | 常无 `/sys/class/drm` |
+| NVIDIA procfs | 专有驱动才有 `/proc/driver/nvidia` | 同 | 同 | 云主机几乎没有 |
 
 ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU part` 等。CPU probe 已按键名解析，缺键就 `not_found`，不要按 x86 行号切。
 
@@ -25,6 +27,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 8. **AppImage + musl + egui/glow 基本不现实。** CLI musl、GUI glibc+linuxdeploy。
 9. **sudo 掉 DISPLAY。** GUI 提权用 `pkexec` 或 `sudo -E`，并检查 `xhost`。
 10. **`/sys/class/nvme/nvme0n1` 是命名空间不是控制器。** 枚举要过滤 `nvme\d+n\d+`。
+11. **NVIDIA 占用率不在公开 sysfs。** 不要用 `nvidia-smi` 填这个洞；界面标 `unsupported`。
+12. **`O_DIRECT` 在 tmpfs 上基本必失败**（EINVAL）。测试文件放当前目录或 ext4 数据盘。缓冲必须 512/4K 对齐，用 `posix_memalign`，不要 `Vec<u8>`。
+13. **pkexec 与 polkitd 不是同一个包。** 只有 `polkitd` 时 `aida elevate` 会落到 sudo，无 TTY 的 GUI 按钮会失败。
+14. **AppImage 在无 FUSE 容器里** 要用 `APPIMAGE_EXTRACT_AND_RUN=1`，脚本已默认导出该变量。
 
 ## 测试方案
 
@@ -47,7 +53,9 @@ cargo test --no-default-features
 | 同上 root | serial/UUID/SMART 有值 |
 | AMD + k10temp、Intel + coretemp | 温度折线 |
 | NVMe 笔记本 | sysfs 型号 + SMART percentage_used |
-| QEMU virtio 虚拟机 | 无 hwmon/DMI 时提示正确；块设备为 `vd*` |
+| QEMU virtio 虚拟机 | 无 hwmon/DMI/GPU 时提示正确；块设备为 `vd*`；O_DIRECT 看文件系统 |
+| AMD amdgpu / Intel i915 | GPU 页有 busy 或 gt 频率 |
+| NVIDIA 专有驱动 | 有 model/vbios；busy 为 unsupported |
 | aarch64 树莓派/ARM 云 | cpuinfo 缺字段不崩 |
 | Wayland + X11 各测一次 GUI | 字体、折线、导出按钮 |
 

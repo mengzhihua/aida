@@ -16,8 +16,10 @@ fn live_snapshot_json_and_html() {
     );
     let json = export::to_json_pretty(&snap).expect("json");
     assert!(json.contains("\"app\": \"aida\""));
+    assert!(json.contains("\"gpu\""));
     let html = export::to_html(&snap);
     assert!(html.contains("AIDA Linux"));
+    assert!(html.contains("GPU"));
     assert!(!html.contains("<script"));
 }
 
