@@ -444,16 +444,19 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             _ => String::from("—"),
         };
         html.push_str(&format!(
-            "<tr><td>{}</td><td>{}:{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} x{} msi {}</td></tr>",
+            "<tr><td>{}</td><td>{}:{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             esc(&d.slot),
             esc(&d.vendor_id),
             esc(&d.device_id),
             esc(&name),
             esc(&d.class_name),
             esc(&d.driver.display()),
-            esc(&d.current_link_speed.display()),
-            esc(&d.current_link_width.display()),
-            d.msi_irqs
+            esc(&match d.current_link_speed.value.as_deref() {
+                Some(s) => {
+                    format!("{} x{} msi {}", s, d.current_link_width.display(), d.msi_irqs)
+                }
+                None => format!("— msi {}", d.msi_irqs),
+            })
         ));
     }
     html.push_str("</table>");
