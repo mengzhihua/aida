@@ -18,7 +18,7 @@
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU busy/vram + `/proc/stat` 整机/每核利用率 + 网卡/磁盘字节差分 + meminfo + power_supply + loadavg + clocksource + EDAC + cpufreq，避免每帧扫 PCI/USB/DMI/挂载/模块/iomem。
+4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU busy/vram + `/proc/stat` 整机/每核利用率 + 网卡/磁盘字节差分 + meminfo + power_supply + loadavg + clocksource + EDAC + PSI + IRQ + 挂载用量 + cpufreq，避免每帧扫 PCI/USB/DMI/模块/iomem/ATA。
 
 ## 各 probe 内核接口
 
@@ -28,7 +28,7 @@
 | DMI | `/sys/class/dmi/id/*` | `/sys/firmware/dmi/tables/DMI` SMBIOS 结构 |
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02 |
-| GPU | `/sys/class/drm/cardN`，PCI class `0x03` | amdgpu busy/vram、i915/xe 频率、`/proc/driver/nvidia` |
+| GPU | `/sys/class/drm/cardN`，PCI class `0x03` | amdgpu busy/vram、i915/xe 频率、连接器 EDID、`/proc/driver/nvidia` |
 | Net | `/sys/class/net/*/statistics` | `getifaddrs` 地址；`wireless` 目录；`speed=-1` → unsupported |
 | USB | `/sys/bus/usb/devices`（跳过 `*:*.*` 接口节点） | `usb.ids` 名称 |
 | Input | `/proc/bus/input/devices` | handlers → keyboard/mouse/js |
@@ -37,14 +37,17 @@
 | EDAC | `/sys/devices/system/edac/mc/mcN` | ce_count / ue_count |
 | Power | `/sys/class/power_supply` | 电池容量/能量、AC online |
 | Audio | `/proc/asound/cards` | `/sys/class/sound/cardN/id` |
-| Firmware | `/sys/firmware/efi` | SecureBoot efivar（跳过 4 字节属性） |
-| Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；virtual/tmpfs/storage 分类 |
+| Firmware | `/sys/firmware/efi` | SecureBoot；ACPI 表名；TPM；hwrng |
+| Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs` 用量 |
 | Modules | `/proc/modules` | 按名称排序 |
 | Clock | `clocksource0/current_clocksource` | `/sys/class/rtc` |
 | iomem | `/proc/iomem` | 按名称汇总；非 root 地址常为 0 |
+| PSI | `/proc/pressure/{cpu,memory,io}` | some/full avg10/60/300 |
+| IRQ | `/proc/interrupts` | 按合计排序 |
+| ATA | `/sys/class/ata_port` | link `sata_spd`；IDENTIFY 型号 |
 | PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `pci.ids` + 内置厂商表 |
 | Block | `/sys/block`（跳过 loop/ram/分区） | `/proc/diskstats` 差分 I/O；子分区 |
-| Software | `/etc/os-release`，`/proc/meminfo`，`osrelease` | loadavg / btime；`XDG_CURRENT_DESKTOP` |
+| Software | `/etc/os-release`，`/proc/meminfo`，`osrelease` | loadavg / btime / tainted；`XDG_CURRENT_DESKTOP` |
 
 ## 界面
 

@@ -47,6 +47,21 @@ pub struct GpuConnector {
     pub name: String,
     pub status: Sample<String>,
     pub enabled: Sample<String>,
+    pub edid: Option<EdidInfo>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct EdidInfo {
+    pub manufacturer: String,
+    pub product_code: u16,
+    pub serial: Option<u32>,
+    pub year: Option<u16>,
+    pub week: Option<u8>,
+    pub name: Option<String>,
+    pub width_cm: Option<u8>,
+    pub height_cm: Option<u8>,
+    pub h_active: Option<u16>,
+    pub v_active: Option<u16>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> GpuReport {
@@ -191,6 +206,7 @@ fn read_drm_card(ctx: &ProbeCtx, drm_root: &Path, card: &str, all_names: &[Strin
                 name: rest.to_string(),
                 status: access::read_trimmed(p.join("status")),
                 enabled: access::read_trimmed(p.join("enabled")),
+                edid: parse_edid_file(&access::read_bytes(p.join("edid"))),
             });
         }
     }
@@ -262,6 +278,98 @@ fn hex_sample(s: Sample<String>) -> Sample<String> {
             hint: s.hint,
         },
     }
+}
+
+fn parse_edid_file(sample: &Sample<Vec<u8>>) -> Option<EdidInfo> {
+    parse_edid(sample.value.as_deref()?)
+}
+
+/// 解析 EDID 1.3/1.4 前 128 字节。不调用 `edid-decode`。
+pub fn parse_edid(buf: &[u8]) -> Option<EdidInfo> {
+    if buf.len() < 128 || buf[0] != 0x00 || buf[1] != 0xff || buf[7] != 0x00 {
+        return None;
+    }
+    let id = u16::from_be_bytes([buf[8], buf[9]]);
+    let letter = |shift: u16| {
+        let n = ((id >> shift) & 0x1f) as u8;
+        if n == 0 {
+            '?'
+        } else {
+            (b'@' + n) as char
+        }
+    };
+    let manufacturer = format!("{}{}{}", letter(10), letter(5), letter(0));
+    let product_code = u16::from_le_bytes([buf[10], buf[11]]);
+    let serial_raw = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
+    let serial = if serial_raw == 0 {
+        None
+    } else {
+        Some(serial_raw)
+    };
+    let week = if buf[16] == 0 || buf[16] == 0xff {
+        None
+    } else {
+        Some(buf[16])
+    };
+    let year = if buf[17] == 0xff {
+        None
+    } else {
+        Some(1990 + buf[17] as u16)
+    };
+    let width_cm = if buf[21] == 0 { None } else { Some(buf[21]) };
+    let height_cm = if buf[22] == 0 { None } else { Some(buf[22]) };
+    let mut name = None;
+    let mut serial_str: Option<String> = None;
+    let mut h_active = None;
+    let mut v_active = None;
+    for off in [54usize, 72, 90, 108] {
+        if off + 18 > buf.len() {
+            break;
+        }
+        let d = &buf[off..off + 18];
+        let pixclk = u16::from_le_bytes([d[0], d[1]]);
+        if pixclk != 0 {
+            if h_active.is_none() {
+                h_active = Some(d[2] as u16 | ((d[4] as u16 & 0xf0) << 4));
+                v_active = Some(d[5] as u16 | ((d[7] as u16 & 0xf0) << 4));
+            }
+            continue;
+        }
+        match d[3] {
+            0xfc => {
+                if name.is_none() {
+                    name = Some(edid_text(&d[5..]));
+                }
+            }
+            0xff => {
+                if serial_str.is_none() {
+                    serial_str = Some(edid_text(&d[5..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = serial_str;
+    Some(EdidInfo {
+        manufacturer,
+        product_code,
+        serial,
+        year,
+        week,
+        name,
+        width_cm,
+        height_cm,
+        h_active,
+        v_active,
+    })
+}
+
+fn edid_text(bytes: &[u8]) -> String {
+    let end = bytes
+        .iter()
+        .position(|&b| b == 0x0a || b == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).trim().to_string()
 }
 
 fn parse_uevent(text: &str) -> (Option<String>, Option<String>) {
@@ -467,6 +575,11 @@ mod tests {
         fs::write(card.join("pp_dpm_sclk"), "0: 500Mhz\n1: 2000Mhz *\n").unwrap();
         fs::write(root.join("sys/class/drm/card0-HDMI-A-1/status"), "connected\n").unwrap();
         fs::write(root.join("sys/class/drm/card0-HDMI-A-1/enabled"), "enabled\n").unwrap();
+        fs::write(
+            root.join("sys/class/drm/card0-HDMI-A-1/edid"),
+            sample_edid(b"DEL", "Test LCD", 1920, 1080),
+        )
+        .unwrap();
         fs::create_dir_all(root.join("sys/bus/pci/devices")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
@@ -483,6 +596,55 @@ mod tests {
         assert_eq!(d.vram_total_bytes.value, Some(8589934592));
         assert_eq!(d.clocks[0].current_mhz.value, Some(2000));
         assert_eq!(d.connectors[0].status.value.as_deref(), Some("connected"));
+        let edid = d.connectors[0].edid.as_ref().unwrap();
+        assert_eq!(edid.manufacturer, "DEL");
+        assert_eq!(edid.name.as_deref(), Some("Test LCD"));
+        assert_eq!(edid.h_active, Some(1920));
+        assert_eq!(edid.v_active, Some(1080));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    fn sample_edid(mfg: &[u8; 3], name: &str, h: u16, v: u16) -> Vec<u8> {
+        let mut buf = vec![0u8; 128];
+        buf[0] = 0x00;
+        buf[1] = 0xff;
+        buf[2] = 0xff;
+        buf[3] = 0xff;
+        buf[4] = 0xff;
+        buf[5] = 0xff;
+        buf[6] = 0xff;
+        buf[7] = 0x00;
+        let c1 = (mfg[0] - b'@') as u16;
+        let c2 = (mfg[1] - b'@') as u16;
+        let c3 = (mfg[2] - b'@') as u16;
+        let id = (c1 << 10) | (c2 << 5) | c3;
+        buf[8] = (id >> 8) as u8;
+        buf[9] = id as u8;
+        buf[17] = (2024 - 1990) as u8;
+        buf[21] = 60;
+        buf[22] = 34;
+        // detailed timing 0: 148.5 MHz-ish dummy clock, 1920x1080
+        let pix = 14850u16;
+        buf[54] = pix as u8;
+        buf[55] = (pix >> 8) as u8;
+        buf[56] = (h & 0xff) as u8;
+        buf[58] = ((h >> 8) << 4) as u8;
+        buf[59] = (v & 0xff) as u8;
+        buf[61] = ((v >> 8) << 4) as u8;
+        // monitor name descriptor
+        buf[72] = 0;
+        buf[73] = 0;
+        buf[74] = 0;
+        buf[75] = 0xfc;
+        buf[76] = 0;
+        for (i, b) in name.bytes().take(13).enumerate() {
+            buf[77 + i] = b;
+        }
+        if name.len() < 13 {
+            buf[77 + name.len()] = 0x0a;
+        }
+        let sum: u8 = buf[..127].iter().fold(0u8, |a, b| a.wrapping_add(*b));
+        buf[127] = 0u8.wrapping_sub(sum);
+        buf
     }
 }

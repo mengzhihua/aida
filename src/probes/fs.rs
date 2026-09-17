@@ -22,6 +22,9 @@ pub struct Mount {
     pub fstype: String,
     pub source: String,
     pub kind: &'static str,
+    pub total_bytes: Option<u64>,
+    pub used_bytes: Option<u64>,
+    pub avail_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -36,13 +39,23 @@ pub struct Swap {
 pub fn collect(ctx: &ProbeCtx) -> FsReport {
     let mut notes = Vec::new();
     let sample = access::read_trimmed(ctx.proc_path("self/mountinfo"));
-    let mounts = match (sample.access, sample.value.as_deref()) {
+    let mut mounts = match (sample.access, sample.value.as_deref()) {
         (AccessKind::Ok, Some(text)) => parse_mountinfo(text),
         _ => {
             notes.push(sample.access_label());
             Vec::new()
         }
     };
+    for m in &mut mounts {
+        if m.kind == "virtual" {
+            continue;
+        }
+        if let Some((total, used, avail)) = usage_of(&m.target) {
+            m.total_bytes = Some(total);
+            m.used_bytes = Some(used);
+            m.avail_bytes = Some(avail);
+        }
+    }
     let swaps = parse_swaps(&access::read_trimmed(ctx.proc_path("swaps")));
     if mounts.is_empty() && notes.is_empty() {
         notes.push("mountinfo 为空。".into());
@@ -81,6 +94,9 @@ pub fn parse_mountinfo_line(line: &str) -> Option<Mount> {
         fstype,
         source,
         kind,
+        total_bytes: None,
+        used_bytes: None,
+        avail_bytes: None,
     })
 }
 
@@ -93,6 +109,28 @@ fn classify(fstype: &str) -> &'static str {
         "tmpfs" | "ramfs" | "shm" => "tmpfs",
         _ => "storage",
     }
+}
+
+/// `statvfs(2)`，等价于 `df` 的块用量，不 spawn `df`/`findmnt`。
+pub fn usage_of(path: &str) -> Option<(u64, u64, u64)> {
+    let c = std::ffi::CString::new(path).ok()?;
+    let mut s = unsafe { std::mem::zeroed::<libc::statvfs>() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    let fr = if s.f_frsize != 0 {
+        s.f_frsize as u64
+    } else {
+        s.f_bsize as u64
+    };
+    let total = (s.f_blocks as u64).saturating_mul(fr);
+    if total == 0 {
+        return None;
+    }
+    let free = (s.f_bfree as u64).saturating_mul(fr);
+    let avail = (s.f_bavail as u64).saturating_mul(fr);
+    let used = total.saturating_sub(free);
+    Some((total, used, avail))
 }
 
 fn parse_swaps(sample: &Sample<String>) -> Vec<Swap> {
@@ -151,5 +189,13 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].filename, "/swapfile");
         assert_eq!(v[0].size_kb, 1048572);
+    }
+
+    #[test]
+    fn statvfs_tmp_has_size() {
+        let (total, used, avail) = usage_of("/tmp").expect("statvfs /tmp");
+        assert!(total > 0);
+        assert!(used <= total);
+        assert!(avail <= total);
     }
 }

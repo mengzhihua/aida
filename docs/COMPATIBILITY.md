@@ -49,6 +49,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 27. **`/proc/iomem` 非 root 时起止地址常被写成 `00000000`。** 只信区域名称；完整范围要 root。
 28. **Wi-Fi 接口未必是 `type=803`。** 有 `/sys/class/net/<if>/wireless` 就标 wireless。
 29. **分区枚举看 `/sys/block/<disk>/<disk>N`，不要把 `sda1` 当独立盘。** NVMe 分区是 `nvme0n1p1`。
+30. **EDID 只解析前 128 字节。** 扩展块/CEA 不读；无显示器或虚拟机无 DRM 时连接器列表为空。
+31. **挂载用量用 `statvfs`。** overlay 的 `f_blocks` 可能是下层文件系统大小，不是镜像“真实”容量。
+32. **无 `/proc/pressure` 不是 bug。** 需 `CONFIG_PSI`；容器有时不挂该节点。
+33. **`/proc/interrupts` 的 NMI/ERR 行 per-cpu 列数可能少于 CPU 数。** 按能解析到的整数求和。
+34. **virtio/NVMe 没有 `ata_port`。** 不要用空列表当探测失败。
+35. **不要 dump ACPI 表二进制。** 只列 `/sys/firmware/acpi/tables` 下的表名。
+36. **tainted=0 就是干净内核。** 按位解码，不要把十进制当“错误码”。
 
 ## 测试方案
 
