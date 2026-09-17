@@ -29,6 +29,7 @@ pub struct CpuInfo {
     pub utilization_pct: Option<f32>,
     /// `/sys/devices/system/cpu/vulnerabilities/*`
     pub vulnerabilities: Vec<CpuVuln>,
+    pub idle_states: Vec<CpuIdleState>,
     pub notes: Vec<String>,
 }
 
@@ -51,6 +52,18 @@ pub struct LogicalCpu {
     pub governor: Sample<String>,
     pub online: Sample<String>,
     pub utilization_pct: Option<f32>,
+    pub thread_siblings: Sample<String>,
+    pub core_siblings: Sample<String>,
+    pub package_cpus: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CpuIdleState {
+    pub name: Sample<String>,
+    pub desc: Sample<String>,
+    pub latency_us: Sample<String>,
+    pub residency_us: Sample<String>,
+    pub disable: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -137,19 +150,14 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         }
         let mhz_from_cpuinfo = block.get("cpu MHz").and_then(|s| s.parse().ok());
         let cpu_dir = ctx.sys_path(format!("devices/system/cpu/cpu{processor}"));
-        logical.push(LogicalCpu {
+        logical.push(logical_from_sysfs(
+            &cpu_dir,
             processor,
             physical_id,
             core_id,
-            apicid: block.get("apicid").and_then(|s| s.parse().ok()),
+            block.get("apicid").and_then(|s| s.parse().ok()),
             mhz_from_cpuinfo,
-            scaling_cur_khz: read_u64(cpu_dir.join("cpufreq/scaling_cur_freq")),
-            scaling_min_khz: read_u64(cpu_dir.join("cpufreq/scaling_min_freq")),
-            scaling_max_khz: read_u64(cpu_dir.join("cpufreq/cpuinfo_max_freq")),
-            governor: access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor")),
-            online: access::read_trimmed(cpu_dir.join("online")),
-            utilization_pct: None,
-        });
+        ));
     }
 
     if logical.is_empty() {
@@ -159,26 +167,18 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
                 if let Some(rest) = name.strip_prefix("cpu") {
                     if let Ok(processor) = rest.parse::<u32>() {
                         let cpu_dir = ctx.sys_path(format!("devices/system/cpu/cpu{processor}"));
-                        logical.push(LogicalCpu {
-                            processor,
-                            physical_id: None,
-                            core_id: None,
-                            apicid: None,
-                            mhz_from_cpuinfo: None,
-                            scaling_cur_khz: read_u64(cpu_dir.join("cpufreq/scaling_cur_freq")),
-                            scaling_min_khz: read_u64(cpu_dir.join("cpufreq/scaling_min_freq")),
-                            scaling_max_khz: read_u64(cpu_dir.join("cpufreq/cpuinfo_max_freq")),
-                            governor: access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor")),
-                            online: access::read_trimmed(cpu_dir.join("online")),
-                            utilization_pct: None,
-                        });
+                        logical.push(logical_from_sysfs(
+                            &cpu_dir, processor, None, None, None, None,
+                        ));
                     }
                 }
             }
         }
     }
 
-    let caches = read_caches(ctx, logical.first().map(|l| l.processor).unwrap_or(0));
+    let cpu0 = logical.first().map(|l| l.processor).unwrap_or(0);
+    let caches = read_caches(ctx, cpu0);
+    let idle_states = collect_idle_states(ctx, cpu0);
 
     let cores_per_package = cores_seen
         .values()
@@ -234,6 +234,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         caches,
         utilization_pct,
         vulnerabilities: collect_vulns(ctx),
+        idle_states,
         notes,
     }
 }
@@ -300,6 +301,57 @@ pub fn utilization(a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) -> Option<f
     }
     let di = b.idle.saturating_sub(a.idle);
     Some(((dt - di) as f32) * 100.0 / dt as f32)
+}
+
+fn logical_from_sysfs(
+    cpu_dir: &std::path::Path,
+    processor: u32,
+    physical_id: Option<u32>,
+    core_id: Option<u32>,
+    apicid: Option<u32>,
+    mhz_from_cpuinfo: Option<f64>,
+) -> LogicalCpu {
+    let topo = cpu_dir.join("topology");
+    LogicalCpu {
+        processor,
+        physical_id,
+        core_id,
+        apicid,
+        mhz_from_cpuinfo,
+        scaling_cur_khz: read_u64(cpu_dir.join("cpufreq/scaling_cur_freq")),
+        scaling_min_khz: read_u64(cpu_dir.join("cpufreq/scaling_min_freq")),
+        scaling_max_khz: read_u64(cpu_dir.join("cpufreq/cpuinfo_max_freq")),
+        governor: access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor")),
+        online: access::read_trimmed(cpu_dir.join("online")),
+        utilization_pct: None,
+        thread_siblings: access::read_trimmed(topo.join("thread_siblings_list")),
+        core_siblings: access::read_trimmed(topo.join("core_siblings_list")),
+        package_cpus: access::read_trimmed(topo.join("package_cpus_list")),
+    }
+}
+
+fn collect_idle_states(ctx: &ProbeCtx, cpu: u32) -> Vec<CpuIdleState> {
+    let root = ctx.sys_path(format!("devices/system/cpu/cpu{cpu}/cpuidle"));
+    let names = match access::list_dir_names(&root).value {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    let mut out: Vec<_> = names
+        .into_iter()
+        .filter(|n| n.starts_with("state"))
+        .map(|n| {
+            let p = root.join(&n);
+            CpuIdleState {
+                name: access::read_trimmed(p.join("name")),
+                desc: access::read_trimmed(p.join("desc")),
+                latency_us: access::read_trimmed(p.join("latency")),
+                residency_us: access::read_trimmed(p.join("residency")),
+                disable: access::read_trimmed(p.join("disable")),
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.display().cmp(&b.name.display()));
+    out
 }
 
 fn collect_vulns(ctx: &ProbeCtx) -> Vec<CpuVuln> {

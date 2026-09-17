@@ -59,6 +59,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
         html.push_str("</table>");
     }
+    if !snap.cpu.idle_states.is_empty() {
+        html.push_str("<table><tr><th>cpuidle</th><th>说明</th><th>latency</th></tr>");
+        for s in &snap.cpu.idle_states {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&s.name.display()),
+                esc(&s.desc.display()),
+                esc(&s.latency_us.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
 
     section(&mut html, "DMI / 主板");
     kv(
@@ -140,6 +152,23 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ));
         }
         html.push_str("</table>");
+    }
+
+    if !snap.edac.controllers.is_empty() {
+        html.push_str("<table><tr><th>EDAC</th><th>名称</th><th>CE</th><th>UE</th></tr>");
+        for c in &snap.edac.controllers {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&c.name),
+                esc(&c.mc_name.display()),
+                esc(&c.ce_count.display()),
+                esc(&c.ue_count.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.edac.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
 
     section(&mut html, "告警");
@@ -357,7 +386,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             esc(&i.name),
             esc(&i.operstate.display()),
-            esc(&i.kind),
+            esc(&if i.wireless {
+                format!("{} / Wi-Fi", i.kind)
+            } else {
+                i.kind.clone()
+            }),
             esc(&speed),
             esc(&i.addresses.join(", ")),
             esc(&rx_tx)
@@ -473,6 +506,50 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ));
     }
     html.push_str("</table>");
+    for b in &snap.block.devices {
+        if b.partitions.is_empty() {
+            continue;
+        }
+        html.push_str(&format!(
+            "<p class=\"muted\">{}: {}</p>",
+            esc(&b.name),
+            esc(&b
+                .partitions
+                .iter()
+                .map(|p| format!(
+                    "{} {}",
+                    p.name,
+                    p.size_bytes
+                        .value
+                        .map(format_bytes)
+                        .unwrap_or_else(|| p.size_bytes.access_label())
+                ))
+                .collect::<Vec<_>>()
+                .join(", "))
+        ));
+    }
+
+    section(&mut html, "文件系统");
+    html.push_str("<table><tr><th>挂载点</th><th>fstype</th><th>源</th><th>kind</th></tr>");
+    for m in snap.fs.mounts.iter().filter(|m| m.kind != "virtual") {
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            esc(&m.target),
+            esc(&m.fstype),
+            esc(&m.source),
+            m.kind
+        ));
+    }
+    html.push_str("</table>");
+    for s in &snap.fs.swaps {
+        html.push_str(&format!(
+            "<p>swap {} {} {} / {}</p>",
+            esc(&s.filename),
+            esc(&s.kind),
+            esc(&format_bytes(s.used_kb * 1024)),
+            esc(&format_bytes(s.size_kb * 1024))
+        ));
+    }
 
     section(&mut html, "系统");
     kv(
@@ -489,8 +566,35 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     .map(|v| format_bytes(v * 1024))
                     .unwrap_or_else(|| snap.software.mem_total_kb.access_label()),
             ),
+            (
+                "loadavg",
+                format!(
+                    "{} {} {}",
+                    snap.software.load_1.display(),
+                    snap.software.load_5.display(),
+                    snap.software.load_15.display()
+                ),
+            ),
+            ("clocksource", snap.clock.current.display()),
+            ("available_clocksource", snap.clock.available.display()),
+            ("模块数", snap.modules.modules.len().to_string()),
         ],
     );
+    if !snap.iomem.summaries.is_empty() {
+        html.push_str("<table><tr><th>iomem</th><th>段数</th><th>大小</th></tr>");
+        for s in snap.iomem.summaries.iter().take(16) {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&s.name),
+                s.count,
+                esc(&format_bytes(s.size))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    for n in &snap.iomem.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
 
     html.push_str("</body></html>");
     html

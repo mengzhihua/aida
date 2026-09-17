@@ -43,6 +43,12 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 21. **`/proc/diskstats` 的扇区按 512 字节计**（即使盘是 4K）。差分前先乘 512。
 22. **Secure Boot efivar 前 4 字节是属性。** 真正的开关是第 5 个字节。
 23. **无 `power_supply` 不是 bug。** 多数服务器/容器没有电池节点。
+24. **`/proc/self/mountinfo` 用 ` - ` 切开 optional fields 与 fs type。** 不要按空格数切，overlay 选项里会有逗号。
+25. **`/proc/modules` 在容器里经常是空文件。** 内置内核或未加载可卸载模块时正常。
+26. **无 RTC / 无 EDAC 在虚拟机上常见。** 不要用 `hwclock`/`edac-util` 兜底。
+27. **`/proc/iomem` 非 root 时起止地址常被写成 `00000000`。** 只信区域名称；完整范围要 root。
+28. **Wi-Fi 接口未必是 `type=803`。** 有 `/sys/class/net/<if>/wireless` 就标 wireless。
+29. **分区枚举看 `/sys/block/<disk>/<disk>N`，不要把 `sda1` 当独立盘。** NVMe 分区是 `nvme0n1p1`。
 
 ## 测试方案
 

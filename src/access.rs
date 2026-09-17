@@ -348,6 +348,15 @@ fn hint_for(source: &str, kind: AccessKind) -> Option<String> {
             "无 EFI sysfs。可能是 legacy BIOS，或虚拟机/容器未提供 UEFI 变量。"
                 .into(),
         ),
+        AccessKind::NotFound if source.contains("/devices/system/edac") => Some(
+            "无 EDAC 节点。消费级/虚拟机通常没有 ECC 计数。".into(),
+        ),
+        AccessKind::NotFound if source.contains("/clocksource") => {
+            Some("无 clocksource sysfs。裁剪内核可能不导出。".into())
+        }
+        AccessKind::PermissionDenied if source.contains("/proc/iomem") => Some(
+            "完整物理地址通常仅 root 可见；普通用户看到的范围会被清零。".into(),
+        ),
         _ => None,
     }
 }

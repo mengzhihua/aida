@@ -37,6 +37,7 @@ pub struct NetIface {
     pub rx_bps: Option<f64>,
     pub tx_bps: Option<f64>,
     pub addresses: Vec<String>,
+    pub wireless: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -142,6 +143,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             rx_bps,
             tx_bps,
             addresses: addrs.get(&name).cloned().unwrap_or_default(),
+            wireless: dir.join("wireless").exists(),
             name,
         });
     }
@@ -263,8 +265,12 @@ mod tests {
         let r = collect_with_prev(&ctx, Some(&prev), 1.0);
         assert_eq!(r.interfaces.len(), 1);
         assert_eq!(r.interfaces[0].kind, "Ethernet");
+        assert!(!r.interfaces[0].wireless);
         assert_eq!(r.interfaces[0].rx_bps, Some(500.0));
         assert_eq!(r.interfaces[0].tx_bps, Some(1500.0));
+        fs::create_dir_all(iface.join("wireless")).unwrap();
+        let r2 = collect(&ctx);
+        assert!(r2.interfaces[0].wireless);
         let _ = fs::remove_dir_all(&root);
     }
 }

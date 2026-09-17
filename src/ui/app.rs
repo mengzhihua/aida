@@ -29,6 +29,7 @@ enum Nav {
     Sensors,
     Power,
     Storage,
+    Filesystems,
     Network,
     Usb,
     Input,
@@ -253,6 +254,12 @@ impl eframe::App for AidaApp {
                     Nav::Storage,
                     tr(cjk, "存储 / NVMe", "Storage / NVMe"),
                 );
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Filesystems,
+                    tr(cjk, "文件系统", "Filesystems"),
+                );
                 nav_btn(ui, &mut self.nav, Nav::Network, tr(cjk, "网络", "Network"));
                 nav_btn(ui, &mut self.nav, Nav::Usb, tr(cjk, "USB", "USB"));
                 nav_btn(ui, &mut self.nav, Nav::Input, tr(cjk, "输入设备", "Input"));
@@ -284,6 +291,7 @@ impl eframe::App for AidaApp {
             Nav::Sensors => self.ui_sensors(ui),
             Nav::Power => self.ui_power(ui),
             Nav::Storage => self.ui_storage(ui),
+            Nav::Filesystems => self.ui_fs(ui),
             Nav::Network => self.ui_net(ui),
             Nav::Usb => self.ui_usb(ui),
             Nav::Input => self.ui_input(ui),
@@ -313,6 +321,16 @@ impl AidaApp {
         if let Some(u) = self.snap.cpu.utilization_pct {
             kv(ui, self.t("利用率", "Utilization"), &format!("{u:.1}%"));
         }
+        kv(
+            ui,
+            "loadavg",
+            &format!(
+                "{}  {}  {}",
+                self.snap.software.load_1.display(),
+                self.snap.software.load_5.display(),
+                self.snap.software.load_15.display()
+            ),
+        );
         kv(
             ui,
             self.t("系统厂商", "Vendor"),
@@ -468,6 +486,7 @@ impl AidaApp {
                 ui.strong("MHz");
                 ui.strong("%");
                 ui.strong("governor");
+                ui.strong("smt");
                 ui.end_row();
                 for l in &self.snap.cpu.logical {
                     ui.label(l.processor.to_string());
@@ -489,6 +508,7 @@ impl AidaApp {
                             .unwrap_or_else(|| "—".into()),
                     );
                     ui.label(l.governor.display());
+                    ui.label(l.thread_siblings.display());
                     ui.end_row();
                 }
             });
@@ -510,6 +530,22 @@ impl AidaApp {
                 ui.collapsing(self.t("CPU 漏洞缓解", "CPU vulnerabilities"), |ui| {
                     for v in &self.snap.cpu.vulnerabilities {
                         kv(ui, &v.name, &v.status.display());
+                    }
+                });
+            }
+            if !self.snap.cpu.idle_states.is_empty() {
+                ui.collapsing("cpuidle", |ui| {
+                    for s in &self.snap.cpu.idle_states {
+                        kv(
+                            ui,
+                            &s.name.display(),
+                            &format!(
+                                "{}  lat {}  res {}",
+                                s.desc.display(),
+                                s.latency_us.display(),
+                                s.residency_us.display()
+                            ),
+                        );
                     }
                 });
             }
@@ -570,6 +606,26 @@ impl AidaApp {
                         p.nr.display(),
                         p.free.display(),
                         p.surplus.display()
+                    ),
+                );
+            }
+        }
+        for n in &self.snap.edac.notes {
+            ui.weak(n);
+        }
+        if !self.snap.edac.controllers.is_empty() {
+            ui.separator();
+            ui.strong("EDAC");
+            for c in &self.snap.edac.controllers {
+                kv(
+                    ui,
+                    &c.name,
+                    &format!(
+                        "{}  {} MiB  CE {}  UE {}",
+                        c.mc_name.display(),
+                        c.size_mb.display(),
+                        c.ce_count.display(),
+                        c.ue_count.display()
                     ),
                 );
             }
@@ -854,6 +910,59 @@ impl AidaApp {
         });
     }
 
+    fn ui_fs(&self, ui: &mut egui::Ui) {
+        ui.heading(self.t("文件系统", "Filesystems"));
+        for n in &self.snap.fs.notes {
+            ui.colored_label(Color32::from_rgb(255, 179, 71), n);
+        }
+        if !self.snap.fs.swaps.is_empty() {
+            ui.strong("swap");
+            for s in &self.snap.fs.swaps {
+                kv(
+                    ui,
+                    &s.filename,
+                    &format!(
+                        "{}  {} / {}",
+                        s.kind,
+                        crate::export::format_bytes(s.used_kb * 1024),
+                        crate::export::format_bytes(s.size_kb * 1024)
+                    ),
+                );
+            }
+            ui.separator();
+        }
+        egui::ScrollArea::both().show(ui, |ui| {
+            egui::Grid::new("fs").striped(true).show(ui, |ui| {
+                ui.strong(self.t("挂载点", "target"));
+                ui.strong("fstype");
+                ui.strong(self.t("源", "source"));
+                ui.strong("kind");
+                ui.end_row();
+                for m in self.snap.fs.mounts.iter().filter(|m| m.kind != "virtual") {
+                    ui.label(&m.target);
+                    ui.label(&m.fstype);
+                    ui.label(&m.source);
+                    ui.label(m.kind);
+                    ui.end_row();
+                }
+            });
+            let virt: Vec<_> = self
+                .snap
+                .fs
+                .mounts
+                .iter()
+                .filter(|m| m.kind == "virtual")
+                .collect();
+            if !virt.is_empty() {
+                ui.collapsing(format!("virtual ({})", virt.len()), |ui| {
+                    for m in virt {
+                        ui.weak(format!("{}  {}  {}", m.target, m.fstype, m.source));
+                    }
+                });
+            }
+        });
+    }
+
     fn ui_storage(&self, ui: &mut egui::Ui) {
         ui.heading(self.t("存储", "Storage"));
         if !self.disk_hist.is_empty() {
@@ -901,6 +1010,26 @@ impl AidaApp {
                 ui.end_row();
             }
         });
+        for b in &self.snap.block.devices {
+            if !b.partitions.is_empty() {
+                ui.weak(format!(
+                    "{}: {}",
+                    b.name,
+                    b.partitions
+                        .iter()
+                        .map(|p| format!(
+                            "{} {}",
+                            p.name,
+                            p.size_bytes
+                                .value
+                                .map(crate::export::format_bytes)
+                                .unwrap_or_else(|| p.size_bytes.access_label())
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
         ui.separator();
         ui.strong("NVMe");
         if self.snap.nvme.controllers.is_empty() {
@@ -960,7 +1089,11 @@ impl AidaApp {
                 for i in &self.snap.net.interfaces {
                     ui.label(&i.name);
                     ui.label(i.operstate.display());
-                    ui.label(&i.kind);
+                    ui.label(if i.wireless {
+                        format!("{} / Wi-Fi", i.kind)
+                    } else {
+                        i.kind.clone()
+                    });
                     ui.label(
                         i.speed_mbps
                             .value
@@ -992,6 +1125,7 @@ impl AidaApp {
                     kv(ui, "duplex", &i.duplex.display());
                     kv(ui, "carrier", &i.carrier.display());
                     kv(ui, "driver", &i.driver.display());
+                    kv(ui, "wireless", if i.wireless { "yes" } else { "no" });
                     kv(
                         ui,
                         self.t("累计 RX", "RX bytes"),
@@ -1166,6 +1300,64 @@ impl AidaApp {
                 .unwrap_or_else(|| self.snap.software.mem_total_kb.access_label()),
         );
         kv(ui, "desktop", &self.snap.software.desktop.display());
+        kv(
+            ui,
+            "loadavg",
+            &format!(
+                "{}  {}  {}  {}",
+                self.snap.software.load_1.display(),
+                self.snap.software.load_5.display(),
+                self.snap.software.load_15.display(),
+                self.snap.software.procs.display()
+            ),
+        );
+        kv(ui, "clocksource", &self.snap.clock.current.display());
+        kv(ui, "available", &self.snap.clock.available.display());
+        for n in &self.snap.clock.notes {
+            ui.weak(n);
+        }
+        for r in &self.snap.clock.rtcs {
+            kv(ui, &format!("RTC {}", r.name), &r.rtc_name.display());
+        }
+        kv(
+            ui,
+            self.t("模块", "modules"),
+            &self.snap.modules.modules.len().to_string(),
+        );
+        for n in &self.snap.modules.notes {
+            ui.weak(n);
+        }
+        if !self.snap.modules.modules.is_empty() {
+            ui.collapsing("lsmod", |ui| {
+                for m in &self.snap.modules.modules {
+                    ui.label(format!(
+                        "{}  {}  refs {}  {}",
+                        m.name,
+                        crate::export::format_bytes(m.size_bytes),
+                        m.refcount,
+                        m.state
+                    ));
+                }
+            });
+        }
+        if !self.snap.iomem.summaries.is_empty() {
+            ui.collapsing("iomem", |ui| {
+                for n in &self.snap.iomem.notes {
+                    ui.weak(n);
+                }
+                for s in &self.snap.iomem.summaries {
+                    kv(
+                        ui,
+                        &s.name,
+                        &format!(
+                            "×{}  {}",
+                            s.count,
+                            crate::export::format_bytes(s.size)
+                        ),
+                    );
+                }
+            });
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),

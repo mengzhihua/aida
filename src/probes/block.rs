@@ -28,6 +28,13 @@ pub struct BlockDevice {
     /// 两次采样之间的吞吐；单次 collect 未差分时为 None。
     pub rd_bps: Option<f64>,
     pub wr_bps: Option<f64>,
+    pub partitions: Vec<BlockPart>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BlockPart {
+    pub name: String,
+    pub size_bytes: Sample<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +124,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             }
             _ => (None, None),
         };
+        let partitions = list_partitions(&dir, &name);
         devices.push(BlockDevice {
             r#type: classify(&name, rotational.value),
             name,
@@ -140,6 +148,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             wr_bytes: wr_bytes.unwrap_or_else(|| Sample::missing("/proc/diskstats")),
             rd_bps,
             wr_bps,
+            partitions,
         });
     }
     BlockReport { devices, notes }
@@ -201,6 +210,42 @@ fn parse_diskstats_line(line: &str) -> Option<(String, DiskStat)> {
             wr_bytes: wr_sect.saturating_mul(512),
         },
     ))
+}
+
+fn list_partitions(dir: &std::path::Path, parent: &str) -> Vec<BlockPart> {
+    let names = match access::list_dir_names(dir).value {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        if !name.starts_with(parent) || name == parent || !is_partition(&name) {
+            continue;
+        }
+        let size = match access::read_trimmed(dir.join(&name).join("size")) {
+            Sample {
+                access: AccessKind::Ok,
+                value: Some(s),
+                source,
+                ..
+            } => match s.parse::<u64>() {
+                Ok(sectors) => Sample::ok(sectors.saturating_mul(512), source),
+                Err(_) => Sample::error(source, "无法解析 size"),
+            },
+            s => Sample {
+                value: None,
+                access: s.access,
+                source: s.source,
+                hint: s.hint,
+            },
+        };
+        out.push(BlockPart {
+            name,
+            size_bytes: size,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 fn first_existing(paths: &[std::path::PathBuf]) -> Sample<String> {
@@ -293,6 +338,33 @@ mod tests {
         assert_eq!(r.devices.len(), 1);
         assert_eq!(r.devices[0].rd_bytes.value, Some(200 * 512));
         assert_eq!(r.devices[0].rd_bps, Some(100.0 * 512.0));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lists_child_partitions() {
+        let root = std::env::temp_dir().join(format!("aida-part-{}", std::process::id()));
+        let dir = root.join("sys/block/vda");
+        std::fs::create_dir_all(dir.join("queue")).unwrap();
+        std::fs::write(dir.join("size"), "2048\n").unwrap();
+        std::fs::write(dir.join("queue/rotational"), "0\n").unwrap();
+        let p1 = dir.join("vda1");
+        std::fs::create_dir_all(&p1).unwrap();
+        std::fs::write(p1.join("size"), "1024\n").unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(root.join("proc/diskstats"), "").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.devices.len(), 1);
+        assert_eq!(r.devices[0].partitions.len(), 1);
+        assert_eq!(r.devices[0].partitions[0].name, "vda1");
+        assert_eq!(r.devices[0].partitions[0].size_bytes.value, Some(1024 * 512));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
