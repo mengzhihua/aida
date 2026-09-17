@@ -8,9 +8,9 @@ use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
 use crate::probes::rapl::RaplSnap;
 use crate::probes::{
-    ata, audio, block, buses, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem, iommu,
-    irq, iscsi, kvm, md, memory, modules, net, numa, nvme, pci, platform, power, psi, rapl, scsi,
-    software, usb, virtio, zmem,
+    ata, audio, block, buses, cgroup, clock, cpu, dmi, edac, firmware, fs, gpu, hwmon, input, iomem,
+    iommu, irq, iscsi, kvm, md, memory, modules, net, numa, nvme, pci, platform, power, psi, rapl,
+    scsi, software, sysctl, usb, virtio, zmem,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -53,6 +53,8 @@ pub struct HardwareSnapshot {
     pub zmem: zmem::ZmemReport,
     pub platform: platform::PlatformReport,
     pub buses: buses::BusesReport,
+    pub cgroup: cgroup::CgroupReport,
+    pub sysctl: sysctl::SysctlReport,
     pub software: software::SoftwareInfo,
 }
 
@@ -145,6 +147,8 @@ impl HardwareSnapshot {
             zmem: zmem::collect(ctx),
             platform: platform::collect(ctx),
             buses: buses::collect(ctx),
+            cgroup: cgroup::collect(ctx),
+            sysctl: sysctl::collect(ctx),
             software: software::collect(ctx),
         }
     }
@@ -183,6 +187,8 @@ impl HardwareSnapshot {
         self.irq = irq::collect(ctx);
         self.platform = platform::collect(ctx);
         self.zmem = zmem::collect(ctx);
+        self.sysctl = sysctl::collect(ctx);
+        self.cgroup = cgroup::collect(ctx);
         self.collected_at_unix_ms = unix_ms();
     }
 }

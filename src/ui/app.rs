@@ -772,6 +772,26 @@ impl AidaApp {
                 );
             }
         }
+        if !m.zones.is_empty() {
+            ui.separator();
+            ui.strong("zoneinfo");
+            for z in &m.zones {
+                kv(
+                    ui,
+                    &format!("N{} {}", z.node, z.zone),
+                    &format!(
+                        "free {}  present {}  managed {}",
+                        z.free.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                        z.present
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into()),
+                        z.managed
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into())
+                    ),
+                );
+            }
+        }
         if !m.hugepages.is_empty() {
             ui.separator();
             ui.strong("hugepages");
@@ -1227,6 +1247,31 @@ impl AidaApp {
                 });
             }
         });
+        if !self.snap.fs.ext4.is_empty() {
+            ui.separator();
+            ui.strong("ext4 sysfs");
+            for e in &self.snap.fs.ext4 {
+                kv(
+                    ui,
+                    &e.name,
+                    &format!(
+                        "lifetime {}  session {}  errors {}",
+                        e.lifetime_write_kbytes
+                            .value
+                            .map(|v| crate::export::format_bytes(v * 1024))
+                            .unwrap_or_else(|| e.lifetime_write_kbytes.access_label()),
+                        e.session_write_kbytes
+                            .value
+                            .map(|v| crate::export::format_bytes(v * 1024))
+                            .unwrap_or_else(|| e.session_write_kbytes.access_label()),
+                        e.errors_count.display()
+                    ),
+                );
+            }
+        }
+        if self.snap.fs.xfs_stats.access == AccessKind::Ok {
+            kv(ui, "xfs rw", &self.snap.fs.xfs_stats.display());
+        }
     }
 
     fn ui_storage(&self, ui: &mut egui::Ui) {
@@ -1548,11 +1593,67 @@ impl AidaApp {
                 ss.tcp_tw
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()),
-                ss.udp_inuse
+                    ss.udp_inuse
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into())
             ),
         );
+        let sn = &self.snap.net.snmp;
+        kv(
+            ui,
+            "TCP/IP",
+            &format!(
+                "estab {}  in {}  out {}  retrans {}  udp {}/{}",
+                sn.tcp_curr_estab
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                sn.tcp_in_segs
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                sn.tcp_out_segs
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                sn.tcp_retrans
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                sn.udp_in.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                sn.udp_out.map(|v| v.to_string()).unwrap_or_else(|| "—".into())
+            ),
+        );
+        kv(
+            ui,
+            "softnet",
+            &format!(
+                "processed {}  dropped {}  squeeze {}  cpus {}",
+                self.snap.net.softnet.processed,
+                self.snap.net.softnet.dropped,
+                self.snap.net.softnet.time_squeeze,
+                self.snap.net.softnet.cpus
+            ),
+        );
+        for b in &self.snap.net.bridges {
+            kv(
+                ui,
+                &format!("bridge {}", b.name),
+                &format!(
+                    "{}  stp {}  members {}",
+                    b.bridge_id.display(),
+                    b.stp_state.display(),
+                    b.members.join(",")
+                ),
+            );
+        }
+        for b in &self.snap.net.bonds {
+            kv(
+                ui,
+                &format!("bond {}", b.name),
+                &format!(
+                    "mode {}  slaves {}",
+                    b.mode.display(),
+                    b.slaves.display()
+                ),
+            );
+        }
     }
 
     fn ui_usb(&self, ui: &mut egui::Ui) {
@@ -1898,6 +1999,86 @@ impl AidaApp {
             kv(ui, "SELinux enforce", &self.snap.software.selinux_enforce.display());
         }
         kv(ui, "entropy", &self.snap.software.entropy_avail.display());
+        kv(
+            ui,
+            "file-nr",
+            &format!(
+                "{} / {}",
+                self.snap.sysctl.file_nr_alloc.display(),
+                self.snap.sysctl.file_nr_max.display()
+            ),
+        );
+        kv(ui, "pid_max", &self.snap.sysctl.pid_max.display());
+        kv(
+            ui,
+            "vm",
+            &format!(
+                "swappiness {}  overcommit {}  dirty {}/{}",
+                self.snap.sysctl.swappiness.display(),
+                self.snap.sysctl.overcommit_memory.display(),
+                self.snap.sysctl.dirty_ratio.display(),
+                self.snap.sysctl.dirty_background_ratio.display()
+            ),
+        );
+        kv(ui, "ASLR", &self.snap.sysctl.aslr.display());
+        kv(ui, "core_pattern", &self.snap.sysctl.core_pattern.display());
+        kv(ui, "ip_forward", &self.snap.sysctl.ip_forward.display());
+        kv(
+            ui,
+            "cgroup",
+            &format!(
+                "{}  mem {}  cpu {} us",
+                self.snap.cgroup.controllers.display(),
+                self.snap
+                    .cgroup
+                    .memory_current
+                    .value
+                    .map(crate::export::format_bytes)
+                    .unwrap_or_else(|| self.snap.cgroup.memory_current.access_label()),
+                self.snap.cgroup.cpu_usage_usec.display()
+            ),
+        );
+        if !self.snap.cgroup.groups.is_empty() {
+            ui.collapsing(
+                format!("cgroup slices ({})", self.snap.cgroup.groups.len()),
+                |ui| {
+                    for g in &self.snap.cgroup.groups {
+                        kv(
+                            ui,
+                            &g.name,
+                            &format!(
+                                "procs {}  mem {}",
+                                g.procs.display(),
+                                g.memory_current
+                                    .value
+                                    .map(crate::export::format_bytes)
+                                    .unwrap_or_else(|| g.memory_current.access_label())
+                            ),
+                        );
+                    }
+                },
+            );
+        }
+        if !self.snap.sysctl.consoles.is_empty() {
+            kv(
+                ui,
+                "consoles",
+                &self
+                    .snap
+                    .sysctl
+                    .consoles
+                    .iter()
+                    .map(|c| format!("{} {}", c.name, c.flags))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+        for n in &self.snap.sysctl.notes {
+            ui.weak(n);
+        }
+        for n in &self.snap.cgroup.notes {
+            ui.weak(n);
+        }
         if let Some(cpu) = &self.snap.psi.cpu {
             kv(
                 ui,
@@ -2035,7 +2216,16 @@ impl AidaApp {
                 format!("IRQ top ({})", self.snap.irq.lines.len()),
                 |ui| {
                     for l in self.snap.irq.lines.iter().take(16) {
-                        kv(ui, &l.irq, &format!("{}  {}", l.total, l.extra));
+                        kv(
+                            ui,
+                            &l.irq,
+                            &format!(
+                                "{}  {}  {}",
+                                l.total,
+                                l.extra,
+                                l.affinity.value.as_deref().unwrap_or("")
+                            ),
+                        );
                     }
                 },
             );

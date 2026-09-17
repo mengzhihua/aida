@@ -18,7 +18,7 @@
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + zram/zswap + power + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量，避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA。
+4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + zram/zswap + power + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量 + sysctl + cgroup，避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA。
 
 ## 各 probe 内核接口
 
@@ -29,23 +29,23 @@
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02 |
 | GPU | `/sys/class/drm/cardN`，PCI class `0x03` | amdgpu busy/vram、i915/xe 频率、连接器 EDID、`/proc/driver/nvidia` |
-| Net | `/sys/class/net/*/statistics` | `getifaddrs` 地址；`queues/rx-*`/`tx-*`；`/proc/net/sockstat`；`wireless` 目录；`speed=-1` → unsupported |
+| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond |
 | USB | `/sys/bus/usb/devices`（跳过 `*:*.*` 接口节点） | `usb.ids` 名称 |
 | Input | `/proc/bus/input/devices` | handlers → keyboard/mouse/js |
 | NUMA | `/sys/devices/system/node/nodeN` | meminfo / cpulist / distance |
-| Memory | `/proc/meminfo` | hugepages + THP；buddyinfo；vmstat；KSM；`memoryN` 热插拔块 |
+| Memory | `/proc/meminfo` | hugepages + THP；buddyinfo；zoneinfo；vmstat；KSM；`memoryN` |
 | zmem | `/sys/block/zramN` + `module/zswap/parameters` | mm_stat；不调用 zramctl |
 | EDAC | `/sys/devices/system/edac/mc/mcN` | ce_count / ue_count |
 | Power | `/sys/class/power_supply` | 电池容量/能量、AC online |
 | RAPL | `/sys/class/powercap/*/energy_uj` | 差分瓦特；回绕用 `max_energy_range_uj` |
 | Audio | `/proc/asound/cards` | `/sys/class/sound/cardN/id` |
 | Firmware | `/sys/firmware/efi` | SecureBoot；ACPI 表名；TPM；hwrng |
-| Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs` 用量 |
+| Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs`；ext4 sysfs；xfs stats |
 | Modules | `/proc/modules` | 按名称排序 |
 | Clock | `clocksource0/current_clocksource` | `/sys/class/rtc`；`/sys/class/ptp` |
 | iomem | `/proc/iomem` | 按名称汇总；非 root 地址常为 0 |
 | PSI | `/proc/pressure/{cpu,memory,io}` | some/full avg10/60/300 |
-| IRQ | `/proc/interrupts` | `/proc/softirqs`；按合计排序 |
+| IRQ | `/proc/interrupts` | `/proc/softirqs`；`smp_affinity_list` |
 | ATA | `/sys/class/ata_port` | link `sata_spd`；IDENTIFY 型号 |
 | PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `current_link_*`；MSI；`sriov_*vfs`；`pci.ids` |
 | virtio | `/sys/bus/virtio/devices` | `modalias` → `virtio_ids.h` |
@@ -57,6 +57,8 @@
 | iSCSI | `/sys/class/iscsi_{transport,host,session}` | 不调用 iscsiadm |
 | Platform | watchdog / backlight / leds / i2c | 不调用 i2cdetect |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI | 不调用 rfkill/bluetoothctl |
+| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；consoles |
+| Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current / slices |
 | Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy |
 
 ## 界面

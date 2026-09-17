@@ -75,6 +75,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 53. **不要调用 `iscsiadm`/`rfkill`/`bluetoothctl`/`v4l2-ctl`。** class 目录为空就写 note。
 54. **`sriov_totalvfs` 只在 PF 上存在。** virtio/普通端点没有该节点。
 55. **平台/总线 class 的 `PermissionDenied` 不是「无设备」。** 用 `access_label`，不要写成空列表。
+56. **不要调用 `sysctl`/`systemd-cgls`/`brctl`/`ss`/`netstat`。** snmp、softnet、cgroup v2、bridge sysfs 足够。
+57. **`/proc/net/snmp` 两行一组。** 先字段名后数值；`Tcp.MaxConn=-1` 表示无限，不要当错误。
+58. **`softnet_stat` 是十六进制。** 每行一个 CPU，列 0/1/2 = processed/dropped/time_squeeze。
+59. **网桥看 `class/net/<if>/bridge`。** docker0 这类 type=1 的也是桥，不要只信 `type`。
+60. **cgroup v2 只扫根和第一层 `.slice`/`.scope`。** 不要递归整个树。
+61. **`pagetypeinfo` 常要 root。** zoneinfo 对普通用户通常可读。
+62. **IRQ 亲和只读数字 IRQ 的 `smp_affinity_list`。** NMI/ERR/LOC 没有该目录。
 
 ## 测试方案
 

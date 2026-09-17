@@ -47,6 +47,12 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"iscsi\""));
     assert!(json.contains("\"rfkill\""));
     assert!(json.contains("\"smt_control\""));
+    assert!(json.contains("\"snmp\""));
+    assert!(json.contains("\"softnet\""));
+    assert!(json.contains("\"sysctl\""));
+    assert!(json.contains("\"cgroup\""));
+    assert!(json.contains("\"zones\""));
+    assert!(json.contains("\"ext4\""));
     assert!(
         !snap.irq.softirqs.is_empty(),
         "/proc/softirqs 应至少有一行"
@@ -97,6 +103,30 @@ fn live_snapshot_json_and_html() {
         "/dev/kvm 应存在或给出说明"
     );
     assert!(
+        snap.net.snmp.tcp_in_segs.is_some() || snap.net.snmp.ip_in_receives.is_some(),
+        "snmp Tcp/Ip 计数应可读"
+    );
+    assert!(
+        snap.net.softnet.cpus >= 1,
+        "softnet_stat 应至少有一行"
+    );
+    assert!(
+        snap.sysctl.pid_max.value.is_some(),
+        "pid_max 应可读"
+    );
+    assert!(
+        snap.sysctl.file_nr_alloc.value.is_some(),
+        "file-nr 应可读"
+    );
+    assert!(
+        snap.cgroup.controllers.value.is_some() || !snap.cgroup.notes.is_empty(),
+        "cgroup v2 应可读或给出说明"
+    );
+    assert!(
+        !snap.memory.zones.is_empty(),
+        "zoneinfo 应至少有一个 zone"
+    );
+    assert!(
         !snap.fs.mounts.is_empty(),
         "mountinfo 应至少有一个挂载点"
     );
@@ -143,6 +173,8 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("LSM"));
     assert!(html.contains("KVM"));
     assert!(html.contains("zswap"));
+    assert!(html.contains("TCP") || html.contains("softnet"));
+    assert!(html.contains("cgroup") || html.contains("file-nr"));
     assert!(!html.contains("<script"));
 }
 

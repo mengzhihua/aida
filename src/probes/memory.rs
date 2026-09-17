@@ -26,6 +26,7 @@ pub struct MemoryReport {
     pub vmstat: Vmstat,
     pub ksm: KsmInfo,
     pub mem_blocks: MemoryBlocks,
+    pub zones: Vec<MemZone>,
     pub notes: Vec<String>,
 }
 
@@ -68,6 +69,15 @@ pub struct MemoryBlocks {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct MemZone {
+    pub node: u32,
+    pub zone: String,
+    pub free: Option<u64>,
+    pub present: Option<u64>,
+    pub managed: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct HugePagePool {
     pub size_kb: u64,
     pub nr: Sample<u64>,
@@ -87,6 +97,10 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
     let vmstat = parse_vmstat(&access::read_trimmed(ctx.proc_path("vmstat")));
     let ksm = read_ksm(ctx);
     let mem_blocks = read_memory_blocks(ctx);
+    let zones = parse_zoneinfo(&access::read_trimmed(ctx.proc_path("zoneinfo")));
+    if zones.is_empty() {
+        notes.push("无 zoneinfo（容器或权限不足时常见）。".into());
+    }
     if let (Some(total), Some(avail)) = (mem.total_kb.value, mem.available_kb.value) {
         if total > 0 {
             let used_pct = 100.0 * (total.saturating_sub(avail) as f64) / total as f64;
@@ -116,6 +130,7 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
         vmstat,
         ksm,
         mem_blocks,
+        zones,
         notes,
     }
 }
@@ -248,6 +263,51 @@ pub fn parse_buddyinfo(sample: &Sample<String>) -> Vec<BuddyZone> {
             zone,
             free_counts,
         });
+    }
+    out
+}
+
+/// `/proc/zoneinfo`：每个 Node/zone 的 free/present/managed 页数。
+pub fn parse_zoneinfo(sample: &Sample<String>) -> Vec<MemZone> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut cur: Option<MemZone> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Node ") {
+            if let Some(z) = cur.take() {
+                out.push(z);
+            }
+            let Some((node_s, zone_s)) = rest.split_once(", zone") else {
+                continue;
+            };
+            let node = node_s.trim().parse().unwrap_or(0);
+            let zone = zone_s.trim().to_string();
+            if zone.is_empty() {
+                continue;
+            }
+            cur = Some(MemZone {
+                node,
+                zone,
+                free: None,
+                present: None,
+                managed: None,
+            });
+            continue;
+        }
+        let Some(z) = cur.as_mut() else { continue };
+        let mut it = t.split_whitespace();
+        match (it.next(), it.next(), it.next()) {
+            (Some("pages"), Some("free"), Some(v)) => z.free = v.parse().ok(),
+            (Some("present"), Some(v), _) => z.present = v.parse().ok(),
+            (Some("managed"), Some(v), _) => z.managed = v.parse().ok(),
+            _ => {}
+        }
+    }
+    if let Some(z) = cur {
+        out.push(z);
     }
     out
 }
@@ -464,5 +524,26 @@ mod tests {
         assert_eq!(r.mem_blocks.online, 1);
         assert_eq!(r.mem_blocks.offline, 1);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn zoneinfo_dma_and_normal() {
+        let text = "\
+Node 0, zone      DMA
+  pages free     3840
+        present  3998
+        managed  3840
+Node 0, zone   Normal
+  pages free     100
+        present  200
+        managed  180
+";
+        let z = parse_zoneinfo(&Sample::ok(text.into(), "zoneinfo"));
+        assert_eq!(z.len(), 2);
+        assert_eq!(z[0].zone, "DMA");
+        assert_eq!(z[0].free, Some(3840));
+        assert_eq!(z[0].present, Some(3998));
+        assert_eq!(z[1].zone, "Normal");
+        assert_eq!(z[1].managed, Some(180));
     }
 }
