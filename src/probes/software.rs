@@ -28,6 +28,8 @@ pub struct SoftwareInfo {
     pub lsm: Sample<String>,
     pub selinux_enforce: Sample<String>,
     pub entropy_avail: Sample<u64>,
+    pub machine_id: Sample<String>,
+    pub domainname: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -88,6 +90,8 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         lsm: access::read_trimmed(ctx.sys_path("kernel/security/lsm")),
         selinux_enforce: access::read_trimmed(ctx.sys_path("fs/selinux/enforce")),
         entropy_avail: access::read_u64(ctx.proc_path("sys/kernel/random/entropy_avail")),
+        machine_id: access::read_trimmed(ctx.etc.join("machine-id")),
+        domainname: access::read_trimmed(ctx.proc_path("sys/kernel/domainname")),
         notes: Vec::new(),
     }
 }

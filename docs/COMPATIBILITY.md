@@ -89,6 +89,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 67. **无 backing_file 的 loopN 视为空闲。** 虚拟机常有 loop0–7 且 size=0。
 68. **串口只列 `ttyS*`/`ttyUSB*`/`ttyACM*`/`ttyAMA*`。** 不要把 `tty0`–`tty63` 当 UART。
 69. **无 `scsi_device` 不是采集失败。** virtio-blk 没有 SCSI LUN。
+70. **`/sys/power/state` 只有 `disk` 不代表不能读。** 云 VM 常无 mem/freeze；不要调用 `systemctl suspend`。
+71. **`/proc/net/snmp6` 是「键 值」每行一项。** 不要用 IPv4 snmp 的两行组去切。
+72. **`ioports` 与 iomem 一样非 root 地址常为 0。** 只信区域名称。
+73. **`unprivileged_bpf_disabled=2` 表示默认禁止非特权 BPF。** 不是采集失败。
+74. **`modules_disabled=1` 之后不能再加载模块。** 加固云镜像可能为 1，不要当采集失败。
+75. **THP `defrag`/`shmem_enabled` 也是方括号标当前策略。** 与 `enabled` 分开读。
+76. **misc 只列 `/sys/class/misc` 名字。** kvm/tun/fuse 的细节仍在各自 probe。
 
 ## 测试方案
 

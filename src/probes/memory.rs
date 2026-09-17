@@ -21,6 +21,13 @@ pub struct MemoryReport {
     pub commit_limit_kb: Sample<u64>,
     pub committed_as_kb: Sample<u64>,
     pub thp_enabled: Sample<String>,
+    pub thp_defrag: Sample<String>,
+    pub thp_shmem: Sample<String>,
+    pub anon_huge_kb: Sample<u64>,
+    pub vmalloc_used_kb: Sample<u64>,
+    pub directmap_4k_kb: Sample<u64>,
+    pub directmap_2m_kb: Sample<u64>,
+    pub directmap_1g_kb: Sample<u64>,
     pub hugepages: Vec<HugePagePool>,
     pub buddy: Vec<BuddyZone>,
     pub vmstat: Vmstat,
@@ -89,6 +96,8 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
     let mut notes = Vec::new();
     let mem = parse_meminfo(&access::read_trimmed(ctx.proc_path("meminfo")));
     let thp_enabled = access::read_trimmed(ctx.sys_path("kernel/mm/transparent_hugepage/enabled"));
+    let thp_defrag = access::read_trimmed(ctx.sys_path("kernel/mm/transparent_hugepage/defrag"));
+    let thp_shmem = access::read_trimmed(ctx.sys_path("kernel/mm/transparent_hugepage/shmem_enabled"));
     let hugepages = read_hugepages(ctx);
     if hugepages.is_empty() {
         notes.push("未发现 hugepages-* 池（内核未启用大页时正常）。".into());
@@ -125,6 +134,13 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
         commit_limit_kb: mem.commit_limit_kb,
         committed_as_kb: mem.committed_as_kb,
         thp_enabled,
+        thp_defrag,
+        thp_shmem,
+        anon_huge_kb: mem.anon_huge_kb,
+        vmalloc_used_kb: mem.vmalloc_used_kb,
+        directmap_4k_kb: mem.directmap_4k_kb,
+        directmap_2m_kb: mem.directmap_2m_kb,
+        directmap_1g_kb: mem.directmap_1g_kb,
         hugepages,
         buddy,
         vmstat,
@@ -150,6 +166,11 @@ struct ParsedMem {
     sreclaimable_kb: Sample<u64>,
     commit_limit_kb: Sample<u64>,
     committed_as_kb: Sample<u64>,
+    anon_huge_kb: Sample<u64>,
+    vmalloc_used_kb: Sample<u64>,
+    directmap_4k_kb: Sample<u64>,
+    directmap_2m_kb: Sample<u64>,
+    directmap_1g_kb: Sample<u64>,
 }
 
 fn parse_meminfo(sample: &Sample<String>) -> ParsedMem {
@@ -175,6 +196,11 @@ fn parse_meminfo(sample: &Sample<String>) -> ParsedMem {
             sreclaimable_kb: miss(),
             commit_limit_kb: miss(),
             committed_as_kb: miss(),
+            anon_huge_kb: miss(),
+            vmalloc_used_kb: miss(),
+            directmap_4k_kb: miss(),
+            directmap_2m_kb: miss(),
+            directmap_1g_kb: miss(),
         };
     };
     let mut map = std::collections::BTreeMap::new();
@@ -206,6 +232,11 @@ fn parse_meminfo(sample: &Sample<String>) -> ParsedMem {
         sreclaimable_kb: pick("SReclaimable"),
         commit_limit_kb: pick("CommitLimit"),
         committed_as_kb: pick("Committed_AS"),
+        anon_huge_kb: pick("AnonHugePages"),
+        vmalloc_used_kb: pick("VmallocUsed"),
+        directmap_4k_kb: pick("DirectMap4k"),
+        directmap_2m_kb: pick("DirectMap2M"),
+        directmap_1g_kb: pick("DirectMap1G"),
     }
 }
 
@@ -463,7 +494,7 @@ mod tests {
         fs::create_dir_all(root.join("proc")).unwrap();
         fs::write(
             root.join("proc/meminfo"),
-            "MemTotal:        16384 kB\nMemAvailable:     8000 kB\nMemFree:          1000 kB\nBuffers:           100 kB\nCached:           2000 kB\nSwapTotal:           0 kB\nSwapFree:            0 kB\nDirty:               1 kB\nAnonPages:         300 kB\nShmem:              10 kB\nMapped:            20 kB\nSReclaimable:      30 kB\nCommitLimit:     8000 kB\nCommitted_AS:     4000 kB\n",
+            "MemTotal:        16384 kB\nMemAvailable:     8000 kB\nMemFree:          1000 kB\nBuffers:           100 kB\nCached:           2000 kB\nSwapTotal:           0 kB\nSwapFree:            0 kB\nDirty:               1 kB\nAnonPages:         300 kB\nShmem:              10 kB\nMapped:            20 kB\nSReclaimable:      30 kB\nCommitLimit:     8000 kB\nCommitted_AS:     4000 kB\nAnonHugePages:       0 kB\nVmallocUsed:        80 kB\nDirectMap4k:      1024 kB\nDirectMap2M:      4096 kB\nDirectMap1G:         0 kB\n",
         )
         .unwrap();
         let hp = root.join("sys/kernel/mm/hugepages/hugepages-2048kB");
@@ -475,6 +506,16 @@ mod tests {
         fs::write(
             root.join("sys/kernel/mm/transparent_hugepage/enabled"),
             "always [madvise] never\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("sys/kernel/mm/transparent_hugepage/defrag"),
+            "always defer defer+madvise [madvise] never\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("sys/kernel/mm/transparent_hugepage/shmem_enabled"),
+            "always within_size advise [never] deny force\n",
         )
         .unwrap();
         fs::write(
@@ -513,6 +554,9 @@ mod tests {
         assert_eq!(r.hugepages.len(), 1);
         assert_eq!(r.hugepages[0].nr.value, Some(2));
         assert!(r.thp_enabled.value.as_deref().unwrap().contains("madvise"));
+        assert!(r.thp_defrag.value.as_deref().unwrap().contains("madvise"));
+        assert_eq!(r.directmap_4k_kb.value, Some(1024));
+        assert_eq!(r.directmap_2m_kb.value, Some(4096));
         assert_eq!(r.buddy.len(), 2);
         assert_eq!(r.buddy[1].zone, "Normal");
         assert_eq!(r.buddy[1].free_counts, vec![10, 4, 1]);

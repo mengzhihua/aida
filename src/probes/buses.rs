@@ -15,6 +15,7 @@ pub struct BusesReport {
     pub mei: Vec<MeiDev>,
     pub serial: Vec<SerialPort>,
     pub tty_drivers: Vec<TtyDriver>,
+    pub misc: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -114,6 +115,7 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
     let mei = read_mei(ctx, &mut notes);
     let serial = read_serial(ctx, &mut notes);
     let tty_drivers = parse_tty_drivers(&access::read_trimmed(ctx.proc_path("tty/drivers")));
+    let misc = read_misc(ctx, &mut notes);
     BusesReport {
         rfkill,
         bluetooth,
@@ -123,6 +125,7 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         mei,
         serial,
         tty_drivers,
+        misc,
         notes,
     }
 }
@@ -355,6 +358,22 @@ pub fn parse_tty_drivers(sample: &Sample<String>) -> Vec<TtyDriver> {
         });
     }
     out
+}
+
+fn read_misc(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<String> {
+    let root = ctx.sys_path("class/misc");
+    match dir_list(&root) {
+        DirList::Names(mut n) => {
+            n.sort();
+            n.truncate(32);
+            n
+        }
+        DirList::Missing => Vec::new(),
+        DirList::Failed(l) => {
+            notes.push(l);
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

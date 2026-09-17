@@ -709,6 +709,22 @@ impl AidaApp {
         kv(ui, "THP", &m.thp_enabled.display());
         kv(
             ui,
+            "THP defrag/shmem",
+            &format!("{}  {}", m.thp_defrag.display(), m.thp_shmem.display()),
+        );
+        kv(
+            ui,
+            "DirectMap",
+            &format!(
+                "4k {}  2M {}  1G {}",
+                kb_disp(&m.directmap_4k_kb),
+                kb_disp(&m.directmap_2m_kb),
+                kb_disp(&m.directmap_1g_kb)
+            ),
+        );
+        kv(ui, "VmallocUsed", &kb_disp(&m.vmalloc_used_kb));
+        kv(
+            ui,
             "zswap",
             &format!(
                 "enabled {}  {} / {}  pool {}%",
@@ -911,6 +927,25 @@ impl AidaApp {
             kv(ui, "model", &s.model.display());
             kv(ui, "cycles", &s.cycle_count.display());
         }
+        ui.separator();
+        ui.strong("Sleep / PM");
+        for n in &self.snap.pm.notes {
+            ui.weak(n);
+        }
+        kv(ui, "state", &self.snap.pm.state.display());
+        kv(ui, "mem_sleep", &self.snap.pm.mem_sleep.display());
+        kv(ui, "disk", &self.snap.pm.disk.display());
+        kv(
+            ui,
+            "suspend",
+            &format!(
+                "ok {}  fail {}  wakeup_count {}  sources {}",
+                self.snap.pm.suspend_success.display(),
+                self.snap.pm.suspend_fail.display(),
+                self.snap.pm.wakeup_count.display(),
+                self.snap.pm.wakeups
+            ),
+        );
         ui.separator();
         ui.strong("RAPL / powercap");
         for n in &self.snap.rapl.notes {
@@ -1698,6 +1733,55 @@ impl AidaApp {
                     .unwrap_or_else(|| "—".into())
             ),
         );
+        let s6 = &self.snap.net.snmp6;
+        kv(
+            ui,
+            "IPv6",
+            &format!(
+                "in {}  out {}  octets {}/{}  TCP6 {} UDP6 {}",
+                s6.in_receives.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                s6.out_requests.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                s6.in_octets
+                    .map(crate::export::format_bytes)
+                    .unwrap_or_else(|| "—".into()),
+                s6.out_octets
+                    .map(crate::export::format_bytes)
+                    .unwrap_or_else(|| "—".into()),
+                self.snap
+                    .net
+                    .sockstat6
+                    .tcp_inuse
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                self.snap
+                    .net
+                    .sockstat6
+                    .udp_inuse
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into())
+            ),
+        );
+        kv(
+            ui,
+            "net.core",
+            &format!(
+                "somaxconn {}  backlog {}  r/wmem {}/{}",
+                self.snap.net.somaxconn.display(),
+                self.snap.net.netdev_max_backlog.display(),
+                self.snap.net.rmem_max.display(),
+                self.snap.net.wmem_max.display()
+            ),
+        );
+        kv(
+            ui,
+            "tables",
+            &format!(
+                "arp {}  route {}  unix {}",
+                self.snap.net.arp_entries,
+                self.snap.net.route_entries,
+                self.snap.net.unix_sockets
+            ),
+        );
         for b in &self.snap.net.bridges {
             kv(
                 ui,
@@ -2051,6 +2135,9 @@ impl AidaApp {
                 );
             }
         }
+        if !self.snap.buses.misc.is_empty() {
+            kv(ui, "misc", &self.snap.buses.misc.join(" "));
+        }
     }
 
     fn ui_software(&self, ui: &mut egui::Ui) {
@@ -2174,6 +2261,30 @@ impl AidaApp {
             &self.snap.ns.max_user.display(),
         );
         kv(ui, "entropy", &self.snap.software.entropy_avail.display());
+        kv(ui, "boot_id", &self.snap.sysctl.boot_id.display());
+        kv(ui, "machine-id", &self.snap.software.machine_id.display());
+        kv(ui, "domainname", &self.snap.software.domainname.display());
+        kv(
+            ui,
+            "aio/inotify",
+            &format!(
+                "aio {} / {}  watches {}  inst {}",
+                self.snap.sysctl.aio_nr.display(),
+                self.snap.sysctl.aio_max_nr.display(),
+                self.snap.sysctl.inotify_max_user_watches.display(),
+                self.snap.sysctl.inotify_max_user_instances.display()
+            ),
+        );
+        kv(
+            ui,
+            "bpf/modules/perf",
+            &format!(
+                "unpriv_bpf {}  modules_disabled {}  perf {}",
+                self.snap.security.unprivileged_bpf_disabled.display(),
+                self.snap.security.modules_disabled.display(),
+                self.snap.security.perf_event_paranoid.display()
+            ),
+        );
         kv(
             ui,
             "file-nr",
@@ -2359,6 +2470,16 @@ impl AidaApp {
                 }
             });
         }
+        if !self.snap.iomem.ioports.is_empty() {
+            ui.collapsing(
+                format!("ioports ({})", self.snap.iomem.ioports.len()),
+                |ui| {
+                    for r in self.snap.iomem.ioports.iter().take(24) {
+                        ui.label(&r.name);
+                    }
+                },
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -2380,6 +2501,7 @@ impl AidaApp {
                 self.snap.firmware.acpi_tables.join(" ")
             },
         );
+        kv(ui, "ACPI pm_profile", &self.snap.firmware.acpi_pm_profile.display());
         kv(ui, "hwrng", &self.snap.firmware.rng_current.display());
         for t in &self.snap.firmware.tpms {
             kv(

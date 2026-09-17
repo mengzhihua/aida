@@ -9,7 +9,7 @@ use crate::probes::net::NetSnap;
 use crate::probes::rapl::RaplSnap;
 use crate::probes::{
     ata, audio, block, buses, cgroup, clock, cpu, crypto, dmi, edac, firmware, fs, gpu, hwmon, input,
-    iomem, iommu, irq, iscsi, kvm, md, memory, modules, net, ns, numa, nvme, pci, platform, power,
+    iomem, iommu, irq, iscsi, kvm, md, memory, modules, net, ns, numa, nvme, pci, platform, pm, power,
     psi, rapl, scsi, security, software, sysctl, usb, virtio, zmem,
 };
 
@@ -36,6 +36,7 @@ pub struct HardwareSnapshot {
     pub input: input::InputReport,
     pub audio: audio::AudioReport,
     pub power: power::PowerReport,
+    pub pm: pm::PmReport,
     pub rapl: rapl::RaplReport,
     pub numa: numa::NumaReport,
     pub block: block::BlockReport,
@@ -133,6 +134,7 @@ impl HardwareSnapshot {
             input: input::collect(ctx),
             audio: audio::collect(ctx),
             power: power::collect(ctx),
+            pm: pm::collect(ctx),
             rapl,
             numa: numa::collect(ctx),
             block,
@@ -183,6 +185,7 @@ impl HardwareSnapshot {
         *prev_disk = Some(block::counters(&self.block));
         self.memory = memory::collect(ctx);
         self.power = power::collect(ctx);
+        self.pm = pm::collect(ctx);
         self.rapl = rapl::collect_with_prev(ctx, prev_rapl.as_deref(), dt_sec);
         *prev_rapl = Some(rapl::counters(&self.rapl));
         self.software = software::collect(ctx);

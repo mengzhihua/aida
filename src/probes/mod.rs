@@ -29,6 +29,7 @@ pub mod ns;
 pub mod nvme;
 pub mod pci;
 pub mod platform;
+pub mod pm;
 pub mod power;
 pub mod psi;
 pub mod rapl;
