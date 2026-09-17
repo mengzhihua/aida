@@ -47,19 +47,10 @@ pub struct I2cAdapter {
 
 pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
     let mut notes = Vec::new();
-    let watchdogs = read_watchdogs(ctx);
-    let backlights = read_backlights(ctx);
-    let leds = read_leds(ctx);
-    let i2c_adapters = read_i2c(ctx);
-    if watchdogs.is_empty() {
-        notes.push("无 watchdog 设备。".into());
-    }
-    if backlights.is_empty() {
-        notes.push("无 backlight（服务器/无头虚拟机常见）。".into());
-    }
-    if i2c_adapters.is_empty() {
-        notes.push("无 I2C 适配器（不调用 i2cdetect）。".into());
-    }
+    let watchdogs = read_watchdogs(ctx, &mut notes);
+    let backlights = read_backlights(ctx, &mut notes);
+    let leds = read_leds(ctx, &mut notes);
+    let i2c_adapters = read_i2c(ctx, &mut notes);
     PlatformReport {
         watchdogs,
         backlights,
@@ -69,11 +60,36 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
     }
 }
 
-fn read_watchdogs(ctx: &ProbeCtx) -> Vec<Watchdog> {
+enum DirList {
+    Names(Vec<String>),
+    Missing,
+    Failed(String),
+}
+
+fn dir_list(path: impl AsRef<std::path::Path>) -> DirList {
+    match access::list_dir_names(path) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => DirList::Names(n),
+        s if s.access == AccessKind::NotFound => DirList::Missing,
+        s => DirList::Failed(s.access_label()),
+    }
+}
+
+fn read_watchdogs(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<Watchdog> {
     let root = ctx.sys_path("class/watchdog");
-    let names = match access::list_dir_names(&root).value {
-        Some(n) => n,
-        None => return Vec::new(),
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => {
+            notes.push("无 watchdog 设备。".into());
+            return Vec::new();
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
     };
     let mut out = Vec::new();
     for name in names.into_iter().filter(|n| n.starts_with("watchdog")) {
@@ -87,14 +103,24 @@ fn read_watchdogs(ctx: &ProbeCtx) -> Vec<Watchdog> {
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    if out.is_empty() {
+        notes.push("无 watchdog 设备。".into());
+    }
     out
 }
 
-fn read_backlights(ctx: &ProbeCtx) -> Vec<Backlight> {
+fn read_backlights(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<Backlight> {
     let root = ctx.sys_path("class/backlight");
-    let names = match access::list_dir_names(&root).value {
-        Some(n) => n,
-        None => return Vec::new(),
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => {
+            notes.push("无 backlight（服务器/无头虚拟机常见）。".into());
+            return Vec::new();
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
     };
     let mut out = Vec::new();
     for name in names {
@@ -107,14 +133,21 @@ fn read_backlights(ctx: &ProbeCtx) -> Vec<Backlight> {
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    if out.is_empty() {
+        notes.push("无 backlight（服务器/无头虚拟机常见）。".into());
+    }
     out
 }
 
-fn read_leds(ctx: &ProbeCtx) -> Vec<Led> {
+fn read_leds(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<Led> {
     let root = ctx.sys_path("class/leds");
-    let names = match access::list_dir_names(&root).value {
-        Some(n) => n,
-        None => return Vec::new(),
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => return Vec::new(),
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
     };
     let mut out = Vec::new();
     for name in names {
@@ -130,15 +163,18 @@ fn read_leds(ctx: &ProbeCtx) -> Vec<Led> {
     out
 }
 
-fn read_i2c(ctx: &ProbeCtx) -> Vec<I2cAdapter> {
+fn read_i2c(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<I2cAdapter> {
     let root = ctx.sys_path("bus/i2c/devices");
-    let names = match access::list_dir_names(&root) {
-        Sample {
-            access: AccessKind::Ok,
-            value: Some(n),
-            ..
-        } => n,
-        _ => return Vec::new(),
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => {
+            notes.push("无 I2C 适配器（不调用 i2cdetect）。".into());
+            return Vec::new();
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
     };
     let mut adapters = Vec::new();
     let mut clients: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
@@ -158,6 +194,9 @@ fn read_i2c(ctx: &ProbeCtx) -> Vec<I2cAdapter> {
         });
     }
     adapters.sort_by(|a, b| a.name.cmp(&b.name));
+    if adapters.is_empty() {
+        notes.push("无 I2C 适配器（不调用 i2cdetect）。".into());
+    }
     adapters
 }
 
@@ -199,5 +238,34 @@ mod tests {
         assert_eq!(r.leds.len(), 1);
         assert_eq!(r.i2c_adapters[0].clients, 1);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn denied_watchdog_is_not_reported_as_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-plat-deny-{}", std::process::id()));
+        let wd = root.join("sys/class/watchdog");
+        fs::create_dir_all(&wd).unwrap();
+        fs::set_permissions(&wd, fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = fs::set_permissions(&wd, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            r.notes.iter().any(|n| n.contains("权限") || n.contains("失败")),
+            "denied dir must not look like an empty class: {:?}",
+            r.notes
+        );
+        assert!(
+            !r.notes.iter().any(|n| n.contains("无 watchdog")),
+            "PermissionDenied must not be labeled as no device: {:?}",
+            r.notes
+        );
     }
 }

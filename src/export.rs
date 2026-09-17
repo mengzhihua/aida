@@ -451,12 +451,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&name),
             esc(&d.class_name),
             esc(&d.driver.display()),
-            esc(&match d.current_link_speed.value.as_deref() {
-                Some(s) => {
-                    format!("{} x{} msi {}", s, d.current_link_width.display(), d.msi_irqs)
-                }
-                None => format!("— msi {}", d.msi_irqs),
-            })
+            esc(&d.link_label())
         ));
     }
     html.push_str("</table>");
