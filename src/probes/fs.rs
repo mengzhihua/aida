@@ -88,7 +88,8 @@ fn classify(fstype: &str) -> &'static str {
     match fstype {
         "proc" | "sysfs" | "devpts" | "cgroup" | "cgroup2" | "pstore" | "bpf" | "debugfs"
         | "tracefs" | "securityfs" | "fusectl" | "configfs" | "mqueue" | "hugetlbfs"
-        | "autofs" | "nsfs" | "binfmt_misc" | "devtmpfs" | "efivarfs" | "resctrl" => "virtual",
+        | "autofs" | "nsfs" | "binfmt_misc" | "devtmpfs" | "efivarfs" | "resctrl"
+        | "selinuxfs" | "rpc_pipefs" => "virtual",
         "tmpfs" | "ramfs" | "shm" => "tmpfs",
         _ => "storage",
     }
@@ -136,6 +137,8 @@ mod tests {
         let p = parse_mountinfo_line(proc).unwrap();
         assert_eq!(p.kind, "virtual");
         assert_eq!(p.fstype, "proc");
+        let se = "90 18 0:23 / /sys/fs/selinux rw - selinuxfs selinuxfs rw";
+        assert_eq!(parse_mountinfo_line(se).unwrap().kind, "virtual");
     }
 
     #[test]
