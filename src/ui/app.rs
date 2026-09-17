@@ -1356,6 +1356,27 @@ impl AidaApp {
                 ));
             }
         }
+        for n in &self.snap.block.notes {
+            ui.weak(n);
+        }
+        if !self.snap.block.loops.is_empty() {
+            ui.separator();
+            ui.strong("loop");
+            for l in &self.snap.block.loops {
+                kv(
+                    ui,
+                    &l.name,
+                    &format!(
+                        "{}  {}",
+                        l.size_bytes
+                            .value
+                            .map(crate::export::format_bytes)
+                            .unwrap_or_else(|| l.size_bytes.access_label()),
+                        l.backing_file.display()
+                    ),
+                );
+            }
+        }
         ui.separator();
         ui.strong("ATA / SATA");
         for n in &self.snap.ata.notes {
@@ -1422,6 +1443,19 @@ impl AidaApp {
                     h.proc_name.display(),
                     h.can_queue.display(),
                     h.state.display()
+                ),
+            );
+        }
+        for d in &self.snap.scsi.devices {
+            kv(
+                ui,
+                &format!("LUN {}", d.name),
+                &format!(
+                    "{} {}  type {}  {}",
+                    d.vendor.display(),
+                    d.model.display(),
+                    d.type_code.display(),
+                    d.state.display()
                 ),
             );
         }
@@ -1629,6 +1663,39 @@ impl AidaApp {
                 self.snap.net.softnet.dropped,
                 self.snap.net.softnet.time_squeeze,
                 self.snap.net.softnet.cpus
+            ),
+        );
+        kv(
+            ui,
+            "conntrack",
+            &format!(
+                "{} / {}  cong {} ({})",
+                self.snap.net.conntrack_count.display(),
+                self.snap.net.conntrack_max.display(),
+                self.snap.net.tcp_congestion.display(),
+                self.snap.net.tcp_available_congestion.display()
+            ),
+        );
+        let te = &self.snap.net.tcpext;
+        kv(
+            ui,
+            "TcpExt",
+            &format!(
+                "TW {}  listen {}/{}  timeout {}  octets {}/{}",
+                te.timewait.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                te.listen_overflows
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                te.listen_drops
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                te.timeouts.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                te.in_octets
+                    .map(crate::export::format_bytes)
+                    .unwrap_or_else(|| "—".into()),
+                te.out_octets
+                    .map(crate::export::format_bytes)
+                    .unwrap_or_else(|| "—".into())
             ),
         );
         for b in &self.snap.net.bridges {
@@ -1961,6 +2028,29 @@ impl AidaApp {
                 &mei.fw_status.display(),
             );
         }
+        if !self.snap.buses.serial.is_empty() || !self.snap.buses.tty_drivers.is_empty() {
+            ui.separator();
+            ui.strong("Serial / TTY");
+            for d in &self.snap.buses.tty_drivers {
+                kv(
+                    ui,
+                    &d.name,
+                    &format!("{}  {} {}  {}", d.device, d.major, d.minors, d.kind),
+                );
+            }
+            for s in &self.snap.buses.serial {
+                kv(
+                    ui,
+                    &s.name,
+                    &format!(
+                        "irq {}  uartclk {}  type {}",
+                        s.irq.display(),
+                        s.uartclk.display(),
+                        s.typ.display()
+                    ),
+                );
+            }
+        }
     }
 
     fn ui_software(&self, ui: &mut egui::Ui) {
@@ -1998,6 +2088,91 @@ impl AidaApp {
         if self.snap.software.selinux_enforce.access == AccessKind::Ok {
             kv(ui, "SELinux enforce", &self.snap.software.selinux_enforce.display());
         }
+        kv(ui, "lockdown", &self.snap.security.lockdown.display());
+        kv(
+            ui,
+            "yama/kptr/dmesg",
+            &format!(
+                "ptrace {}  kptr {}  dmesg {}",
+                self.snap.security.ptrace_scope.display(),
+                self.snap.security.kptr_restrict.display(),
+                self.snap.security.dmesg_restrict.display()
+            ),
+        );
+        if self.snap.security.fips_enabled.access == AccessKind::Ok
+            || self.snap.security.apparmor_enabled.access == AccessKind::Ok
+        {
+            kv(
+                ui,
+                "FIPS/AppArmor",
+                &format!(
+                    "fips {}  apparmor {}",
+                    self.snap.security.fips_enabled.display(),
+                    self.snap.security.apparmor_enabled.display()
+                ),
+            );
+        }
+        kv(
+            ui,
+            "crypto",
+            &format!(
+                "{} algs ({} internal, {} selftest≠passed)",
+                self.snap.crypto.total,
+                self.snap.crypto.internal,
+                self.snap.crypto.failed_selftest
+            ),
+        );
+        if !self.snap.crypto.types.is_empty() {
+            ui.collapsing(
+                format!("crypto types ({})", self.snap.crypto.types.len()),
+                |ui| {
+                    for t in &self.snap.crypto.types {
+                        kv(ui, &t.type_name, &t.count.to_string());
+                    }
+                },
+            );
+        }
+        if !self.snap.crypto.algs.is_empty() {
+            ui.collapsing(
+                format!("crypto algs ({})", self.snap.crypto.algs.len()),
+                |ui| {
+                    for a in &self.snap.crypto.algs {
+                        kv(
+                            ui,
+                            &a.name,
+                            &format!("{}  {}  {}", a.type_name, a.driver, a.selftest),
+                        );
+                    }
+                },
+            );
+        }
+        if !self.snap.ns.self_ns.is_empty() {
+            kv(
+                ui,
+                "namespaces",
+                &self
+                    .snap
+                    .ns
+                    .self_ns
+                    .iter()
+                    .map(|n| {
+                        format!(
+                            "{}:{}",
+                            n.kind,
+                            n.inode
+                                .map(|i| i.to_string())
+                                .unwrap_or_else(|| "—".into())
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("  "),
+            );
+        }
+        kv(
+            ui,
+            "max_user_namespaces",
+            &self.snap.ns.max_user.display(),
+        );
         kv(ui, "entropy", &self.snap.software.entropy_avail.display());
         kv(
             ui,
@@ -2077,6 +2252,15 @@ impl AidaApp {
             ui.weak(n);
         }
         for n in &self.snap.cgroup.notes {
+            ui.weak(n);
+        }
+        for n in &self.snap.security.notes {
+            ui.weak(n);
+        }
+        for n in &self.snap.crypto.notes {
+            ui.weak(n);
+        }
+        for n in &self.snap.ns.notes {
             ui.weak(n);
         }
         if let Some(cpu) = &self.snap.psi.cpu {

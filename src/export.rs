@@ -504,6 +504,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&mei.fw_status.display())
         ));
     }
+    for s in &snap.buses.serial {
+        html.push_str(&format!(
+            "<p>serial {} irq {} uartclk {}</p>",
+            esc(&s.name),
+            esc(&s.irq.display()),
+            esc(&s.uartclk.display())
+        ));
+    }
     for n in &snap.buses.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
@@ -761,6 +769,32 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.softnet.processed,
         snap.net.softnet.dropped
     ));
+    html.push_str(&format!(
+        "<p class=\"muted\">conntrack {} / {} cong {} TcpExt TW {} timeout {} octets {}/{}</p>",
+        snap.net.conntrack_count.display(),
+        snap.net.conntrack_max.display(),
+        snap.net.tcp_congestion.display(),
+        snap.net
+            .tcpext
+            .timewait
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .tcpext
+            .timeouts
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .tcpext
+            .in_octets
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .tcpext
+            .out_octets
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".into())
+    ));
     for b in &snap.net.bridges {
         html.push_str(&format!(
             "<p>bridge {} {} members {}</p>",
@@ -958,6 +992,20 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
         html.push_str("</table>");
     }
+    if !snap.scsi.devices.is_empty() {
+        html.push_str("<table><tr><th>LUN</th><th>vendor</th><th>model</th><th>type</th><th>状态</th></tr>");
+        for d in &snap.scsi.devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&d.name),
+                esc(&d.vendor.display()),
+                esc(&d.model.display()),
+                esc(&d.type_code.display()),
+                esc(&d.state.display())
+            ));
+        }
+        html.push_str("</table>");
+    }
     for n in &snap.scsi.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
@@ -1004,6 +1052,21 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 .collect::<Vec<_>>()
                 .join(", "))
         ));
+    }
+    for l in &snap.block.loops {
+        html.push_str(&format!(
+            "<p>loop {} {} {}</p>",
+            esc(&l.name),
+            esc(&l
+                .size_bytes
+                .value
+                .map(format_bytes)
+                .unwrap_or_else(|| l.size_bytes.access_label())),
+            esc(&l.backing_file.display())
+        ));
+    }
+    for n in &snap.block.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
 
     section(&mut html, "文件系统");
@@ -1100,6 +1163,37 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 },
             ),
             ("LSM", snap.software.lsm.display()),
+            ("lockdown", snap.security.lockdown.display()),
+            (
+                "yama/kptr/dmesg",
+                format!(
+                    "ptrace {} kptr {} dmesg {}",
+                    snap.security.ptrace_scope.display(),
+                    snap.security.kptr_restrict.display(),
+                    snap.security.dmesg_restrict.display()
+                ),
+            ),
+            (
+                "crypto",
+                format!(
+                    "{} algs ({} internal)",
+                    snap.crypto.total, snap.crypto.internal
+                ),
+            ),
+            (
+                "namespaces",
+                if snap.ns.self_ns.is_empty() {
+                    "—".into()
+                } else {
+                    snap.ns
+                        .self_ns
+                        .iter()
+                        .map(|n| n.kind.clone())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                },
+            ),
+            ("max_user_namespaces", snap.ns.max_user.display()),
             ("entropy", snap.software.entropy_avail.display()),
             (
                 "file-nr",
