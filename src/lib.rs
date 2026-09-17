@@ -1,13 +1,15 @@
 //! AIDA Linux：从 procfs/sysfs 采集硬件信息的核心库。
 //!
 //! - [`access`] 权限与读取原语
-//! - [`probes`] CPU / DMI / GPU / hwmon / NVMe / PCI / 块设备 / 软件
+//! - [`probes`] CPU / DMI / GPU / 网络 / USB / 输入 / NUMA / hwmon / NVMe / PCI / 块设备 / 软件
 //! - [`snapshot`] 一次完整快照
 //! - [`export`] JSON/HTML
 //! - [`bench`] CPU / 内存 / 磁盘（buffered + O_DIRECT）
 //! - [`elevate`] pkexec/sudo 提权重启
+//! - [`alerts`] hwmon 阈值告警与 JSONL 日志
 
 pub mod access;
+pub mod alerts;
 pub mod bench;
 pub mod elevate;
 pub mod export;

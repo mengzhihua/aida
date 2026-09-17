@@ -2,15 +2,20 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第二轮** 在第一轮骨架上补齐 GPU sysfs、O_DIRECT 磁盘基准、polkit 提权和 AppImage 打包。
+**第三轮** 补齐网络统计、USB 树、输入设备、NUMA 内存、hwmon 阈值告警与 JSONL 日志。GPU / O_DIRECT / polkit / AppImage 见第二轮。
 
 | 模块 | 状态 |
 | --- | --- |
 | CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs |
 | GPU | DRM（amdgpu/i915/xe/nouveau）+ NVIDIA procfs，不调用 nvidia-smi |
+| 网络 | `/sys/class/net` 计数 + `getifaddrs` 地址，不调用 `ip` |
+| USB | `/sys/bus/usb/devices` 树，可选 `usb.ids` |
+| 输入设备 | `/proc/bus/input/devices` |
+| NUMA | `/sys/devices/system/node/nodeN` |
+| 传感器告警 | hwmon `*_max`/`*_crit`/`*_min`，越限写 JSONL |
 | 权限模型 | 每个字段带 `ok / permission_denied / not_found` |
 | 提权 | `aida elevate` / GUI 按钮：pkexec，否则 sudo -E |
-| egui 界面 | 左侧树 + 右侧详情 + 温度折线 + GPU 页 |
+| egui 界面 | 左侧树 + 右侧详情 + 温度折线 + GPU/网络/USB/NUMA 页 |
 | 微基准 | CPU / 内存带宽 / 磁盘 buffered + O_DIRECT |
 | JSON / HTML 导出 | CLI + GUI |
 | AppImage | `scripts/build-appimage.sh`（glibc + linuxdeploy） |
@@ -30,18 +35,21 @@
                                   ▼
                          snapshot::collect
                                   │
-        ┌─────────────┬───────────┼───────────┬────────────┐
-        ▼             ▼           ▼           ▼            ▼
-      CPU           DMI        hwmon        NVMe         GPU/PCI
-   /proc/cpuinfo  /sys/class   /sys/class  sysfs +     DRM + pci class 03
-   /sys/.../cpu   /dmi/id      /hwmon      ioctl       NVIDIA procfs
+        ┌─────────────┬───────────┼───────────┬────────────┬──────────┐
+        ▼             ▼           ▼           ▼            ▼          ▼
+      CPU           DMI        hwmon        NVMe        GPU/PCI     Net/USB
+   /proc/cpuinfo  /sys/class   /sys/class  sysfs +     DRM + pci   sysfs +
+   /sys/.../cpu   /dmi/id      /hwmon      ioctl       class 03    getifaddrs
+                                  │
+                                  ├── input: /proc/bus/input/devices
+                                  └── NUMA:  /sys/devices/system/node
 ```
 
 约定：
 
 1. **所有探测函数只读文件或发 ioctl**，把结果放进 `Sample<T>`，失败原因跟着字段走。
 2. **`ProbeCtx` 把 `/proc` `/sys` `/dev` 做成可替换根**，单元测试用临时目录夹具，不 mock 整个操作系统。
-3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 只刷新传感器和 `/proc/stat`，不全量重扫 PCI。
+3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 只刷新传感器、告警、网卡速率和 `/proc/stat`，不全量重扫 PCI/USB。
 
 ## 运行
 
@@ -113,8 +121,9 @@ aida elevate gui
 
 ## 报告导出
 
-- JSON：完整 `HardwareSnapshot`（含每个字段的 `access` / `source` / `hint`）。
+- JSON：完整 `HardwareSnapshot`（含每个字段的 `access` / `source` / `hint`，以及 `net` / `usb` / `input` / `numa` / `alerts`）。
 - HTML：单文件内嵌 CSS，表格展示摘要；字段值做了 `<>&` 转义。
+- 告警日志：GUI 热刷新时把阈值状态变化追加到 `$AIDA_ALERT_LOG`，未设置则 `$XDG_STATE_HOME/aida/alerts.jsonl`（常见为 `~/.local/state/aida/alerts.jsonl`）。只在进入/离开越限时写一行，避免刷盘。
 
 ```bash
 aida collect --json out.json --html out.html
@@ -142,12 +151,13 @@ cargo test --features gui   # 不启动窗口，只编进 ui 模块
 模块入口：
 
 - 权限原语：`src/access.rs`
-- 探测：`src/probes/`
+- 探测：`src/probes/`（含 `net` / `usb` / `input` / `numa`）
 - 快照：`src/snapshot.rs`
 - 导出：`src/export.rs`
 - 基准：`src/bench.rs`
 - 界面：`src/ui/app.rs`
 - 提权：`src/elevate.rs`
+- 告警：`src/alerts.rs`
 - 打包：`scripts/build-appimage.sh`、`packaging/`
 
 架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

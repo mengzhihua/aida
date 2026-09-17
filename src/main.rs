@@ -66,10 +66,12 @@ AIDA Linux — 硬件检测与监控（sysfs/procfs，不调用 dmidecode/lspci�
   aida version
 
 权限:
-  普通用户可读 CPU、大部分 PCI、块设备容量、os-release、DRM 公开节点。
-  DMI 序列号/UUID、SMBIOS 表、NVMe SMART 通常需要 root 或 disk 组。
+  普通用户可读 CPU、大部分 PCI、块设备容量、os-release、DRM 公开节点、
+  /sys/class/net、USB sysfs、/proc/bus/input/devices、NUMA node。
+  DMI 序列号/UUID、SMBIOS 表、NVMe SMART、部分 USB serial 通常需要 root 或 disk 组。
   桌面请用 `aida elevate gui`（pkexec），不要对 GUI 裸 sudo 以免丢掉 DISPLAY。
-  缺权限时字段标记为 permission_denied，不会伪造数据。"
+  缺权限时字段标记为 permission_denied，不会伪造数据。
+  GUI 传感器越限会追加 JSONL 到 $AIDA_ALERT_LOG 或 ~/.local/state/aida/alerts.jsonl。"
     );
 }
 
@@ -191,7 +193,12 @@ fn cmd_bench(args: &[String]) -> ExitCode {
             }
         }
     }
-    eprintln!("运行微基准（线程={}）…", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    eprintln!(
+        "运行微基准（线程={}）…",
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    );
     let report = bench::run(&req);
     match serde_json::to_string_pretty(&report) {
         Ok(s) => {
@@ -244,7 +251,9 @@ fn cmd_gui() -> ExitCode {
     }
     #[cfg(not(feature = "gui"))]
     {
-        eprintln!("此二进制未启用 gui feature。请 `cargo build --features gui` 或使用 aida collect。");
+        eprintln!(
+            "此二进制未启用 gui feature。请 `cargo build --features gui` 或使用 aida collect。"
+        );
         ExitCode::from(1)
     }
 }

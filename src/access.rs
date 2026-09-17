@@ -331,6 +331,12 @@ fn hint_for(source: &str, kind: AccessKind) -> Option<String> {
         AccessKind::PermissionDenied if source.contains("/proc/driver/nvidia") => {
             Some("NVIDIA procfs 部分节点需要 root。不要用 nvidia-smi 兜底，避免引入外部命令。".into())
         }
+        AccessKind::NotFound if source.contains("/sys/bus/usb") => {
+            Some("未发现 USB 设备。虚拟机未转发 USB、或内核未加载 usbcore 时常见。".into())
+        }
+        AccessKind::NotFound if source.contains("/proc/bus/input") => {
+            Some("无输入设备节点。无键盘/鼠标的无头环境会这样。".into())
+        }
         _ => None,
     }
 }

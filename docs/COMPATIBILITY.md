@@ -7,6 +7,9 @@
 | DMI sysfs | 有（裸机/KVM） | 同左 | 同左 | 经常整棵 `/sys/class/dmi` 不存在 |
 | `product_serial` 权限 | udev 常设 0400 | 同左 | 同左 | — |
 | `pci.ids` | 包 `pci.ids` 或 `hwdata`，路径 `/usr/share/misc/pci.ids` | `hwdata`，`/usr/share/hwdata/pci.ids` | `hwdata` | 可能无 |
+| `usb.ids` | 常随 `usbutils`/`hwdata` | `/usr/share/misc/usb.ids` 或 `hwdata` | 同 pci.ids | 可能无 |
+| `/proc/bus/input/devices` | 桌面有 | 同 | 同 | 无头/容器常空 |
+| NUMA sysfs | 多路服务器有 nodeN | 同 | 同 | 单节点或未启用 NUMA 只有 node0 |
 | hwmon 驱动 | 需 `linux-modules-extra` 或自己加载 coretemp/k10temp | 内核包较全 | 较全 | 虚拟机常无 |
 | NVMe 节点权限 | `root:disk` 0660 | 同左 | 同左 | 无 NVMe 时走 virtio `vd*` |
 | 桌面 | GNOME 下 `pkexec` 保 DISPLAY 比裸 `sudo` 稳 | 同 | 同 | 无 GUI |
@@ -31,6 +34,11 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 12. **`O_DIRECT` 在 tmpfs 上基本必失败**（EINVAL）。测试文件放当前目录或 ext4 数据盘。缓冲必须 512/4K 对齐，用 `posix_memalign`，不要 `Vec<u8>`。
 13. **pkexec 与 polkitd 不是同一个包。** 只有 `polkitd` 时 `aida elevate` 会落到 sudo，无 TTY 的 GUI 按钮会失败。
 14. **AppImage 在无 FUSE 容器里** 要用 `APPIMAGE_EXTRACT_AND_RUN=1`，脚本已默认导出该变量。
+15. **virtio / docker0 的 `speed` 经常是 -1。** 不是解析失败，标 `unsupported`。
+16. **不要调用 `ip`/`ifconfig`/`lsusb`。** 地址用 `getifaddrs`；USB 枚举 `/sys/bus/usb/devices`，接口节点名含 `:` 要跳过。
+17. **`/proc/bus/input/devices` 在无头虚拟机里经常不存在。** 提示路径即可。
+18. **NUMA `meminfo` 行是 `Node 0 MemTotal:`**，不能当 `/proc/meminfo` 的 `MemTotal:` 去切。
+19. **告警日志只在状态变化时写一行 JSONL。** 持续越限不会刷盘；恢复再写 `ok`。
 
 ## 测试方案
 

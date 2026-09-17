@@ -30,6 +30,9 @@ pub struct SensorChannel {
     /// 换算后的 SI 友好值：°C / V / W / A / RPM。
     pub value: Option<f64>,
     pub unit: String,
+    pub max: Option<f64>,
+    pub crit: Option<f64>,
+    pub min: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -139,17 +142,24 @@ fn read_chip(dir: &std::path::Path) -> HwmonChip {
             };
             let value = raw.value.map(|v| v as f64 / scale);
             let label_s = access::read_trimmed(dir.join(format!("{prefix}_label")));
-            let label = label_s
-                .value
-                .clone()
-                .unwrap_or_else(|| format!("{} ({prefix})", name.value.clone().unwrap_or_default()));
+            let label = label_s.value.clone().unwrap_or_else(|| {
+                format!("{} ({prefix})", name.value.clone().unwrap_or_default())
+            });
             channels.push(SensorChannel {
-                key: format!("{}:{prefix}", name.value.clone().unwrap_or_else(|| dir.display().to_string())),
+                key: format!(
+                    "{}:{prefix}",
+                    name.value
+                        .clone()
+                        .unwrap_or_else(|| dir.display().to_string())
+                ),
                 label,
                 kind,
                 raw,
                 value,
                 unit: unit.to_string(),
+                max: scaled(dir, prefix, "_max", scale),
+                crit: scaled(dir, prefix, "_crit", scale),
+                min: scaled(dir, prefix, "_min", scale),
             });
         }
     }
@@ -158,6 +168,13 @@ fn read_chip(dir: &std::path::Path) -> HwmonChip {
         name,
         channels,
     }
+}
+
+fn scaled(dir: &std::path::Path, prefix: &str, suffix: &str, scale: f64) -> Option<f64> {
+    let s = access::read_trimmed(dir.join(format!("{prefix}{suffix}")));
+    s.value
+        .and_then(|t| t.parse::<i64>().ok())
+        .map(|v| v as f64 / scale)
 }
 
 fn classify(prefix: &str) -> (SensorKind, f64, &'static str) {
@@ -190,11 +207,7 @@ pub fn temperature_series(report: &SensorReport) -> Vec<(String, f64)> {
     }
     for tz in &report.thermal_zones {
         if let Some(v) = tz.temp_c.value {
-            let name = tz
-                .r#type
-                .value
-                .clone()
-                .unwrap_or_else(|| tz.path.clone());
+            let name = tz.r#type.value.clone().unwrap_or_else(|| tz.path.clone());
             out.push((name, v));
         }
     }
@@ -214,6 +227,8 @@ mod tests {
         fs::write(chip.join("name"), "coretemp\n").unwrap();
         fs::write(chip.join("temp1_input"), "45000\n").unwrap();
         fs::write(chip.join("temp1_label"), "Package id 0\n").unwrap();
+        fs::write(chip.join("temp1_max"), "80000\n").unwrap();
+        fs::write(chip.join("temp1_crit"), "100000\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -224,6 +239,8 @@ mod tests {
         let report = collect(&ctx);
         assert_eq!(report.chips.len(), 1);
         assert_eq!(report.chips[0].channels[0].value, Some(45.0));
+        assert_eq!(report.chips[0].channels[0].max, Some(80.0));
+        assert_eq!(report.chips[0].channels[0].crit, Some(100.0));
         let _ = fs::remove_dir_all(&root);
     }
 }

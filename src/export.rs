@@ -1,6 +1,7 @@
 //! JSON / HTML 报告导出。HTML 为单文件，无外部资源。
 
 use crate::access::AccessKind;
+use crate::alerts::AlertLevel;
 use crate::snapshot::HardwareSnapshot;
 
 pub fn to_json_pretty(snap: &HardwareSnapshot) -> Result<String, String> {
@@ -14,20 +15,19 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     html.push_str(
         "body{font-family:sans-serif;background:#12141a;color:#e6e6e6;margin:0;padding:24px;}",
     );
-    html.push_str("h1,h2{color:#7ec8ff;} table{border-collapse:collapse;width:100%;margin:12px 0;}");
+    html.push_str(
+        "h1,h2{color:#7ec8ff;} table{border-collapse:collapse;width:100%;margin:12px 0;}",
+    );
     html.push_str(
         "td,th{border:1px solid #333;padding:6px 8px;text-align:left;vertical-align:top;}",
     );
-    html.push_str("th{background:#1c2230;} .muted{color:#aaa;font-size:12px;} .warn{color:#ffb347;}");
+    html.push_str("th{background:#1c2230;} .muted{color:#aaa;font-size:12px;} .warn{color:#ffb347;} .crit{color:#ff6b6b;} .ok{color:#78c88c;}");
     html.push_str("</style></head><body>");
     html.push_str(&format!(
         "<h1>AIDA Linux 硬件报告</h1><p class=\"muted\">v{} · unix_ms {}</p>",
         snap.version, snap.collected_at_unix_ms
     ));
-    html.push_str(&format!(
-        "<p>{}</p>",
-        esc(&snap.privilege.summary)
-    ));
+    html.push_str(&format!("<p>{}</p>", esc(&snap.privilege.summary)));
 
     section(&mut html, "CPU");
     kv(
@@ -56,16 +56,58 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("产品", snap.dmi.product_name.display()),
             ("序列号", snap.dmi.product_serial.display()),
             ("UUID", snap.dmi.product_uuid.display()),
-            ("主板", format!("{} {}", snap.dmi.board_vendor.display(), snap.dmi.board_name.display())),
-            ("BIOS", format!("{} {}", snap.dmi.bios_vendor.display(), snap.dmi.bios_version.display())),
+            (
+                "主板",
+                format!(
+                    "{} {}",
+                    snap.dmi.board_vendor.display(),
+                    snap.dmi.board_name.display()
+                ),
+            ),
+            (
+                "BIOS",
+                format!(
+                    "{} {}",
+                    snap.dmi.bios_vendor.display(),
+                    snap.dmi.bios_version.display()
+                ),
+            ),
         ],
     );
     for n in &snap.dmi.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
 
+    section(&mut html, "告警");
+    if snap.alerts.is_empty() {
+        html.push_str(
+            "<p class=\"muted\">当前无越限传感器（对照 hwmon *_max / *_crit / *_min）。</p>",
+        );
+    } else {
+        html.push_str(
+            "<table><tr><th>级别</th><th>通道</th><th>值</th><th>阈值</th><th>说明</th></tr>",
+        );
+        for a in &snap.alerts {
+            html.push_str(&format!(
+                "<tr><td class=\"{}\">{}</td><td>{}</td><td>{:.3} {}</td><td>{:.3}</td><td>{}</td></tr>",
+                if matches!(a.level, AlertLevel::Crit) {
+                    "crit"
+                } else {
+                    "warn"
+                },
+                alert_level_label(a.level),
+                esc(&a.label),
+                a.value,
+                esc(&a.unit),
+                a.threshold,
+                esc(&a.message)
+            ));
+        }
+        html.push_str("</table>");
+    }
+
     section(&mut html, "传感器");
-    html.push_str("<table><tr><th>芯片</th><th>通道</th><th>值</th><th>状态</th></tr>");
+    html.push_str("<table><tr><th>芯片</th><th>通道</th><th>值</th><th>min</th><th>max</th><th>crit</th><th>状态</th></tr>");
     for chip in &snap.sensors.chips {
         for ch in &chip.channels {
             let val = ch
@@ -73,16 +115,19 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 .map(|v| format!("{v:.3} {}", ch.unit))
                 .unwrap_or_else(|| ch.raw.access_label());
             html.push_str(&format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 esc(chip.name.value.as_deref().unwrap_or("?")),
                 esc(&ch.label),
                 esc(&val),
+                esc(&opt_f(ch.min)),
+                esc(&opt_f(ch.max)),
+                esc(&opt_f(ch.crit)),
                 access_cell(ch.raw.access)
             ));
         }
     }
     if snap.sensors.chips.is_empty() {
-        html.push_str("<tr><td colspan=\"4\" class=\"warn\">无 hwmon 数据</td></tr>");
+        html.push_str("<tr><td colspan=\"7\" class=\"warn\">无 hwmon 数据</td></tr>");
     }
     html.push_str("</table>");
 
@@ -116,7 +161,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
 
     section(&mut html, "PCI");
-    html.push_str("<table><tr><th>槽位</th><th>ID</th><th>名称</th><th>类别</th><th>驱动</th></tr>");
+    html.push_str(
+        "<table><tr><th>槽位</th><th>ID</th><th>名称</th><th>类别</th><th>驱动</th></tr>",
+    );
     for d in &snap.pci.devices {
         let name = match (&d.vendor_name, &d.device_name) {
             (Some(v), Some(n)) => format!("{v} {n}"),
@@ -146,7 +193,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ("节点", g.id.clone()),
                 ("驱动", g.driver.clone()),
                 ("PCI", g.pci_slot.display()),
-                ("ID", format!("{}:{}", g.vendor_id.display(), g.device_id.display())),
+                (
+                    "ID",
+                    format!("{}:{}", g.vendor_id.display(), g.device_id.display()),
+                ),
                 (
                     "占用",
                     g.busy_percent
@@ -167,6 +217,109 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
     for n in &snap.gpu.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "网络");
+    html.push_str("<table><tr><th>接口</th><th>状态</th><th>类型</th><th>速率</th><th>地址</th><th>RX / TX</th></tr>");
+    for i in &snap.net.interfaces {
+        let speed = i
+            .speed_mbps
+            .value
+            .map(|v| format!("{v} Mb/s"))
+            .unwrap_or_else(|| i.speed_mbps.access_label());
+        let rx_tx = match (i.rx_bytes.value, i.tx_bytes.value) {
+            (Some(r), Some(t)) => format!("{} / {}", format_bytes(r), format_bytes(t)),
+            _ => i.rx_bytes.access_label(),
+        };
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            esc(&i.name),
+            esc(&i.operstate.display()),
+            esc(&i.kind),
+            esc(&speed),
+            esc(&i.addresses.join(", ")),
+            esc(&rx_tx)
+        ));
+    }
+    if snap.net.interfaces.is_empty() {
+        html.push_str("<tr><td colspan=\"6\" class=\"warn\">无网卡</td></tr>");
+    }
+    html.push_str("</table>");
+    for n in &snap.net.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "USB");
+    html.push_str("<table><tr><th>节点</th><th>父</th><th>ID</th><th>产品</th><th>速度</th></tr>");
+    for d in &snap.usb.devices {
+        let id = format!("{}:{}", d.vendor_id.display(), d.product_id.display());
+        let product = d
+            .product
+            .value
+            .clone()
+            .or_else(|| d.product_name.clone())
+            .unwrap_or_else(|| d.product.access_label());
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            esc(&d.sys_name),
+            esc(d.parent.as_deref().unwrap_or("—")),
+            esc(&id),
+            esc(&product),
+            esc(&d.speed.display())
+        ));
+    }
+    if snap.usb.devices.is_empty() {
+        html.push_str("<tr><td colspan=\"5\" class=\"warn\">无 USB 设备</td></tr>");
+    }
+    html.push_str("</table>");
+    for n in &snap.usb.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "输入设备");
+    html.push_str("<table><tr><th>名称</th><th>类型</th><th>handlers</th><th>phys</th></tr>");
+    for d in &snap.input.devices {
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            esc(&d.name),
+            esc(&d.kinds.join(", ")),
+            esc(&d.handlers.join(" ")),
+            esc(d.phys.as_deref().unwrap_or("—"))
+        ));
+    }
+    if snap.input.devices.is_empty() {
+        html.push_str("<tr><td colspan=\"4\" class=\"warn\">无输入设备</td></tr>");
+    }
+    html.push_str("</table>");
+    for n in &snap.input.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+
+    section(&mut html, "NUMA");
+    html.push_str(
+        "<table><tr><th>节点</th><th>CPU</th><th>内存</th><th>空闲</th><th>distance</th></tr>",
+    );
+    for n in &snap.numa.nodes {
+        html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            n.id,
+            esc(&n.cpulist.display()),
+            esc(&n
+                .mem_total_kb
+                .value
+                .map(|v| format_bytes(v * 1024))
+                .unwrap_or_else(|| n.mem_total_kb.access_label())),
+            esc(&n
+                .mem_free_kb
+                .value
+                .map(|v| format_bytes(v * 1024))
+                .unwrap_or_else(|| n.mem_free_kb.access_label())),
+            esc(&n.distance.display())
+        ));
+    }
+    html.push_str("</table>");
+    for n in &snap.numa.notes {
+        html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
 
     section(&mut html, "存储");
@@ -236,6 +389,31 @@ fn esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn alert_level_label(level: AlertLevel) -> &'static str {
+    match level {
+        AlertLevel::Ok => "ok",
+        AlertLevel::Low => "low",
+        AlertLevel::High => "high",
+        AlertLevel::Crit => "crit",
+    }
+}
+
+fn opt_f(v: Option<f64>) -> String {
+    v.map(|x| format!("{x:.3}")).unwrap_or_else(|| "—".into())
+}
+
+/// 字节/秒，用于网卡差分速率。
+pub fn format_bps(bps: f64) -> String {
+    const UNITS: [&str; 5] = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
+    let mut v = bps.abs();
+    let mut i = 0;
+    while v >= 1024.0 && i + 1 < UNITS.len() {
+        v /= 1024.0;
+        i += 1;
+    }
+    format!("{v:.2} {}", UNITS[i])
 }
 
 pub fn format_bytes(n: u64) -> String {
