@@ -1,0 +1,63 @@
+# 跨发行版兼容、坑点与测试方案
+
+## 发行版差异
+
+| 点 | Debian/Ubuntu | Fedora/RHEL | Arch | 容器 / 部分云主机 |
+| --- | --- | --- | --- | --- |
+| DMI sysfs | 有（裸机/KVM） | 同左 | 同左 | 经常整棵 `/sys/class/dmi` 不存在 |
+| `product_serial` 权限 | udev 常设 0400 | 同左 | 同左 | — |
+| `pci.ids` | 包 `pci.ids` 或 `hwdata`，路径 `/usr/share/misc/pci.ids` | `hwdata`，`/usr/share/hwdata/pci.ids` | `hwdata` | 可能无 |
+| hwmon 驱动 | 需 `linux-modules-extra` 或自己加载 coretemp/k10temp | 内核包较全 | 较全 | 虚拟机常无 |
+| NVMe 节点权限 | `root:disk` 0660 | 同左 | 同左 | 无 NVMe 时走 virtio `vd*` |
+| 桌面 | GNOME 下 `pkexec` 保 DISPLAY 比裸 `sudo` 稳 | 同 | 同 | 无 GUI |
+
+ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU part` 等。CPU probe 已按键名解析，缺键就 `not_found`，不要按 x86 行号切。
+
+## 已知坑
+
+1. **容器看不到主机 SMBIOS/hwmon。** 这不是 bug。提示里写了路径。若要在容器里测真实硬件，需要 `--privileged` 且挂载对应 sysfs，生产工具仍应在主机跑。
+2. **`cpu MHz` 在虚拟机里是恒定值**，且常常没有 `cpufreq`。界面会退回 cpuinfo 频率并加 note。
+3. **virtio 块设备 `queue/rotational` 经常是 1**，不能据此判断“这是机械硬盘”。类型列优先看名字（`vd*` / `nvme*`）。
+4. **PCI class `0xffff00`** 出现在部分 virtio 设备上，内核用兜底类码。名称解析只能靠 vendor/device + pci.ids。
+5. **NVMe ioctl 结构体大小必须是 72 字节（64-bit）**。搞错 `_IOWR` 会 `ENOTTY`。本仓库用 `assert!(size_of::<NvmeAdminCmd>() == 72)`。
+6. **不要把 SMART 的 Kelvin 当成摄氏度。** 规范是绝对温度，代码减 273.15。
+7. **HTML 导出必须转义 DMI 字符串。** 厂商自定义字段可能含 `<`。
+8. **AppImage + musl + egui/glow 基本不现实。** CLI musl、GUI glibc+linuxdeploy。
+9. **sudo 掉 DISPLAY。** GUI 提权用 `pkexec` 或 `sudo -E`，并检查 `xhost`。
+10. **`/sys/class/nvme/nvme0n1` 是命名空间不是控制器。** 枚举要过滤 `nvme\d+n\d+`。
+
+## 测试方案
+
+### 自动化（本仓库）
+
+```bash
+cargo test --no-default-features
+```
+
+- 夹具：伪造 hwmon、cpuinfo、pci.ids、os-release（不依赖本机硬件）
+- 权限：临时文件 `chmod 000`，非 root 断言 `permission_denied`（root 环境会跳过该断言）
+- 现场：`tests/live_collect.rs` 对真实 `/proc` `/sys` 采集一次，只要求不 panic，允许大量 `not_found`
+- 基准：`BenchRequest::quick()` 小缓冲，避免 CI 超时
+
+### 手工矩阵（发布前）
+
+| 环境 | 看什么 |
+| --- | --- |
+| x86_64 裸机 Fedora/Ubuntu 普通用户 | CPU/PCI 有值；DMI serial 为权限不足 |
+| 同上 root | serial/UUID/SMART 有值 |
+| AMD + k10temp、Intel + coretemp | 温度折线 |
+| NVMe 笔记本 | sysfs 型号 + SMART percentage_used |
+| QEMU virtio 虚拟机 | 无 hwmon/DMI 时提示正确；块设备为 `vd*` |
+| aarch64 树莓派/ARM 云 | cpuinfo 缺字段不崩 |
+| Wayland + X11 各测一次 GUI | 字体、折线、导出按钮 |
+
+### 回归命令
+
+```bash
+# 对比普通用户 vs root 的 access 统计
+aida collect > /tmp/u.json
+sudo aida collect > /tmp/r.json
+# 抽查 product_serial.access / nvme.smart.access
+```
+
+不要用“字段是否为空”当回归标准，要用 `access` 枚举：root 下 `permission_denied` 才是回归失败。
