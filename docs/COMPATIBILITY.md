@@ -64,6 +64,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 42. **PTP 在 KVM 上经常是 `KVM virtual PTP`。** 无 `/sys/class/ptp` 时列表为空。
 43. **`/proc/softirqs` 与 interrupts 同格式。** 第一列是名字不是数字 IRQ。
 44. **网卡 `queues/rx-*`/`tx-*` 在旧内核或某些虚拟接口上可能没有。** 计数为 0 即可。
+45. **virtio PCI 通常没有 `current_link_speed`。** 那是 PCIe 链路属性，不是采集失败。
+46. **空的 `/sys/kernel/iommu_groups` 表示未启用 IOMMU。** 不要当权限错误。
+47. **不要调用 `mdadm`/`lsscsi`/`i2cdetect`。** mdstat、scsi_host、i2c sysfs 足够列清单。
+48. **`/sys/kernel/security/lsm` 是逗号列表。** SELinux `enforce` 只在 selinuxfs 挂上时存在。
 
 ## 测试方案
 

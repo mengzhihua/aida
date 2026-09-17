@@ -25,6 +25,9 @@ pub struct SoftwareInfo {
     pub boot_time_unix: Sample<u64>,
     pub tainted: Sample<u64>,
     pub taint_flags: Vec<String>,
+    pub lsm: Sample<String>,
+    pub selinux_enforce: Sample<String>,
+    pub entropy_avail: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -82,6 +85,9 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         boot_time_unix,
         tainted,
         taint_flags,
+        lsm: access::read_trimmed(ctx.sys_path("kernel/security/lsm")),
+        selinux_enforce: access::read_trimmed(ctx.sys_path("fs/selinux/enforce")),
+        entropy_avail: access::read_u64(ctx.proc_path("sys/kernel/random/entropy_avail")),
         notes: Vec::new(),
     }
 }

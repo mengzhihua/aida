@@ -73,6 +73,8 @@ pub struct CpuCache {
     pub level: Sample<String>,
     pub kind: Sample<String>,
     pub size: Sample<String>,
+    pub line_size: Sample<String>,
+    pub associativity: Sample<String>,
     pub shared_cpu_list: Sample<String>,
 }
 
@@ -404,6 +406,8 @@ fn read_caches(ctx: &ProbeCtx, cpu: u32) -> Vec<CpuCache> {
                 level: access::read_trimmed(p.join("level")),
                 kind: access::read_trimmed(p.join("type")),
                 size: access::read_trimmed(p.join("size")),
+                line_size: access::read_trimmed(p.join("coherency_line_size")),
+                associativity: access::read_trimmed(p.join("ways_of_associativity")),
                 shared_cpu_list: access::read_trimmed(p.join("shared_cpu_list")),
             }
         })

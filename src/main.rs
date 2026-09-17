@@ -70,8 +70,10 @@ AIDA Linux — 硬件检测与监控（sysfs/procfs，不调用 dmidecode/lspci�
   /sys/class/net、USB sysfs、/proc/bus/input/devices、NUMA node、meminfo、
   CPU vulnerabilities、/proc/diskstats、mountinfo、/proc/modules、clocksource、
   loadavg、PSI、/proc/interrupts、virtio、buddyinfo/vmstat/KSM、PTP、block queue、
-  net queues/sockstat。RAPL 在无 powercap 时为空。EDAC 在未开 CONFIG_EDAC 时不存在；
-  /proc/iomem 地址常需 root。ATA/SATA 仅在有 ata_port 时出现。TPM/hwrng/ACPI 表名通常可读。
+  net queues/sockstat、scsi_host、mdstat、watchdog/backlight/leds/i2c、LSM。
+  RAPL 在无 powercap 时为空。PCIe current_link_* 在非 PCIe/虚拟桥上常不存在。
+  EDAC 在未开 CONFIG_EDAC 时不存在；/proc/iomem 地址常需 root。
+  ATA/SATA 仅在有 ata_port 时出现。TPM/hwrng/ACPI 表名通常可读。
   电源 serial、DMI 序列号、NVMe SMART 通常需要 root。
   DMI 序列号/UUID、SMBIOS 表、NVMe SMART、部分 USB serial 通常需要 root 或 disk 组。
   桌面请用 `aida elevate gui`（pkexec），不要对 GUI 裸 sudo 以免丢掉 DISPLAY。

@@ -18,7 +18,7 @@
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU busy/vram + `/proc/stat` 整机/每核利用率 + 网卡/磁盘字节差分 + RAPL 瓦特 + meminfo/vmstat + power_supply + loadavg + clocksource/PTP + EDAC + PSI + IRQ/softirq + 挂载用量 + cpufreq，避免每帧扫 PCI/USB/DMI/virtio/模块/iomem/ATA。
+4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + power + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量，避免每帧扫 PCI/USB/DMI/virtio/IOMMU/MD/SCSI/模块/iomem/ATA。
 
 ## 各 probe 内核接口
 
@@ -46,14 +46,18 @@
 | PSI | `/proc/pressure/{cpu,memory,io}` | some/full avg10/60/300 |
 | IRQ | `/proc/interrupts` | `/proc/softirqs`；按合计排序 |
 | ATA | `/sys/class/ata_port` | link `sata_spd`；IDENTIFY 型号 |
-| PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `pci.ids` + 内置厂商表 |
-| virtio | `/sys/bus/virtio/devices` | `modalias` `virtio:dXXXXXXXX` → `virtio_ids.h` 类型 |
-| Block | `/sys/block`（跳过 loop/ram/分区） | `/proc/diskstats` 差分 I/O；`queue/*` 块大小/nr_requests/dax/write_cache |
-| Software | `/etc/os-release`，`/proc/meminfo`，`osrelease` | loadavg / btime / tainted；`XDG_CURRENT_DESKTOP` |
+| PCI | `/sys/bus/pci/devices/*/vendor,device,class` | `current_link_*`；MSI IRQ 数；`pci.ids` |
+| virtio | `/sys/bus/virtio/devices` | `modalias` → `virtio_ids.h` |
+| IOMMU | `/sys/kernel/iommu_groups` | 组内 PCI 槽位名 |
+| Block | `/sys/block`（跳过 loop/ram/分区） | diskstats 差分；`queue/*` |
+| MD | `/proc/mdstat` | `/sys/block/mdN/md/{degraded,sync_action}` |
+| SCSI | `/sys/class/scsi_host` | proc_name / can_queue / state |
+| Platform | watchdog / backlight / leds / i2c | 不调用 i2cdetect |
+| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy |
 
 ## 界面
 
-- 左：`SidePanel` 树（摘要 / CPU / DMI / 内存 / GPU / 传感器 / 电源 / 存储 / 文件系统 / 网络 / USB / 输入 / 声卡 / PCI / NUMA / OS / 基准 / 导出）
+- 左：`SidePanel` 树（摘要 / CPU / DMI / 内存 / GPU / 传感器 / 电源 / 存储 / 文件系统 / 网络 / USB / 输入 / 声卡 / PCI / 平台 / NUMA / OS / 基准 / 导出）
 - 右：对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点
 - 顶：权限条 +「以管理员身份重启」（`elevate::reexec`）
 - 告警：对照 `*_max`/`*_crit`/`*_min`，状态变化写入 JSONL（`$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`）

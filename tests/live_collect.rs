@@ -36,6 +36,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"ata\""));
     assert!(json.contains("\"virtio\""));
     assert!(json.contains("\"rapl\""));
+    assert!(json.contains("\"iommu\""));
+    assert!(json.contains("\"watchdogs\""));
+    assert!(json.contains("\"scsi\""));
+    assert!(json.contains("\"lsm\""));
     assert!(json.contains("\"softirqs\""));
     assert!(json.contains("\"ptps\""));
     assert!(
@@ -117,6 +121,9 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("virtio"));
     assert!(html.contains("sockstat"));
     assert!(html.contains("vmstat"));
+    assert!(html.contains("IOMMU"));
+    assert!(html.contains("平台"));
+    assert!(html.contains("LSM"));
     assert!(!html.contains("<script"));
 }
 
