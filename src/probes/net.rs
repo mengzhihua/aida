@@ -32,6 +32,12 @@ pub struct NetReport {
     pub arp_entries: usize,
     pub route_entries: usize,
     pub unix_sockets: usize,
+    pub ipv6_routes: usize,
+    pub inet6_addrs: usize,
+    pub packet_sockets: usize,
+    pub tcp_fastopen: Sample<String>,
+    pub tcp_syncookies: Sample<String>,
+    pub ip_local_port_range: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -169,6 +175,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let arp_entries = count_table_rows(&access::read_trimmed(ctx.proc_path("net/arp")));
     let route_entries = count_table_rows(&access::read_trimmed(ctx.proc_path("net/route")));
     let unix_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/unix")));
+    let ipv6_routes = count_data_lines(&access::read_trimmed(ctx.proc_path("net/ipv6_route")));
+    let inet6_addrs = count_data_lines(&access::read_trimmed(ctx.proc_path("net/if_inet6")));
+    let packet_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/packet")));
+    let tcp_fastopen = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_fastopen"));
+    let tcp_syncookies = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_syncookies"));
+    let ip_local_port_range = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_local_port_range"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -199,6 +211,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 arp_entries,
                 route_entries,
                 unix_sockets,
+                ipv6_routes,
+                inet6_addrs,
+                packet_sockets,
+                tcp_fastopen,
+                tcp_syncookies,
+                ip_local_port_range,
                 notes,
             };
         }
@@ -337,6 +355,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         arp_entries,
         route_entries,
         unix_sockets,
+        ipv6_routes,
+        inet6_addrs,
+        packet_sockets,
+        tcp_fastopen,
+        tcp_syncookies,
+        ip_local_port_range,
         notes,
     }
 }
@@ -485,6 +509,13 @@ fn count_table_rows(sample: &Sample<String>) -> usize {
         .skip(1)
         .filter(|l| !l.trim().is_empty())
         .count()
+}
+
+fn count_data_lines(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines().filter(|l| !l.trim().is_empty()).count()
 }
 
 /// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
@@ -776,6 +807,13 @@ mod tests {
             count_table_rows(&Sample::ok(
                 "Num RefCount\na 1\nb 2\n".into(),
                 "unix"
+            )),
+            2
+        );
+        assert_eq!(
+            count_data_lines(&Sample::ok(
+                "00000000000000000000000000000001 01 80 10 80       lo\nfe80... 02 40 20 80   eth0\n".into(),
+                "if_inet6",
             )),
             2
         );

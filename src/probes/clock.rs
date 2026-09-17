@@ -10,6 +10,7 @@ pub struct ClockReport {
     pub available: Sample<String>,
     pub rtcs: Vec<Rtc>,
     pub ptps: Vec<PtpClock>,
+    pub pps: Vec<PpsDev>,
     pub notes: Vec<String>,
 }
 
@@ -27,6 +28,13 @@ pub struct PtpClock {
     pub clock_name: Sample<String>,
     pub max_adjustment: Sample<String>,
     pub pps_available: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PpsDev {
+    pub name: String,
+    pub path: Sample<String>,
+    pub mode: Sample<String>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> ClockReport {
@@ -88,11 +96,35 @@ pub fn collect(ctx: &ProbeCtx) -> ClockReport {
             }
         }
     }
+    let pps_root = ctx.sys_path("class/pps");
+    let mut pps = Vec::new();
+    match access::list_dir_names(&pps_root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(names),
+            ..
+        } => {
+            for name in names.into_iter().filter(|n| n.starts_with("pps")) {
+                let dir = pps_root.join(&name);
+                pps.push(PpsDev {
+                    path: access::read_trimmed(dir.join("path")),
+                    mode: access::read_trimmed(dir.join("mode")),
+                    name,
+                });
+            }
+        }
+        s => {
+            if s.access != AccessKind::NotFound {
+                notes.push(s.access_label());
+            }
+        }
+    }
     ClockReport {
         current,
         available,
         rtcs,
         ptps,
+        pps,
         notes,
     }
 }
@@ -117,6 +149,10 @@ mod tests {
         fs::create_dir_all(&ptp).unwrap();
         fs::write(ptp.join("clock_name"), "KVM virtual PTP\n").unwrap();
         fs::write(ptp.join("pps_available"), "0\n").unwrap();
+        let pps = root.join("sys/class/pps/pps0");
+        fs::create_dir_all(&pps).unwrap();
+        fs::write(pps.join("path"), "/dev/pps0\n").unwrap();
+        fs::write(pps.join("mode"), "1\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -129,6 +165,7 @@ mod tests {
         assert_eq!(r.rtcs.len(), 1);
         assert_eq!(r.ptps.len(), 1);
         assert_eq!(r.ptps[0].clock_name.value.as_deref(), Some("KVM virtual PTP"));
+        assert_eq!(r.pps[0].path.value.as_deref(), Some("/dev/pps0"));
         let _ = fs::remove_dir_all(&root);
     }
 }

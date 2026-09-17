@@ -662,6 +662,30 @@ impl AidaApp {
                     }
                 });
             }
+            if !self.snap.cpu.freq_policies.is_empty() {
+                ui.collapsing(
+                    format!("cpufreq ({})", self.snap.cpu.freq_policies.len()),
+                    |ui| {
+                        for p in &self.snap.cpu.freq_policies {
+                            kv(
+                                ui,
+                                &p.name,
+                                &format!(
+                                    "{}  {}  {}-{} kHz  cpus {}",
+                                    p.driver.display(),
+                                    p.governor.display(),
+                                    p.scaling_min_khz.display(),
+                                    p.scaling_max_khz.display(),
+                                    p.affected_cpus.display()
+                                ),
+                            );
+                        }
+                    },
+                );
+            }
+            if self.snap.cpu.schedstat_cpus > 0 {
+                kv(ui, "schedstat cpus", &self.snap.cpu.schedstat_cpus.to_string());
+            }
         });
     }
 
@@ -1412,6 +1436,22 @@ impl AidaApp {
                 );
             }
         }
+        if !self.snap.block.mapper.is_empty() {
+            ui.separator();
+            ui.strong("device-mapper");
+            for d in &self.snap.block.mapper {
+                kv(
+                    ui,
+                    &d.name,
+                    &format!(
+                        "{}  {}  susp {}",
+                        d.mapper_name.display(),
+                        d.uuid.display(),
+                        d.suspended.display()
+                    ),
+                );
+            }
+        }
         ui.separator();
         ui.strong("ATA / SATA");
         for n in &self.snap.ata.notes {
@@ -1776,10 +1816,23 @@ impl AidaApp {
             ui,
             "tables",
             &format!(
-                "arp {}  route {}  unix {}",
+                "arp {}  route {}  unix {}  inet6 {}  ipv6_route {}  packet {}",
                 self.snap.net.arp_entries,
                 self.snap.net.route_entries,
-                self.snap.net.unix_sockets
+                self.snap.net.unix_sockets,
+                self.snap.net.inet6_addrs,
+                self.snap.net.ipv6_routes,
+                self.snap.net.packet_sockets
+            ),
+        );
+        kv(
+            ui,
+            "tcp knobs",
+            &format!(
+                "fastopen {}  syncookies {}  ports {}",
+                self.snap.net.tcp_fastopen.display(),
+                self.snap.net.tcp_syncookies.display(),
+                self.snap.net.ip_local_port_range.display()
             ),
         );
         for b in &self.snap.net.bridges {
@@ -1994,6 +2047,17 @@ impl AidaApp {
         for n in &self.snap.platform.notes {
             ui.weak(n);
         }
+        kv(
+            ui,
+            "ACPI / PnP",
+            &format!(
+                "acpi {}  pnp {}",
+                self.snap.platform.acpi_devices, self.snap.platform.pnp_devices
+            ),
+        );
+        if !self.snap.platform.workqueues.is_empty() {
+            kv(ui, "workqueue", &self.snap.platform.workqueues.join(" "));
+        }
         if !self.snap.platform.watchdogs.is_empty() {
             ui.strong("watchdog");
             for w in &self.snap.platform.watchdogs {
@@ -2135,6 +2199,55 @@ impl AidaApp {
                 );
             }
         }
+        for h in &self.snap.buses.hidraw {
+            kv(ui, &h.name, &h.hid_name.display());
+        }
+        for v in &self.snap.buses.virtio_ports {
+            kv(
+                ui,
+                &v.name,
+                &format!(
+                    "{}  guest {} host {}",
+                    v.port_name.display(),
+                    v.guest_connected.display(),
+                    v.host_connected.display()
+                ),
+            );
+        }
+        for g in &self.snap.buses.gpio {
+            kv(
+                ui,
+                &g.name,
+                &format!("{}  ngpio {}  base {}", g.label.display(), g.ngpio.display(), g.base.display()),
+            );
+        }
+        for m in &self.snap.buses.mtd {
+            kv(
+                ui,
+                &m.name,
+                &format!(
+                    "{}  {}  erase {}",
+                    m.mtd_name.display(),
+                    m.size
+                        .value
+                        .map(crate::export::format_bytes)
+                        .unwrap_or_else(|| m.size.access_label()),
+                    m.erasesize.display()
+                ),
+            );
+        }
+        for ib in &self.snap.buses.infiniband {
+            kv(
+                ui,
+                &format!("IB {}", ib.name),
+                &format!(
+                    "{}  {}  ports {}",
+                    ib.node_type.display(),
+                    ib.node_guid.display(),
+                    ib.ports
+                ),
+            );
+        }
         if !self.snap.buses.misc.is_empty() {
             kv(ui, "misc", &self.snap.buses.misc.join(" "));
         }
@@ -2264,6 +2377,26 @@ impl AidaApp {
         kv(ui, "boot_id", &self.snap.sysctl.boot_id.display());
         kv(ui, "machine-id", &self.snap.software.machine_id.display());
         kv(ui, "domainname", &self.snap.software.domainname.display());
+        kv(ui, "config.gz", &self.snap.software.config_gz.display());
+        kv(
+            ui,
+            "bpf fs / pstore",
+            &format!(
+                "bpf {}  pstore {}",
+                self.snap.software.bpf_fs_entries, self.snap.firmware.pstore_files
+            ),
+        );
+        kv(
+            ui,
+            "nmi/watchdog",
+            &format!(
+                "nmi {}  wd {}  thresh {}  file-max {}",
+                self.snap.sysctl.nmi_watchdog.display(),
+                self.snap.sysctl.watchdog.display(),
+                self.snap.sysctl.watchdog_thresh.display(),
+                self.snap.sysctl.file_max.display()
+            ),
+        );
         kv(
             ui,
             "aio/inotify",
@@ -2431,6 +2564,13 @@ impl AidaApp {
                 ),
             );
         }
+        for p in &self.snap.clock.pps {
+            kv(
+                ui,
+                &format!("PPS {}", p.name),
+                &format!("{}  mode {}", p.path.display(), p.mode.display()),
+            );
+        }
         kv(
             ui,
             self.t("模块", "modules"),
@@ -2502,6 +2642,7 @@ impl AidaApp {
             },
         );
         kv(ui, "ACPI pm_profile", &self.snap.firmware.acpi_pm_profile.display());
+        kv(ui, "pstore", &self.snap.firmware.pstore_files.to_string());
         kv(ui, "hwrng", &self.snap.firmware.rng_current.display());
         for t in &self.snap.firmware.tpms {
             kv(

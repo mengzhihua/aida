@@ -10,6 +10,9 @@ pub struct PlatformReport {
     pub backlights: Vec<Backlight>,
     pub leds: Vec<Led>,
     pub i2c_adapters: Vec<I2cAdapter>,
+    pub acpi_devices: usize,
+    pub pnp_devices: usize,
+    pub workqueues: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -51,11 +54,42 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
     let backlights = read_backlights(ctx, &mut notes);
     let leds = read_leds(ctx, &mut notes);
     let i2c_adapters = read_i2c(ctx, &mut notes);
+    let acpi_devices = match access::list_dir_names(ctx.sys_path("bus/acpi/devices")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.len(),
+        _ => 0,
+    };
+    let pnp_devices = match access::list_dir_names(ctx.sys_path("bus/pnp/devices")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.len(),
+        _ => 0,
+    };
+    let workqueues = match access::list_dir_names(ctx.sys_path("bus/workqueue/devices")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(mut n),
+            ..
+        } => {
+            n.sort();
+            n.truncate(16);
+            n
+        }
+        _ => Vec::new(),
+    };
     PlatformReport {
         watchdogs,
         backlights,
         leds,
         i2c_adapters,
+        acpi_devices,
+        pnp_devices,
+        workqueues,
         notes,
     }
 }
@@ -225,6 +259,9 @@ mod tests {
         fs::create_dir_all(i2c.join("i2c-0")).unwrap();
         fs::write(i2c.join("i2c-0/name"), "SMBus I801\n").unwrap();
         fs::create_dir_all(i2c.join("0-0050")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/acpi/devices/ACPI0001:00")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/pnp/devices/00:00")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/workqueue/devices/writeback")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -237,6 +274,9 @@ mod tests {
         assert_eq!(r.backlights[0].actual.value, Some(200));
         assert_eq!(r.leds.len(), 1);
         assert_eq!(r.i2c_adapters[0].clients, 1);
+        assert_eq!(r.acpi_devices, 1);
+        assert_eq!(r.pnp_devices, 1);
+        assert_eq!(r.workqueues, vec!["writeback".to_string()]);
         let _ = fs::remove_dir_all(&root);
     }
 

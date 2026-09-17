@@ -34,7 +34,21 @@ pub struct CpuInfo {
     /// `/sys/devices/system/cpu/vulnerabilities/*`
     pub vulnerabilities: Vec<CpuVuln>,
     pub idle_states: Vec<CpuIdleState>,
+    pub freq_policies: Vec<CpufreqPolicy>,
+    pub schedstat_cpus: usize,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CpufreqPolicy {
+    pub name: String,
+    pub driver: Sample<String>,
+    pub governor: Sample<String>,
+    pub scaling_cur_khz: Sample<u64>,
+    pub scaling_min_khz: Sample<u64>,
+    pub scaling_max_khz: Sample<u64>,
+    pub affected_cpus: Sample<String>,
+    pub epp: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -257,6 +271,8 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         utilization_pct,
         vulnerabilities: collect_vulns(ctx),
         idle_states,
+        freq_policies: collect_freq_policies(ctx),
+        schedstat_cpus: parse_schedstat_cpus(&access::read_trimmed(ctx.proc_path("schedstat"))),
         notes,
     }
 }
@@ -350,6 +366,40 @@ fn logical_from_sysfs(
         core_siblings: access::read_trimmed(topo.join("core_siblings_list")),
         package_cpus: access::read_trimmed(topo.join("package_cpus_list")),
     }
+}
+
+fn collect_freq_policies(ctx: &ProbeCtx) -> Vec<CpufreqPolicy> {
+    let root = ctx.sys_path("devices/system/cpu/cpufreq");
+    let names = match access::list_dir_names(&root).value {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names.into_iter().filter(|n| n.starts_with("policy")) {
+        let dir = root.join(&name);
+        out.push(CpufreqPolicy {
+            driver: access::read_trimmed(dir.join("scaling_driver")),
+            governor: access::read_trimmed(dir.join("scaling_governor")),
+            scaling_cur_khz: access::read_u64(dir.join("scaling_cur_freq")),
+            scaling_min_khz: access::read_u64(dir.join("scaling_min_freq")),
+            scaling_max_khz: access::read_u64(dir.join("scaling_max_freq")),
+            affected_cpus: access::read_trimmed(dir.join("affected_cpus")),
+            epp: access::read_trimmed(dir.join("energy_performance_preference")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// `/proc/schedstat`：统计 `cpuN` 行数。无此文件（未开 CONFIG_SCHEDSTATS）时为 0。
+fn parse_schedstat_cpus(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines()
+        .filter(|l| l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(|c| c.is_ascii_digit()))
+        .count()
 }
 
 fn collect_idle_states(ctx: &ProbeCtx, cpu: u32) -> Vec<CpuIdleState> {
@@ -483,5 +533,40 @@ flags\t\t: fpu hypervisor sse
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].get("model name").unwrap(), "Test CPU");
         assert!(blocks[0].get("flags").unwrap().contains("hypervisor"));
+    }
+
+    #[test]
+    fn cpufreq_policy_and_schedstat() {
+        let root = std::env::temp_dir().join(format!("aida-cpufreq-{}", std::process::id()));
+        let pol = root.join("sys/devices/system/cpu/cpufreq/policy0");
+        std::fs::create_dir_all(&pol).unwrap();
+        std::fs::write(pol.join("scaling_driver"), "acpi-cpufreq\n").unwrap();
+        std::fs::write(pol.join("scaling_governor"), "schedutil\n").unwrap();
+        std::fs::write(pol.join("scaling_cur_freq"), "2400000\n").unwrap();
+        std::fs::write(pol.join("scaling_min_freq"), "800000\n").unwrap();
+        std::fs::write(pol.join("scaling_max_freq"), "4800000\n").unwrap();
+        std::fs::write(pol.join("affected_cpus"), "0 1\n").unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(
+            root.join("proc/schedstat"),
+            "version 15\ntimestamp 1\ncpu0 1 2 3\ncpu1 4 5 6\ndomain0 0\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let pols = collect_freq_policies(&ctx);
+        assert_eq!(pols.len(), 1);
+        assert_eq!(pols[0].governor.value.as_deref(), Some("schedutil"));
+        assert_eq!(pols[0].scaling_cur_khz.value, Some(2400000));
+        assert_eq!(
+            parse_schedstat_cpus(&access::read_trimmed(ctx.proc_path("schedstat"))),
+            2
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

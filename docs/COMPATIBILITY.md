@@ -87,7 +87,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 65. **`/proc/crypto` 的 `internal : yes` 是内核内部算法。** 界面只列非 internal，总数仍统计全部。
 66. **`/proc/net/netstat` 与 snmp 一样两行一组。** 不要用用户态 `netstat` 填 TcpExt。
 67. **无 backing_file 的 loopN 视为空闲。** 虚拟机常有 loop0–7 且 size=0。
-68. **串口只列 `ttyS*`/`ttyUSB*`/`ttyACM*`/`ttyAMA*`。** 不要把 `tty0`–`tty63` 当 UART。
+68. **串口只列 `ttyS*`/`ttyUSB*`/`ttyACM*`/`ttyAMA*`。** 不要把 `tty0`–`tty63` 或 `hvc*` 当 UART。`ttyS` 的 `type=0` 是 8250 空槽。
 69. **无 `scsi_device` 不是采集失败。** virtio-blk 没有 SCSI LUN。
 70. **`/sys/power/state` 只有 `disk` 不代表不能读。** 云 VM 常无 mem/freeze；不要调用 `systemctl suspend`。
 71. **`/proc/net/snmp6` 是「键 值」每行一项。** 不要用 IPv4 snmp 的两行组去切。
@@ -96,6 +96,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 74. **`modules_disabled=1` 之后不能再加载模块。** 加固云镜像可能为 1，不要当采集失败。
 75. **THP `defrag`/`shmem_enabled` 也是方括号标当前策略。** 与 `enabled` 分开读。
 76. **misc 只列 `/sys/class/misc` 名字。** kvm/tun/fuse 的细节仍在各自 probe。
+77. **cgroup `groups` 只收第一层 `.slice`/`.scope`。** `docker` 这类无点号目录不算。
+78. **loop 读 `backing_file` 权限不足时不要算空闲。** 只把 NotFound / 空内容当未使用。
+79. **GPIO / MTD / InfiniBand 在云 VM 上经常没有 class。** 写 note，不要当采集崩溃。
+80. **空的 `/sys/devices/system/cpu/cpufreq` 不是读失败。** 虚拟机常无 policyN。
+81. **无 `/proc/config.gz` 很常见。** 需要 `CONFIG_IKCONFIG_PROC`；不要解压 gzip 加依赖。
+82. **`nmi_watchdog=0` 在虚拟机上正常。** 不是采集失败。
+83. **`/proc/net/if_inet6` 和 `ipv6_route` 没有表头。** 不要像 unix/packet 那样 skip 第一行。
 
 ## 测试方案
 

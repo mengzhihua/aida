@@ -28,6 +28,11 @@ pub struct SysctlReport {
     pub max_map_count: Sample<u64>,
     pub mmap_min_addr: Sample<u64>,
     pub boot_id: Sample<String>,
+    pub nmi_watchdog: Sample<String>,
+    pub watchdog: Sample<String>,
+    pub watchdog_thresh: Sample<u64>,
+    pub pipe_max_size: Sample<u64>,
+    pub file_max: Sample<u64>,
     pub consoles: Vec<Console>,
     pub notes: Vec<String>,
 }
@@ -87,6 +92,11 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         max_map_count: access::read_u64(ctx.proc_path("sys/vm/max_map_count")),
         mmap_min_addr: access::read_u64(ctx.proc_path("sys/vm/mmap_min_addr")),
         boot_id: access::read_trimmed(ctx.proc_path("sys/kernel/random/boot_id")),
+        nmi_watchdog: access::read_trimmed(ctx.proc_path("sys/kernel/nmi_watchdog")),
+        watchdog: access::read_trimmed(ctx.proc_path("sys/kernel/watchdog")),
+        watchdog_thresh: access::read_u64(ctx.proc_path("sys/kernel/watchdog_thresh")),
+        pipe_max_size: access::read_u64(ctx.proc_path("sys/fs/pipe-max-size")),
+        file_max: access::read_u64(ctx.proc_path("sys/fs/file-max")),
         consoles,
         notes,
     }
@@ -176,6 +186,8 @@ mod tests {
         fs::write(root.join("proc/sys/fs/aio-max-nr"), "65536\n").unwrap();
         fs::write(root.join("proc/sys/fs/inotify/max_user_watches"), "8192\n").unwrap();
         fs::write(root.join("proc/sys/kernel/random/boot_id"), "aaaa-bbbb\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/nmi_watchdog"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/fs/file-max"), "100000\n").unwrap();
         fs::write(root.join("proc/consoles"), "tty0                 -WU (E    )    4:1\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
@@ -191,6 +203,8 @@ mod tests {
         assert_eq!(r.consoles[0].name, "tty0");
         assert_eq!(r.aio_max_nr.value, Some(65536));
         assert_eq!(r.boot_id.value.as_deref(), Some("aaaa-bbbb"));
+        assert_eq!(r.nmi_watchdog.value.as_deref(), Some("0"));
+        assert_eq!(r.file_max.value, Some(100000));
         let _ = fs::remove_dir_all(&root);
     }
 }
