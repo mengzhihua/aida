@@ -1,7 +1,7 @@
 //! AIDA Linux：从 procfs/sysfs 采集硬件信息的核心库。
 //!
 //! - [`access`] 权限与读取原语
-//! - [`probes`] CPU / DMI / GPU / 网络 / USB / 输入 / NUMA / hwmon / NVMe / PCI / 块设备 / 软件
+//! - [`probes`] CPU / DMI / GPU / 网络 / USB / 输入 / NUMA / 内存 / 电源 / 声卡 / 固件 / hwmon / NVMe / PCI / 块设备 / 软件
 //! - [`snapshot`] 一次完整快照
 //! - [`export`] JSON/HTML
 //! - [`bench`] CPU / 内存 / 磁盘（buffered + O_DIRECT）

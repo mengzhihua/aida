@@ -22,6 +22,22 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"input\""));
     assert!(json.contains("\"numa\""));
     assert!(json.contains("\"alerts\""));
+    assert!(json.contains("\"memory\""));
+    assert!(json.contains("\"power\""));
+    assert!(json.contains("\"audio\""));
+    assert!(json.contains("\"firmware\""));
+    assert!(
+        !snap.memory.total_kb.value.is_none(),
+        "MemTotal 应可读"
+    );
+    assert!(
+        !snap.cpu.vulnerabilities.is_empty(),
+        "应至少有 CPU vulnerability 节点"
+    );
+    assert!(
+        snap.block.devices.iter().any(|d| d.rd_bytes.value.is_some()),
+        "diskstats 应能对上至少一个块设备"
+    );
     assert!(
         !snap.net.interfaces.is_empty(),
         "至少应有 lo 或其它 /sys/class/net 接口"
@@ -37,6 +53,10 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("USB"));
     assert!(html.contains("NUMA"));
     assert!(html.contains("告警"));
+    assert!(html.contains("内存"));
+    assert!(html.contains("电源"));
+    assert!(html.contains("声卡"));
+    assert!(html.contains("固件"));
     assert!(!html.contains("<script"));
 }
 

@@ -337,6 +337,17 @@ fn hint_for(source: &str, kind: AccessKind) -> Option<String> {
         AccessKind::NotFound if source.contains("/proc/bus/input") => {
             Some("无输入设备节点。无键盘/鼠标的无头环境会这样。".into())
         }
+        AccessKind::NotFound if source.contains("/sys/class/power_supply") => Some(
+            "无电源类设备。台式机通常没有电池；容器也常不导出 /sys/class/power_supply。"
+                .into(),
+        ),
+        AccessKind::NotFound if source.contains("/proc/asound") => {
+            Some("无 ALSA 声卡节点。无头虚拟机/容器常见。".into())
+        }
+        AccessKind::NotFound if source.contains("/sys/firmware/efi") => Some(
+            "无 EFI sysfs。可能是 legacy BIOS，或虚拟机/容器未提供 UEFI 变量。"
+                .into(),
+        ),
         _ => None,
     }
 }

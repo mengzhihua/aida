@@ -11,6 +11,7 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 pub struct SensorReport {
     pub chips: Vec<HwmonChip>,
     pub thermal_zones: Vec<ThermalZone>,
+    pub cooling: Vec<CoolingDevice>,
     pub notes: Vec<String>,
 }
 
@@ -51,6 +52,14 @@ pub struct ThermalZone {
     pub path: String,
     pub r#type: Sample<String>,
     pub temp_c: Sample<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoolingDevice {
+    pub name: String,
+    pub r#type: Sample<String>,
+    pub cur_state: Sample<String>,
+    pub max_state: Sample<String>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> SensorReport {
@@ -101,6 +110,19 @@ pub fn collect(ctx: &ProbeCtx) -> SensorReport {
         }
     }
 
+    let mut cooling = Vec::new();
+    if let Some(names) = access::list_dir_names(&tz_root).value {
+        for name in names.into_iter().filter(|n| n.starts_with("cooling_device")) {
+            let p = tz_root.join(&name);
+            cooling.push(CoolingDevice {
+                name,
+                r#type: access::read_trimmed(p.join("type")),
+                cur_state: access::read_trimmed(p.join("cur_state")),
+                max_state: access::read_trimmed(p.join("max_state")),
+            });
+        }
+    }
+
     if chips.is_empty() && thermal_zones.is_empty() {
         notes.push(
             "没有可读传感器。桌面机请确认已加载 coretemp/k10temp/it87 等模块；笔记本还可能走 thermal_zone。"
@@ -111,6 +133,7 @@ pub fn collect(ctx: &ProbeCtx) -> SensorReport {
     SensorReport {
         chips,
         thermal_zones,
+        cooling,
         notes,
     }
 }
