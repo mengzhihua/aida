@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+/report.json
+/report.html
+/aida-report.*
+.idea/
+.vscode/
+*.swp
