@@ -34,6 +34,27 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"psi\""));
     assert!(json.contains("\"irq\""));
     assert!(json.contains("\"ata\""));
+    assert!(json.contains("\"virtio\""));
+    assert!(json.contains("\"rapl\""));
+    assert!(json.contains("\"softirqs\""));
+    assert!(json.contains("\"ptps\""));
+    assert!(
+        !snap.irq.softirqs.is_empty(),
+        "/proc/softirqs 应至少有一行"
+    );
+    assert!(
+        snap.memory.vmstat.pgfault.value.is_some(),
+        "vmstat pgfault 应可读"
+    );
+    assert!(
+        !snap.memory.buddy.is_empty(),
+        "buddyinfo 应至少有一个 zone"
+    );
+    assert!(
+        snap.net.interfaces.iter().any(|i| i.rx_queues + i.tx_queues > 0)
+            || snap.net.interfaces.iter().any(|i| i.name == "lo"),
+        "网卡应能看到 queues 或至少 lo"
+    );
     assert!(
         snap.psi.cpu.is_some() || !snap.psi.notes.is_empty(),
         "PSI 应可读或给出说明"
@@ -93,6 +114,9 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("loadavg"));
     assert!(html.contains("clocksource"));
     assert!(html.contains("PSI") || html.contains("tainted"));
+    assert!(html.contains("virtio"));
+    assert!(html.contains("sockstat"));
+    assert!(html.contains("vmstat"));
     assert!(!html.contains("<script"));
 }
 

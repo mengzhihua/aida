@@ -9,6 +9,7 @@ pub struct ClockReport {
     pub current: Sample<String>,
     pub available: Sample<String>,
     pub rtcs: Vec<Rtc>,
+    pub ptps: Vec<PtpClock>,
     pub notes: Vec<String>,
 }
 
@@ -18,6 +19,14 @@ pub struct Rtc {
     pub rtc_name: Sample<String>,
     pub date: Sample<String>,
     pub since_epoch: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PtpClock {
+    pub name: String,
+    pub clock_name: Sample<String>,
+    pub max_adjustment: Sample<String>,
+    pub pps_available: Sample<String>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> ClockReport {
@@ -55,10 +64,35 @@ pub fn collect(ctx: &ProbeCtx) -> ClockReport {
     if rtcs.is_empty() {
         notes.push("无 RTC 设备（虚拟机/容器常见）。".into());
     }
+    let ptp_root = ctx.sys_path("class/ptp");
+    let mut ptps = Vec::new();
+    match access::list_dir_names(&ptp_root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(names),
+            ..
+        } => {
+            for name in names.into_iter().filter(|n| n.starts_with("ptp")) {
+                let dir = ptp_root.join(&name);
+                ptps.push(PtpClock {
+                    clock_name: access::read_trimmed(dir.join("clock_name")),
+                    max_adjustment: access::read_trimmed(dir.join("max_adjustment")),
+                    pps_available: access::read_trimmed(dir.join("pps_available")),
+                    name,
+                });
+            }
+        }
+        s => {
+            if s.access != AccessKind::NotFound {
+                notes.push(s.access_label());
+            }
+        }
+    }
     ClockReport {
         current,
         available,
         rtcs,
+        ptps,
         notes,
     }
 }
@@ -79,6 +113,10 @@ mod tests {
         fs::create_dir_all(&rtc).unwrap();
         fs::write(rtc.join("name"), "rtc-test\n").unwrap();
         fs::write(rtc.join("date"), "2026-09-17\n").unwrap();
+        let ptp = root.join("sys/class/ptp/ptp0");
+        fs::create_dir_all(&ptp).unwrap();
+        fs::write(ptp.join("clock_name"), "KVM virtual PTP\n").unwrap();
+        fs::write(ptp.join("pps_available"), "0\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -89,6 +127,8 @@ mod tests {
         let r = collect(&ctx);
         assert_eq!(r.current.value.as_deref(), Some("kvm-clock"));
         assert_eq!(r.rtcs.len(), 1);
+        assert_eq!(r.ptps.len(), 1);
+        assert_eq!(r.ptps[0].clock_name.value.as_deref(), Some("KVM virtual PTP"));
         let _ = fs::remove_dir_all(&root);
     }
 }
