@@ -1918,6 +1918,16 @@ impl AidaApp {
                 self.snap.net.icmp_ignore_bogus.display()
             ),
         );
+        if !self.snap.net.rp_filter_dev.is_empty() {
+            kv(ui, "rp_filter iface", &self.snap.net.rp_filter_dev.join("  "));
+        }
+        if !self.snap.net.ipv6_use_tempaddr_dev.is_empty() {
+            kv(
+                ui,
+                "use_tempaddr iface",
+                &self.snap.net.ipv6_use_tempaddr_dev.join("  "),
+            );
+        }
         if !self.snap.net.protocols.is_empty() {
             kv(ui, "protocols", &self.snap.net.protocols.join("  "));
         }
@@ -2488,6 +2498,9 @@ impl AidaApp {
         kv(ui, "domainname", &self.snap.software.domainname.display());
         kv(ui, "config.gz", &self.snap.software.config_gz.display());
         kv(ui, "file locks", &self.snap.software.file_locks.to_string());
+        for n in &self.snap.software.notes {
+            ui.weak(n);
+        }
         kv(
             ui,
             "oops / kexec",
@@ -2831,6 +2844,9 @@ impl AidaApp {
             ui.weak(n);
         }
         kv(ui, "sysfs irq", &self.snap.irq.sysfs_irqs.to_string());
+        for n in &self.snap.irq.notes {
+            ui.weak(n);
+        }
         if !self.snap.irq.lines.is_empty() {
             ui.collapsing(
                 format!(

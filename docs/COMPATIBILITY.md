@@ -106,12 +106,12 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 84. **`/proc/net/protocols` 第三列才是 sockets。** 不要把 size 当连接数。
 85. **nfsd `threads` 不存在表示未加载 nfsd。** 空 `/proc/fs/nfsd` 目录不是失败。
 86. **BDI 名字是主:次设备号。** 不要调用 `dmsetup`/`lsblk` 去解析。
-87. **`/proc/locks` 为空表示当前无文件锁。** 不是采集失败。
-88. **`class/vtconsole` 的 dummy device 在无真实 VT 的云 VM 上常见。** `bind=1` 仍可能是 dummy。
-89. **`class/msr` 每个逻辑 CPU 一个 `msrN`。** 只计数，不要 ioctl 读 MSR。
-90. **`rt6_stats` 是十六进制。** 第一列 dst entries；IPv4-only 主机仍可能有该文件。
+87. **`/proc/locks` 为空表示当前无文件锁。** 权限不足或读失败时写 note，不要当成 0 把锁。
+88. **`class/vtconsole` 的 dummy device 在无真实 VT 的云 VM 上常见。** `bind=1` 仍可能是 dummy。目录 PermissionDenied 不要当成没有 VT。
+89. **`class/msr` 每个逻辑 CPU 一个 `msrN`。** 只计数，不要 ioctl 读 MSR。读目录失败写 note，不要当成 0 个设备。
+90. **`rt6_stats` 是十六进制 7 列。** 第 6 列才是 destination cache entries，第一列是 `fib_nodes`。IPv4-only 主机仍可能有该文件。
 91. **`tcp_fastopen` 可读即可。** 不要把 IPv6/unix 表当 live 测试前置条件。
-92. **`/sys/kernel/irq` 计数与 `/proc/interrupts` 行数不必相等。** 后者含 NMI/ERR。
+92. **`/sys/kernel/irq` 计数与 `/proc/interrupts` 行数不必相等。** 后者含 NMI/ERR。目录读失败写 note，不要当成 0。
 93. **`kernel.panic` 允许负数。** `-1` 表示立即重启，不要用无符号解析标成读取失败。
 94. **`/proc/net/igmp` 只计接口头行。** 组记录定时器含冒号，不能当接口。
 95. **`shmmax` 在 64 位上常接近 `u64::MAX`。** 不是溢出错误。
@@ -120,6 +120,8 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 98. **`kexec_loaded=0` 表示未加载 crash/kexec 内核。** 云 VM 常见。
 99. **`/proc/net/tcp` 行数含 TIME_WAIT。** 不是 established-only。
 100. **`firmware/memmap` 编号目录是 e820 段。** 不要展开每一段的 type/start（长度已够）。
+101. **`rp_filter` / `use_tempaddr` 是 per-iface。** 只读 `conf/all` 会漏掉 `eth0:1` 或 `lo:-1`。
+102. **`clockevents` 只列 `broadcast` 与 `clockeventN`。** 目录 PermissionDenied 不要当成没有时钟事件设备。
 
 ## 测试方案
 

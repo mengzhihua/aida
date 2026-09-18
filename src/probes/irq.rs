@@ -36,7 +36,8 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
     lines.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
     for line in &mut lines {
         if line.irq.chars().all(|c| c.is_ascii_digit()) {
-            line.affinity = access::read_trimmed(ctx.proc_path(format!("irq/{}/smp_affinity_list", line.irq)));
+            line.affinity =
+                access::read_trimmed(ctx.proc_path(format!("irq/{}/smp_affinity_list", line.irq)));
         }
     }
     let soft_sample = access::read_trimmed(ctx.proc_path("softirqs"));
@@ -57,6 +58,10 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
             value: Some(n),
             ..
         } => n.len(),
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            0
+        }
         _ => 0,
     };
     IrqReport {
@@ -71,7 +76,10 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
 pub fn parse_interrupts(text: &str) -> (usize, Vec<IrqLine>) {
     let mut lines_iter = text.lines();
     let header = lines_iter.next().unwrap_or("");
-    let cpu_count = header.split_whitespace().filter(|t| t.starts_with("CPU")).count();
+    let cpu_count = header
+        .split_whitespace()
+        .filter(|t| t.starts_with("CPU"))
+        .count();
     let n = if cpu_count == 0 { 1 } else { cpu_count };
     let mut out = Vec::new();
     for line in lines_iter {
@@ -196,5 +204,35 @@ ERR:          0
         assert_eq!(r.softirqs[0].total, 15);
         assert!(!r.notes.is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn denied_sysfs_irq_is_not_silent_zero() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-irq-deny-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(root.join("proc/interrupts"), "           CPU0\n").unwrap();
+        std::fs::write(root.join("proc/softirqs"), "                    CPU0\n").unwrap();
+        let dir = root.join("sys/kernel/irq");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(r.sysfs_irqs, 0);
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
+            "denied kernel/irq must not look like zero IRQs: {:?}",
+            r.notes
+        );
     }
 }

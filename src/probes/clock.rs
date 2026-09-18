@@ -131,6 +131,10 @@ pub fn collect(ctx: &ProbeCtx) -> ClockReport {
             n.truncate(16);
             n
         }
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            Vec::new()
+        }
         _ => Vec::new(),
     };
     ClockReport {
@@ -183,11 +187,41 @@ mod tests {
         assert_eq!(r.current.value.as_deref(), Some("kvm-clock"));
         assert_eq!(r.rtcs.len(), 1);
         assert_eq!(r.ptps.len(), 1);
-        assert_eq!(r.ptps[0].clock_name.value.as_deref(), Some("KVM virtual PTP"));
+        assert_eq!(
+            r.ptps[0].clock_name.value.as_deref(),
+            Some("KVM virtual PTP")
+        );
         assert_eq!(r.pps[0].path.value.as_deref(), Some("/dev/pps0"));
         assert!(r.clockevents.contains(&"broadcast".to_string()));
         assert!(r.clockevents.contains(&"clockevent0".to_string()));
         assert!(!r.clockevents.iter().any(|n| n == "power" || n == "uevent"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn denied_clockevents_is_not_silent_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-clk-deny-{}", std::process::id()));
+        let dir = root.join("sys/devices/system/clockevents");
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&root);
+        assert!(r.clockevents.is_empty());
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
+            "denied clockevents must not look empty: {:?}",
+            r.notes
+        );
     }
 }

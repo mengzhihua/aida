@@ -170,6 +170,8 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"clockevents\""));
     assert!(json.contains("\"sysfs_irqs\""));
     assert!(json.contains("\"file_locks\""));
+    assert!(json.contains("\"rp_filter_dev\""));
+    assert!(json.contains("\"ipv6_use_tempaddr_dev\""));
     assert!(json.contains("\"sysvipc_shm\""));
     assert!(json.contains("\"protected_hardlinks\""));
     assert!(json.contains("\"kexec_loaded\""));

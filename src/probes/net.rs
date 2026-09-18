@@ -48,6 +48,9 @@ pub struct NetReport {
     pub rp_filter: Sample<String>,
     pub icmp_echo_ignore_broadcasts: Sample<String>,
     pub ipv6_use_tempaddr: Sample<String>,
+    /// 与 `conf/all` 不同的接口值，例如 `eth0:1`。
+    pub rp_filter_dev: Vec<String>,
+    pub ipv6_use_tempaddr_dev: Vec<String>,
     pub rt6_entries: Sample<u64>,
     pub optmem_max: Sample<u64>,
     pub netdev_budget_usecs: Sample<u64>,
@@ -221,7 +224,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let packet_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/packet")));
     let tcp_fastopen = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_fastopen"));
     let tcp_syncookies = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_syncookies"));
-    let ip_local_port_range = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_local_port_range"));
+    let ip_local_port_range =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_local_port_range"));
     let tcp = TcpTune {
         keepalive_time: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_time")),
         fin_timeout: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_fin_timeout")),
@@ -254,6 +258,13 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_echo_ignore_broadcasts"));
     let ipv6_use_tempaddr =
         access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/use_tempaddr"));
+    let rp_filter_dev = conf_dev_diffs(ctx, "ipv4", "rp_filter", rp_filter.value.as_deref());
+    let ipv6_use_tempaddr_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "use_tempaddr",
+        ipv6_use_tempaddr.value.as_deref(),
+    );
     let rt6_entries = parse_rt6_stats(&access::read_trimmed(ctx.proc_path("net/rt6_stats")));
     let optmem_max = access::read_u64(ctx.proc_path("sys/net/core/optmem_max"));
     let netdev_budget_usecs = access::read_u64(ctx.proc_path("sys/net/core/netdev_budget_usecs"));
@@ -313,6 +324,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 rp_filter,
                 icmp_echo_ignore_broadcasts,
                 ipv6_use_tempaddr,
+                rp_filter_dev,
+                ipv6_use_tempaddr_dev,
                 rt6_entries,
                 optmem_max,
                 netdev_budget_usecs,
@@ -477,6 +490,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         rp_filter,
         icmp_echo_ignore_broadcasts,
         ipv6_use_tempaddr,
+        rp_filter_dev,
+        ipv6_use_tempaddr_dev,
         rt6_entries,
         optmem_max,
         netdev_budget_usecs,
@@ -686,7 +701,8 @@ pub fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
         .count()
 }
 
-/// `/proc/net/rt6_stats` 十六进制列；第一列是 dst entries。IPv4-only 主机仍可能有该文件。
+/// `/proc/net/rt6_stats` 十六进制 7 列：fib_nodes … dst cache … discarded。
+/// 第 6 列才是 destination cache entries，不是第一列。
 pub fn parse_rt6_stats(sample: &Sample<String>) -> Sample<u64> {
     let miss = || Sample {
         value: None,
@@ -699,12 +715,40 @@ pub fn parse_rt6_stats(sample: &Sample<String>) -> Sample<u64> {
     };
     match text
         .split_whitespace()
-        .next()
+        .nth(5)
         .and_then(|s| u64::from_str_radix(s, 16).ok())
     {
         Some(v) => Sample::ok(v, sample.source.clone()),
         None => Sample::error(sample.source.clone(), "无法解析 rt6_stats"),
     }
+}
+
+fn conf_dev_diffs(ctx: &ProbeCtx, family: &str, attr: &str, all: Option<&str>) -> Vec<String> {
+    let root = ctx.proc_path(format!("sys/net/{family}/conf"));
+    let names = match access::list_dir_names(&root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        if name == "all" || name == "default" {
+            continue;
+        }
+        let s = access::read_trimmed(root.join(&name).join(attr));
+        if let Some(v) = s.value.as_deref() {
+            if all != Some(v) {
+                out.push(format!("{name}:{v}"));
+            }
+        }
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
 }
 
 /// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
@@ -956,9 +1000,21 @@ mod tests {
         fs::create_dir_all(root.join("proc/net")).unwrap();
         fs::create_dir_all(root.join("proc/sys/net/netfilter")).unwrap();
         fs::create_dir_all(root.join("proc/sys/net/ipv4")).unwrap();
-        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_count"), "53\n").unwrap();
-        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_max"), "262144\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/tcp_congestion_control"), "cubic\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_count"),
+            "53\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_max"),
+            "262144\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_congestion_control"),
+            "cubic\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_available_congestion_control"),
             "reno cubic\n",
@@ -968,15 +1024,39 @@ mod tests {
         fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/all")).unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_retries2"), "15\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_syn_retries"), "6\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/tcp_rmem"), "4096\t131072\t6291456\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_rmem"),
+            "4096\t131072\t6291456\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/net/core/optmem_max"), "131072\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/conf/all/accept_redirects"), "0\n").unwrap();
-        fs::write(root.join("proc/net/tcp"), "sl local rem\n 0: 0 0\n 1: 0 0\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"), "1\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/conf/all/accept_redirects"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/tcp"),
+            "sl local rem\n 0: 0 0\n 1: 0 0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
+            "1\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/net/core/netdev_budget"), "300\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/conf/all/rp_filter"), "0\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/icmp_echo_ignore_broadcasts"), "1\n").unwrap();
-        fs::write(root.join("proc/net/rt6_stats"), "0005 0004 001b 0004 0000 0000 0000\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/icmp_echo_ignore_broadcasts"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/rt6_stats"),
+            "0005 0004 001b 0004 0000 0007 0000\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -998,7 +1078,50 @@ mod tests {
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
         assert_eq!(r.icmp_echo_ignore_broadcasts.value.as_deref(), Some("1"));
-        assert_eq!(r.rt6_entries.value, Some(5));
+        assert_eq!(r.rt6_entries.value, Some(7));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn per_iface_rp_filter_and_tempaddr_diffs() {
+        let root = std::env::temp_dir().join(format!("aida-net-rp-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/net")).unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/all")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/eth0")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/lo")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/all")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/lo")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/all/rp_filter"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/eth0/rp_filter"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/lo/rp_filter"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/use_tempaddr"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/use_tempaddr"), "-1\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
+        assert!(
+            r.rp_filter_dev.iter().any(|s| s == "eth0:1"),
+            "eth0 rp_filter=1 must differ from conf/all: {:?}",
+            r.rp_filter_dev
+        );
+        assert!(
+            !r.rp_filter_dev.iter().any(|s| s.starts_with("lo:")),
+            "lo matching all must not appear: {:?}",
+            r.rp_filter_dev
+        );
+        assert_eq!(r.ipv6_use_tempaddr.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_use_tempaddr_dev.iter().any(|s| s == "lo:-1"),
+            "lo use_tempaddr=-1 must differ from conf/all: {:?}",
+            r.ipv6_use_tempaddr_dev
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1017,10 +1140,7 @@ mod tests {
         assert_eq!(sk.tcp_inuse, Some(9));
         assert_eq!(sk.udp_inuse, Some(2));
         assert_eq!(
-            count_table_rows(&Sample::ok(
-                "Num RefCount\na 1\nb 2\n".into(),
-                "unix"
-            )),
+            count_table_rows(&Sample::ok("Num RefCount\na 1\nb 2\n".into(), "unix")),
             2
         );
         assert_eq!(
@@ -1042,7 +1162,10 @@ mod tests {
             )),
             2
         );
-        let rt6 = parse_rt6_stats(&Sample::ok("0005 0004 001b 0004 0000 0000 0000\n".into(), "rt6_stats"));
-        assert_eq!(rt6.value, Some(5));
+        let rt6 = parse_rt6_stats(&Sample::ok(
+            "0005 0004 001b 0004 0000 0007 0000\n".into(),
+            "rt6_stats",
+        ));
+        assert_eq!(rt6.value, Some(7));
     }
 }

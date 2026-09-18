@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十六轮** 补齐 SysV IPC / POSIX mqueue、kexec/oops、fs.protected 与 TCP rmem/syn 重试，并消化 #13 的 IGMP 计数与负数 panic 超时。
+**第十六轮** 补齐 SysV IPC / POSIX mqueue、kexec/oops、fs.protected 与 TCP rmem/syn 重试，并消化 #13 的 IGMP 计数、负数 panic 超时，以及 #14 的 rt6 第 6 列、per-iface `rp_filter`/`use_tempaddr` 与 MSR/VT/clockevents/IRQ/locks 读失败 note。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -12,7 +12,7 @@
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats；TCP knobs/rmem；protocols；conntrack；net.core；rp_filter/redirects |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem；protocols；conntrack；net.core；rp_filter per-iface |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |

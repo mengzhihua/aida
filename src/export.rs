@@ -923,6 +923,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp_socks,
         snap.net.udp_socks
     ));
+    if !snap.net.rp_filter_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">rp_filter iface {}</p>",
+            esc(&snap.net.rp_filter_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_use_tempaddr_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">use_tempaddr iface {}</p>",
+            esc(&snap.net.ipv6_use_tempaddr_dev.join(" "))
+        ));
+    }
     if !snap.net.protocols.is_empty() {
         html.push_str(&format!(
             "<p class=\"muted\">protocols {}</p>",
@@ -1498,6 +1510,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
         ],
     );
+    for n in &snap.software.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
+    for n in &snap.clock.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
     if let Some(cpu) = &snap.psi.cpu {
         html.push_str(&format!(
             "<p>PSI cpu some avg10={:.2} memory={} io={}</p>",
@@ -1519,6 +1537,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             "<p class=\"muted\">sysfs irq {}</p>",
             snap.irq.sysfs_irqs
         ));
+    }
+    for n in &snap.irq.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
     if !snap.irq.lines.is_empty() {
         html.push_str("<table><tr><th>IRQ</th><th>合计</th><th>affinity</th><th>说明</th></tr>");

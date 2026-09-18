@@ -109,9 +109,13 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
             value: Some(n),
             ..
         } => n.iter().filter(|x| x.starts_with("msr")).count(),
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            0
+        }
         _ => 0,
     };
-    let vtconsoles = read_vtconsoles(ctx);
+    let vtconsoles = read_vtconsoles(ctx, &mut notes);
     PlatformReport {
         watchdogs,
         backlights,
@@ -267,11 +271,15 @@ fn read_i2c(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<I2cAdapter> {
     adapters
 }
 
-fn read_vtconsoles(ctx: &ProbeCtx) -> Vec<VtConsole> {
+fn read_vtconsoles(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<VtConsole> {
     let root = ctx.sys_path("class/vtconsole");
     let names = match dir_list(&root) {
         DirList::Names(n) => n,
-        DirList::Missing | DirList::Failed(_) => return Vec::new(),
+        DirList::Missing => return Vec::new(),
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
     };
     let mut out = Vec::new();
     for name in names.into_iter().filter(|n| n.starts_with("vtcon")) {
@@ -329,7 +337,10 @@ mod tests {
             usr_share: root.join("usr/share"),
         };
         let r = collect(&ctx);
-        assert_eq!(r.watchdogs[0].identity.value.as_deref(), Some("Software Watchdog"));
+        assert_eq!(
+            r.watchdogs[0].identity.value.as_deref(),
+            Some("Software Watchdog")
+        );
         assert_eq!(r.backlights[0].actual.value, Some(200));
         assert_eq!(r.leds.len(), 1);
         assert_eq!(r.i2c_adapters[0].clients, 1);
@@ -339,7 +350,10 @@ mod tests {
         assert_eq!(r.event_sources, vec!["software".to_string()]);
         assert_eq!(r.msr_devices, 2);
         assert_eq!(r.vtconsoles.len(), 1);
-        assert_eq!(r.vtconsoles[0].device.value.as_deref(), Some("(S) dummy device"));
+        assert_eq!(
+            r.vtconsoles[0].device.value.as_deref(),
+            Some("(S) dummy device")
+        );
         assert_eq!(r.vtconsoles[0].bind.value.as_deref(), Some("1"));
         let _ = fs::remove_dir_all(&root);
     }
@@ -362,13 +376,42 @@ mod tests {
         let _ = fs::set_permissions(&wd, fs::Permissions::from_mode(0o755));
         let _ = fs::remove_dir_all(&root);
         assert!(
-            r.notes.iter().any(|n| n.contains("权限") || n.contains("失败")),
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
             "denied dir must not look like an empty class: {:?}",
             r.notes
         );
         assert!(
             !r.notes.iter().any(|n| n.contains("无 watchdog")),
             "PermissionDenied must not be labeled as no device: {:?}",
+            r.notes
+        );
+    }
+
+    #[test]
+    fn denied_msr_is_not_silent_zero() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-plat-msr-{}", std::process::id()));
+        let msr = root.join("sys/class/msr");
+        fs::create_dir_all(&msr).unwrap();
+        fs::set_permissions(&msr, fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = fs::set_permissions(&msr, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(r.msr_devices, 0);
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
+            "denied class/msr must not look like zero devices: {:?}",
             r.notes
         );
     }
