@@ -54,6 +54,10 @@ pub struct BusesReport {
     pub iscsi_flashnode: Vec<String>,
     pub nd: Vec<String>,
     pub dma_heap: Vec<String>,
+    pub cxl: Vec<String>,
+    pub devfreq: Vec<String>,
+    pub fpga: Vec<String>,
+    pub gnss: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -404,6 +408,34 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let cxl = list_optional_names(
+        ctx.sys_path("class/cxl"),
+        8,
+        "cxl",
+        &mut notes,
+        &mut missing,
+    );
+    let devfreq = list_optional_names(
+        ctx.sys_path("class/devfreq"),
+        8,
+        "devfreq",
+        &mut notes,
+        &mut missing,
+    );
+    let fpga = list_optional_names(
+        ctx.sys_path("class/fpga"),
+        8,
+        "fpga",
+        &mut notes,
+        &mut missing,
+    );
+    let gnss = list_optional_names(
+        ctx.sys_path("class/gnss"),
+        8,
+        "gnss",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -456,6 +488,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         iscsi_flashnode,
         nd,
         dma_heap,
+        cxl,
+        devfreq,
+        fpga,
+        gnss,
         notes,
     }
 }
@@ -979,6 +1015,10 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/iscsi_flashnode/devices/flashnode0")).unwrap();
         fs::create_dir_all(root.join("sys/class/nd/nmem0")).unwrap();
         fs::create_dir_all(root.join("sys/class/dma_heap/system")).unwrap();
+        fs::create_dir_all(root.join("sys/class/cxl/mem0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/devfreq/devfreq0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/fpga/fpga0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/gnss/gnss0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1022,6 +1062,10 @@ mod tests {
         assert_eq!(r.iscsi_flashnode, vec!["flashnode0".to_string()]);
         assert_eq!(r.nd, vec!["nmem0".to_string()]);
         assert_eq!(r.dma_heap, vec!["system".to_string()]);
+        assert_eq!(r.cxl, vec!["mem0".to_string()]);
+        assert_eq!(r.devfreq, vec!["devfreq0".to_string()]);
+        assert_eq!(r.fpga, vec!["fpga0".to_string()]);
+        assert_eq!(r.gnss, vec!["gnss0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

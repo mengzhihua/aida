@@ -192,6 +192,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 170. **`max_rcu_stall_to_panic=0` 表示不把 RCU stall 升级为 panic。**
 171. **`tcp_challenge_ack_limit=2147483647`（INT_MAX）是默认上限，表示不额外收紧。** 不要 dump `tcp_fastopen_key`。
 172. **空的 iscsi_flashnode / nd / dma_heap 表示没有对应硬件。** `PermissionDenied` 仍写 note。不 dump `serial-base` 设备名。
+173. **GUI `refresh_live` 必须替换整份 CPU 报告。** 只写回 `logical` 会让 cpuidle governor 停留在启动值。
+174. **空的 cxl / devfreq / fpga / gnss 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+175. **`ndisc_notify` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+176. **不要读 `compact_memory`。** 那是一次性触发器，不是状态。
 
 ## 测试方案
 

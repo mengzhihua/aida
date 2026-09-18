@@ -2014,7 +2014,7 @@ impl AidaApp {
             ui,
             "tcp extra",
             &format!(
-                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}",
+                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}  thin_linear {}  limit_out {}  comp_sack {}  fwd_prio {}  fib_notify {}  echo_probe {}  fwmark {}  ndisc_notify {}",
                 self.snap.net.tcp_orphan_retries.display(),
                 self.snap.net.tcp_rfc1337.display(),
                 self.snap.net.ip_unprivileged_port_start.display(),
@@ -2031,7 +2031,15 @@ impl AidaApp {
                     Some(2_147_483_647) => "2147483647 不限".into(),
                     _ => self.snap.net.tcp_challenge_ack_limit.display(),
                 },
-                self.snap.net.ip_dynaddr.display()
+                self.snap.net.ip_dynaddr.display(),
+                self.snap.net.tcp_thin_linear_timeouts.display(),
+                self.snap.net.tcp_limit_output_bytes.display(),
+                self.snap.net.tcp_comp_sack_nr.display(),
+                self.snap.net.ip_forward_update_priority.display(),
+                self.snap.net.fib_notify_on_flag_change.display(),
+                self.snap.net.icmp_echo_enable_probe.display(),
+                self.snap.net.tcp_fwmark_accept.display(),
+                self.snap.net.ipv6_ndisc_notify.display()
             ),
         );
         kv(
@@ -2128,6 +2136,13 @@ impl AidaApp {
                 ui,
                 "dad_transmits iface",
                 &self.snap.net.ipv6_dad_transmits_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_ndisc_notify_dev.is_empty() {
+            kv(
+                ui,
+                "ndisc_notify iface",
+                &self.snap.net.ipv6_ndisc_notify_dev.join("  "),
             );
         }
         kv(
@@ -2698,6 +2713,10 @@ impl AidaApp {
             ("iscsi_flashnode", &self.snap.buses.iscsi_flashnode),
             ("nd", &self.snap.buses.nd),
             ("dma_heap", &self.snap.buses.dma_heap),
+            ("cxl", &self.snap.buses.cxl),
+            ("devfreq", &self.snap.buses.devfreq),
+            ("fpga", &self.snap.buses.fpga),
+            ("gnss", &self.snap.buses.gnss),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -2882,7 +2901,7 @@ impl AidaApp {
             ui,
             "nmi/watchdog",
             &format!(
-                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}  wd_mask {}  rcu_stall {}  warn {}  kexec_limit {}  split_lock {}  hung_warn {}  hung_check {}  hung_interval {}  kexec_reboot {}  rcu_stall_max {}  panic_print {}  io_nmi {}",
+                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}  wd_mask {}  rcu_stall {}  warn {}  kexec_limit {}  split_lock {}  hung_warn {}  hung_check {}  hung_interval {}  kexec_reboot {}  rcu_stall_max {}  panic_print {}  io_nmi {}  hung_bt {}  unrecovered_nmi {}  oops_bt {}",
                 self.snap.sysctl.nmi_watchdog.display(),
                 self.snap.sysctl.watchdog.display(),
                 self.snap.sysctl.watchdog_thresh.display(),
@@ -2928,14 +2947,17 @@ impl AidaApp {
                     _ => self.snap.sysctl.max_rcu_stall_to_panic.display(),
                 },
                 self.snap.sysctl.panic_print.display(),
-                self.snap.sysctl.panic_on_io_nmi.display()
+                self.snap.sysctl.panic_on_io_nmi.display(),
+                self.snap.sysctl.hung_task_all_cpu_backtrace.display(),
+                self.snap.sysctl.panic_on_unrecovered_nmi.display(),
+                self.snap.sysctl.oops_all_cpu_backtrace.display()
             ),
         );
         kv(
             ui,
             "sched / oom",
             &format!(
-                "rt {}/{}us  rr {}ms  numa {}  tmig {}  panic_oom {}  oom_alloc {}  laptop {}  kexec_off {}  hung_panic {}",
+                "rt {}/{}us  rr {}ms  numa {}  tmig {}  panic_oom {}  oom_alloc {}  laptop {}  kexec_off {}  hung_panic {}  dl {}/{}us",
                 self.snap.sysctl.sched_rt_runtime_us.display(),
                 self.snap.sysctl.sched_rt_period_us.display(),
                 self.snap.sysctl.sched_rr_timeslice_ms.display(),
@@ -2945,7 +2967,9 @@ impl AidaApp {
                 self.snap.sysctl.oom_kill_allocating_task.display(),
                 self.snap.sysctl.laptop_mode.display(),
                 self.snap.sysctl.kexec_load_disabled.display(),
-                self.snap.sysctl.hung_task_panic.display()
+                self.snap.sysctl.hung_task_panic.display(),
+                self.snap.sysctl.sched_deadline_period_min_us.display(),
+                self.snap.sysctl.sched_deadline_period_max_us.display()
             ),
         );
         kv(
@@ -3059,7 +3083,7 @@ impl AidaApp {
             ui,
             "vm",
             &format!(
-                "swappiness {}  overcommit {}  overcommit_kbytes {}  dirty {}/{}  dirty_bytes {}/{}  watermark {}  boost {}  pipe_pages {}/{}  compact_unevict {}  zone_reclaim {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}  dirtytime {}  memfd_noexec {}",
+                "swappiness {}  overcommit {}  overcommit_kbytes {}  dirty {}/{}  dirty_bytes {}/{}  watermark {}  boost {}  pipe_pages {}/{}  compact_unevict {}  zone_reclaim {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}  dirtytime {}  memfd_noexec {}  compact_proact {}  page_lock {}",
                 self.snap.sysctl.swappiness.display(),
                 self.snap.sysctl.overcommit_memory.display(),
                 self.snap.sysctl.overcommit_kbytes.display(),
@@ -3078,7 +3102,9 @@ impl AidaApp {
                 self.snap.sysctl.page_cluster.display(),
                 self.snap.sysctl.admin_reserve_kbytes.display(),
                 self.snap.sysctl.dirtytime_expire_seconds.display(),
-                self.snap.sysctl.memfd_noexec.display()
+                self.snap.sysctl.memfd_noexec.display(),
+                self.snap.sysctl.compaction_proactiveness.display(),
+                self.snap.sysctl.page_lock_unfairness.display()
             ),
         );
         kv(ui, "ASLR", &self.snap.sysctl.aslr.display());

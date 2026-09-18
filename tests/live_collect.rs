@@ -206,6 +206,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"kexec_load_limit_reboot\""));
     assert!(json.contains("\"tcp_ecn_fallback\""));
     assert!(json.contains("\"iscsi_flashnode\""));
+    assert!(json.contains("\"compaction_proactiveness\""));
+    assert!(json.contains("\"tcp_comp_sack_nr\""));
+    assert!(json.contains("\"ipv6_ndisc_notify\""));
+    assert!(json.contains("\"cxl\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -359,6 +363,22 @@ fn live_snapshot_json_and_html() {
         "tcp_challenge_ack_limit 不应是读取失败（INT_MAX 表示不额外收紧）"
     );
     assert!(
+        snap.sysctl.compaction_proactiveness.access != aida::access::AccessKind::Error,
+        "compaction_proactiveness 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_comp_sack_nr.access != aida::access::AccessKind::Error,
+        "tcp_comp_sack_nr 不应是读取失败"
+    );
+    assert!(
+        snap.net.ipv6_ndisc_notify.access != aida::access::AccessKind::Error,
+        "ndisc_notify 不应是读取失败"
+    );
+    assert!(
+        snap.sysctl.sched_deadline_period_max_us.access != aida::access::AccessKind::Error,
+        "sched_deadline_period_max_us 不应是读取失败"
+    );
+    assert!(
         !snap.buses.tun.is_empty()
             || snap
                 .buses
@@ -482,6 +502,13 @@ fn live_snapshot_json_and_html() {
             || html.contains("ecn_fb")
             || html.contains("iscsi_flashnode")
             || html.contains("challenge_ack")
+    );
+    assert!(
+        html.contains("comp_sack")
+            || html.contains("compact_proact")
+            || html.contains("ndisc_notify")
+            || html.contains("cxl")
+            || html.contains("hung_bt")
     );
     assert!(!html.contains("<script"));
 }
