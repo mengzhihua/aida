@@ -23,7 +23,9 @@ install -m 0755 "$ROOT/target/release/aida" "$BIN/aida"
 # 菜单启动用绝对路径，不依赖 ~/.local/bin 是否在 PATH。
 sed "s|^Exec=aida |Exec=$BIN/aida |" "$ROOT/packaging/aida.desktop" >"$APP/aida.desktop"
 install -m 0644 "$ROOT/packaging/aida.svg" "$ICON/aida.svg"
-sed "s/@VERSION@/${VERSION}/g" "$ROOT/packaging/com.aida.linux.metainfo.xml" \
+DATE="${DATE:-$(aida_date)}"
+sed -e "s/@VERSION@/${VERSION}/g" -e "s/@DATE@/${DATE}/g" \
+  "$ROOT/packaging/com.aida.linux.metainfo.xml" \
   >"$META/com.aida.linux.metainfo.xml"
 
 # polkit 只读系统目录；用户级 PREFIX 装了也不会生效。

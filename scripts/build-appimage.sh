@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/version.sh"
 ARCH="$(aida_arch)"
 VERSION="${VERSION:-$(aida_version "$ROOT")}"
+DATE="${DATE:-$(aida_date)}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 APPDIR="${APPDIR:-$ROOT/AppDir}"
 CACHE="${CACHE_DIR:-$ROOT/.cache}"
@@ -18,10 +19,9 @@ if [[ "$ARCH" != "x86_64" && "$ARCH" != "aarch64" ]]; then
 fi
 
 mkdir -p "$OUT_DIR" "$CACHE"
-# 清掉上次留在 dist/ 的 linuxdeploy 和旧 AppImage，避免把 0.2.0 产物 mv 到新文件名上。
-rm -f "$OUT_DIR"/linuxdeploy*.AppImage \
-  "$OUT_DIR"/AIDA_Linux*.AppImage \
-  "$OUT_DIR"/aida*.AppImage
+# linuxdeploy 自己的镜像不要留在 dist/。已发布的 AIDA_Linux*.AppImage 先留着，
+# 等新镜像过完 version 校验再替换，避免 cargo/linuxdeploy 失败时把上次成功的包删掉。
+rm -f "$OUT_DIR"/linuxdeploy*.AppImage
 
 echo "==> cargo build --release --features gui  (version $VERSION)"
 cd "$ROOT"
@@ -39,11 +39,10 @@ install -m 0644 "$ROOT/packaging/aida.svg" "$APPDIR/aida.svg"
 install -m 0644 "$ROOT/packaging/polkit/com.aida.linux.policy" \
   "$APPDIR/usr/share/polkit-1/actions/com.aida.linux.policy"
 if [[ -f "$ROOT/packaging/com.aida.linux.metainfo.xml" ]]; then
-  sed "s/@VERSION@/${VERSION}/g" "$ROOT/packaging/com.aida.linux.metainfo.xml" \
-    >"$APPDIR/usr/share/metainfo/com.aida.linux.metainfo.xml"
-  # appimagetool 按 desktop id 找 aida.appdata.xml。
-  cp "$APPDIR/usr/share/metainfo/com.aida.linux.metainfo.xml" \
-    "$APPDIR/usr/share/metainfo/aida.appdata.xml"
+  # appimagetool 按 desktop id 找 aida.appdata.xml。只放这一份，避免 appstreamcli 验两次。
+  sed -e "s/@VERSION@/${VERSION}/g" -e "s/@DATE@/${DATE}/g" \
+    "$ROOT/packaging/com.aida.linux.metainfo.xml" \
+    >"$APPDIR/usr/share/metainfo/aida.appdata.xml"
 fi
 cp "$ROOT/packaging/aida.desktop" "$APPDIR/aida.desktop"
 
@@ -60,8 +59,12 @@ export LINUXDEPLOY_OUTPUT_VERSION="$VERSION"
 export VERSION
 export ARCH
 
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/aida-appimage.XXXXXX")"
+cleanup() { rm -rf "$STAGE"; }
+trap cleanup EXIT
+
 echo "==> linuxdeploy"
-cd "$OUT_DIR"
+cd "$STAGE"
 
 # winit 通过 dlopen 加载 xkb/GL，不在 ELF NEEDED 里，linuxdeploy 默认不会打包。
 EXTRA_LIBS=()
@@ -85,7 +88,7 @@ done
 dest="$OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
 shopt -s nullglob
 produced=()
-for img in "$OUT_DIR"/AIDA_Linux*.AppImage "$OUT_DIR"/aida*.AppImage; do
+for img in "$STAGE"/AIDA_Linux*.AppImage "$STAGE"/aida*.AppImage; do
   case "$(basename "$img")" in
     linuxdeploy*) continue ;;
   esac
@@ -96,32 +99,28 @@ if ((${#produced[@]} == 0)); then
   echo "linuxdeploy 没有产出 AppImage" >&2
   exit 1
 fi
-# 只保留一份带 Cargo 版本的名字；不要把旧文件 mv 到已写好的 dest 上。
-keep=""
+staged=""
 for img in "${produced[@]}"; do
-  if [[ "$img" == "$dest" ]]; then
-    keep="$img"
+  if [[ "$(basename "$img")" == "$(basename "$dest")" ]]; then
+    staged="$img"
     break
   fi
 done
-if [[ -z "$keep" ]]; then
-  mv -f "${produced[0]}" "$dest"
-  keep="$dest"
+if [[ -z "$staged" ]]; then
+  staged="${produced[0]}"
 fi
-for img in "${produced[@]}"; do
-  if [[ "$img" != "$keep" ]]; then
-    rm -f "$img"
-  fi
-done
-rm -f "$OUT_DIR"/linuxdeploy*.AppImage
 
-echo "==> 校验 $dest version == $VERSION"
-got="$(APPIMAGE_EXTRACT_AND_RUN=1 "$dest" version)"
+echo "==> 校验 $staged version == $VERSION"
+got="$(APPIMAGE_EXTRACT_AND_RUN=1 "$staged" version)"
 echo "    $got"
 if [[ "$got" != "aida $VERSION" ]]; then
-  echo "AppImage 版本不是 $VERSION: $got" >&2
+  echo "AppImage 版本不是 $VERSION: $got（保留 dist 里上次成功的包）" >&2
   exit 1
 fi
+
+# 校验通过后再替换 dest；跨文件系统用 install+mv，避免半写入覆盖上次成功的包。
+install -m 0755 "$staged" "$dest.new"
+mv -f "$dest.new" "$dest"
 
 echo "==> done"
 ls -lh "$dest"
