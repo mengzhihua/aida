@@ -218,6 +218,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"tcp_base_mss\""));
     assert!(json.contains("\"ipv6_enhanced_dad\""));
     assert!(json.contains("\"scsi_disk\""));
+    assert!(json.contains("\"printk_delay\""));
+    assert!(json.contains("\"tcp_max_reordering\""));
+    assert!(json.contains("\"ipv6_accept_ra_mtu\""));
+    assert!(json.contains("\"cec\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -407,6 +411,18 @@ fn live_snapshot_json_and_html() {
         "enhanced_dad 不应是读取失败"
     );
     assert!(
+        snap.sysctl.printk_delay.access != aida::access::AccessKind::Error,
+        "printk_delay 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_max_reordering.access != aida::access::AccessKind::Error,
+        "tcp_max_reordering 不应是读取失败"
+    );
+    assert!(
+        snap.net.ipv6_accept_ra_mtu.access != aida::access::AccessKind::Error,
+        "accept_ra_mtu 不应是读取失败"
+    );
+    assert!(
         snap.sysctl.sched_deadline_period_max_us.access != aida::access::AccessKind::Error,
         "sched_deadline_period_max_us 不应是读取失败"
     );
@@ -555,6 +571,13 @@ fn live_snapshot_json_and_html() {
             || html.contains("scsi_disk")
             || html.contains("enhanced_dad")
             || html.contains("extfrag")
+    );
+    assert!(
+        html.contains("printk_delay")
+            || html.contains("max_reorder")
+            || html.contains("cec")
+            || html.contains("ra_mtu")
+            || html.contains("hugetlb_vmemmap")
     );
     assert!(!html.contains("<script"));
 }

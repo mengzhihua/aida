@@ -64,6 +64,9 @@ pub struct BusesReport {
     pub scsi_disk: Vec<String>,
     pub scsi_tape: Vec<String>,
     pub graphics: Vec<String>,
+    pub cec: Vec<String>,
+    pub media: Vec<String>,
+    pub nbd: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -486,6 +489,27 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let cec = list_optional_names(
+        ctx.sys_path("class/cec"),
+        8,
+        "cec",
+        &mut notes,
+        &mut missing,
+    );
+    let media = list_optional_names(
+        ctx.sys_path("class/media"),
+        8,
+        "media",
+        &mut notes,
+        &mut missing,
+    );
+    let nbd = list_optional_names(
+        ctx.sys_path("class/nbd"),
+        8,
+        "nbd",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -547,6 +571,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         scsi_disk,
         scsi_tape,
         graphics,
+        cec,
+        media,
+        nbd,
         notes,
     }
 }
@@ -1215,6 +1242,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/scsi_disk/0:0:0:0")).unwrap();
         fs::create_dir_all(root.join("sys/class/scsi_tape/st0")).unwrap();
         fs::create_dir_all(root.join("sys/class/graphics/fb0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/cec/cec0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/media/media0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/nbd/nbd0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1274,6 +1304,9 @@ mod tests {
         assert_eq!(r.scsi_disk, vec!["0:0:0:0".to_string()]);
         assert_eq!(r.scsi_tape, vec!["st0".to_string()]);
         assert_eq!(r.graphics, vec!["fb0".to_string()]);
+        assert_eq!(r.cec, vec!["cec0".to_string()]);
+        assert_eq!(r.media, vec!["media0".to_string()]);
+        assert_eq!(r.nbd, vec!["nbd0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

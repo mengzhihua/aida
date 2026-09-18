@@ -171,6 +171,17 @@ pub struct NetReport {
     pub ipv6_auto_flowlabels: Sample<String>,
     pub icmp_msgs_per_sec: Sample<u64>,
     pub icmp_msgs_burst: Sample<u64>,
+    pub tcp_max_reordering: Sample<u64>,
+    pub tcp_tso_win_divisor: Sample<u64>,
+    pub udp_early_demux: Sample<String>,
+    pub tcp_syn_linear_timeouts: Sample<u64>,
+    pub ip_forward_use_pmtu: Sample<String>,
+    pub ipv6_flowlabel_consistency: Sample<String>,
+    pub ipv6_idgen_retries: Sample<u64>,
+    pub ipv6_accept_ra_mtu: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_mtu_dev: Vec<String>,
+    pub tcp_no_ssthresh_metrics_save: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -557,6 +568,26 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let ipv6_auto_flowlabels = access::read_trimmed(ctx.proc_path("sys/net/ipv6/auto_flowlabels"));
     let icmp_msgs_per_sec = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_msgs_per_sec"));
     let icmp_msgs_burst = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_msgs_burst"));
+    let tcp_max_reordering = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_reordering"));
+    let tcp_tso_win_divisor = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_tso_win_divisor"));
+    let udp_early_demux = access::read_trimmed(ctx.proc_path("sys/net/ipv4/udp_early_demux"));
+    let tcp_syn_linear_timeouts =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_syn_linear_timeouts"));
+    let ip_forward_use_pmtu =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_forward_use_pmtu"));
+    let ipv6_flowlabel_consistency =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/flowlabel_consistency"));
+    let ipv6_idgen_retries = access::read_u64(ctx.proc_path("sys/net/ipv6/idgen_retries"));
+    let ipv6_accept_ra_mtu =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_mtu"));
+    let ipv6_accept_ra_mtu_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_mtu",
+        ipv6_accept_ra_mtu.value.as_deref(),
+    );
+    let tcp_no_ssthresh_metrics_save =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_no_ssthresh_metrics_save"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -713,6 +744,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_auto_flowlabels,
                 icmp_msgs_per_sec,
                 icmp_msgs_burst,
+                tcp_max_reordering,
+                tcp_tso_win_divisor,
+                udp_early_demux,
+                tcp_syn_linear_timeouts,
+                ip_forward_use_pmtu,
+                ipv6_flowlabel_consistency,
+                ipv6_idgen_retries,
+                ipv6_accept_ra_mtu,
+                ipv6_accept_ra_mtu_dev,
+                tcp_no_ssthresh_metrics_save,
                 notes,
             };
         }
@@ -977,6 +1018,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_auto_flowlabels,
         icmp_msgs_per_sec,
         icmp_msgs_burst,
+        tcp_max_reordering,
+        tcp_tso_win_divisor,
+        udp_early_demux,
+        tcp_syn_linear_timeouts,
+        ip_forward_use_pmtu,
+        ipv6_flowlabel_consistency,
+        ipv6_idgen_retries,
+        ipv6_accept_ra_mtu,
+        ipv6_accept_ra_mtu_dev,
+        tcp_no_ssthresh_metrics_save,
         notes,
     }
 }
@@ -1854,6 +1905,23 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv6/auto_flowlabels"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/icmp_msgs_per_sec"), "1000\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/icmp_msgs_burst"), "50\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_max_reordering"), "300\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_tso_win_divisor"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/udp_early_demux"), "1\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_syn_linear_timeouts"),
+            "4\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_forward_use_pmtu"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/flowlabel_consistency"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/idgen_retries"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_ra_mtu"), "1\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_no_ssthresh_metrics_save"),
+            "1\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -1984,6 +2052,15 @@ mod tests {
         assert_eq!(r.ipv6_auto_flowlabels.value.as_deref(), Some("1"));
         assert_eq!(r.icmp_msgs_per_sec.value, Some(1000));
         assert_eq!(r.icmp_msgs_burst.value, Some(50));
+        assert_eq!(r.tcp_max_reordering.value, Some(300));
+        assert_eq!(r.tcp_tso_win_divisor.value, Some(3));
+        assert_eq!(r.udp_early_demux.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_syn_linear_timeouts.value, Some(4));
+        assert_eq!(r.ip_forward_use_pmtu.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_flowlabel_consistency.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_idgen_retries.value, Some(3));
+        assert_eq!(r.ipv6_accept_ra_mtu.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_no_ssthresh_metrics_save.value.as_deref(), Some("1"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2052,6 +2129,8 @@ mod tests {
         .unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/all/enhanced_dad"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/lo/enhanced_dad"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_ra_mtu"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/accept_ra_mtu"), "0\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2124,6 +2203,12 @@ mod tests {
             r.ipv6_enhanced_dad_dev.iter().any(|s| s == "lo:0"),
             "lo enhanced_dad=0 must differ from conf/all: {:?}",
             r.ipv6_enhanced_dad_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_mtu.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_accept_ra_mtu_dev.iter().any(|s| s == "lo:0"),
+            "lo accept_ra_mtu=0 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_mtu_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

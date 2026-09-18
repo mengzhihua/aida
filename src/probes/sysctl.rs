@@ -171,6 +171,12 @@ pub struct SysctlReport {
     pub io_delay_type: Sample<u64>,
     pub extfrag_threshold: Sample<u64>,
     pub stat_interval: Sample<u64>,
+    /// `0` 表示 printk 后不加额外延迟。
+    pub printk_delay: Sample<u64>,
+    pub max_lock_depth: Sample<u64>,
+    pub perf_event_mlock_kb: Sample<u64>,
+    /// `0` 表示不压缩 hugetlb vmemmap。
+    pub hugetlb_optimize_vmemmap: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -414,6 +420,12 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         io_delay_type: access::read_u64(ctx.proc_path("sys/kernel/io_delay_type")),
         extfrag_threshold: access::read_u64(ctx.proc_path("sys/vm/extfrag_threshold")),
         stat_interval: access::read_u64(ctx.proc_path("sys/vm/stat_interval")),
+        printk_delay: access::read_u64(ctx.proc_path("sys/kernel/printk_delay")),
+        max_lock_depth: access::read_u64(ctx.proc_path("sys/kernel/max_lock_depth")),
+        perf_event_mlock_kb: access::read_u64(ctx.proc_path("sys/kernel/perf_event_mlock_kb")),
+        hugetlb_optimize_vmemmap: access::read_trimmed(
+            ctx.proc_path("sys/vm/hugetlb_optimize_vmemmap"),
+        ),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -738,6 +750,10 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/io_delay_type"), "0\n").unwrap();
         fs::write(root.join("proc/sys/vm/extfrag_threshold"), "500\n").unwrap();
         fs::write(root.join("proc/sys/vm/stat_interval"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/printk_delay"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/max_lock_depth"), "1024\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/perf_event_mlock_kb"), "516\n").unwrap();
+        fs::write(root.join("proc/sys/vm/hugetlb_optimize_vmemmap"), "0\n").unwrap();
         fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
@@ -864,6 +880,10 @@ mod tests {
         assert_eq!(r.io_delay_type.value, Some(0));
         assert_eq!(r.extfrag_threshold.value, Some(500));
         assert_eq!(r.stat_interval.value, Some(1));
+        assert_eq!(r.printk_delay.value, Some(0));
+        assert_eq!(r.max_lock_depth.value, Some(1024));
+        assert_eq!(r.perf_event_mlock_kb.value, Some(516));
+        assert_eq!(r.hugetlb_optimize_vmemmap.value.as_deref(), Some("0"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
