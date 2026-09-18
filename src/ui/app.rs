@@ -2791,7 +2791,7 @@ impl AidaApp {
                 self.snap.sysctl.keys_maxkeys.display(),
                 self.snap.sysctl.keys_maxbytes.display(),
                 self.snap.sysctl.keys_gc_delay.display(),
-                self.snap.sysctl.key_users,
+                self.snap.sysctl.key_users.display(),
                 self.snap.sysctl.cap_last_cap.display(),
                 self.snap.sysctl.suid_dumpable.display(),
                 self.snap.sysctl.sched_autogroup.display(),

@@ -92,8 +92,8 @@ pub struct SysctlReport {
     pub perf_event_max_sample_rate: Sample<u64>,
     pub perf_cpu_time_max_percent: Sample<u64>,
     pub keys_gc_delay: Sample<u64>,
-    /// `/proc/key-users` 行数。不要 dump `/proc/keys`。
-    pub key_users: usize,
+    /// `/proc/key-users` 行数。不要 dump `/proc/keys`。失败不是 0。
+    pub key_users: Sample<usize>,
     pub vsyscall32: Sample<String>,
     pub ldisc_autoload: Sample<String>,
     /// `inode-state`：`inode_inuse = nr_inodes - nr_unused`，`inode_free` 为第 2 列。
@@ -159,6 +159,7 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
     }
     let (inode_inuse, inode_free) =
         parse_inode_state(&access::read_trimmed(ctx.proc_path("sys/fs/inode-state")));
+    let dentry_state = access::read_trimmed(ctx.proc_path("sys/fs/dentry-state"));
     SysctlReport {
         file_nr_alloc,
         file_nr_max,
@@ -250,11 +251,8 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         dir_notify_enable: access::read_trimmed(ctx.proc_path("sys/fs/dir-notify-enable")),
         lease_break_time: access::read_u64(ctx.proc_path("sys/fs/lease-break-time")),
         sysctl_writes_strict: access::read_trimmed(ctx.proc_path("sys/kernel/sysctl_writes_strict")),
-        dentry_nr: parse_state_nth(&access::read_trimmed(ctx.proc_path("sys/fs/dentry-state")), 0),
-        dentry_unused: parse_state_nth(
-            &access::read_trimmed(ctx.proc_path("sys/fs/dentry-state")),
-            1,
-        ),
+        dentry_nr: parse_state_nth(&dentry_state, 0),
+        dentry_unused: parse_state_nth(&dentry_state, 1),
         admin_reserve_kbytes: access::read_u64(ctx.proc_path("sys/vm/admin_reserve_kbytes")),
         perf_event_max_sample_rate: access::read_u64(
             ctx.proc_path("sys/kernel/perf_event_max_sample_rate"),
@@ -304,11 +302,19 @@ fn count_table_rows(sample: &Sample<String>) -> usize {
         .count()
 }
 
-fn count_data_lines(sample: &Sample<String>) -> usize {
-    let Some(text) = sample.value.as_deref() else {
-        return 0;
-    };
-    text.lines().filter(|l| !l.trim().is_empty()).count()
+fn count_data_lines(sample: &Sample<String>) -> Sample<usize> {
+    match sample.value.as_deref() {
+        Some(text) => Sample::ok(
+            text.lines().filter(|l| !l.trim().is_empty()).count(),
+            sample.source.clone(),
+        ),
+        None => Sample {
+            value: None,
+            access: sample.access,
+            source: sample.source.clone(),
+            hint: sample.hint.clone(),
+        },
+    }
 }
 
 fn parse_state_nth(sample: &Sample<String>, idx: usize) -> Sample<u64> {
@@ -565,7 +571,7 @@ mod tests {
         assert_eq!(r.dentry_unused.value, Some(40));
         assert_eq!(r.admin_reserve_kbytes.value, Some(8192));
         assert_eq!(r.perf_event_max_sample_rate.value, Some(100_000));
-        assert_eq!(r.key_users, 2);
+        assert_eq!(r.key_users.value, Some(2));
         assert_eq!(r.vsyscall32.value.as_deref(), Some("1"));
         assert_eq!(r.ldisc_autoload.value.as_deref(), Some("1"));
         assert_eq!(r.inode_inuse.value, Some(68));
@@ -622,5 +628,22 @@ mod tests {
         assert_eq!(bad_inuse.access, crate::access::AccessKind::Error);
         assert_eq!(bad_free.access, crate::access::AccessKind::Error);
         assert!(bad_inuse.value.is_none());
+    }
+
+    #[test]
+    fn missing_key_users_is_not_zero() {
+        let root = std::env::temp_dir().join(format!("aida-key-users-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.key_users.value.is_none());
+        assert_eq!(r.key_users.access, crate::access::AccessKind::NotFound);
+        let _ = fs::remove_dir_all(&root);
     }
 }

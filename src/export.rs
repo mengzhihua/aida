@@ -1689,7 +1689,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.keys_maxkeys.display(),
                     snap.sysctl.keys_maxbytes.display(),
                     snap.sysctl.keys_gc_delay.display(),
-                    snap.sysctl.key_users,
+                    snap.sysctl.key_users.display(),
                     snap.sysctl.cap_last_cap.display(),
                     snap.sysctl.suid_dumpable.display(),
                     snap.sysctl.sched_autogroup.display(),

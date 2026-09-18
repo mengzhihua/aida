@@ -251,6 +251,10 @@ fn live_snapshot_json_and_html() {
         "dentry-state 应可读"
     );
     assert!(
+        snap.sysctl.key_users.access != aida::access::AccessKind::Error,
+        "key-users 不应是读取失败（无 CONFIG_KEYS 时为 NotFound，不是 0）"
+    );
+    assert!(
         snap.sysctl.pty_max.value.is_some(),
         "pty/max 应可读"
     );
