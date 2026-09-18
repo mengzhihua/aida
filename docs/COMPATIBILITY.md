@@ -177,7 +177,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 155. **不要 dump `/proc/sys/kernel/random/uuid`。** 每次读取都会变；boot_id 才是稳定的。
 156. **`router_solicitations` 是有符号 i64。** `-1` 表示使用 RFC 默认次数，不要当读取失败。
 157. **`memfd_noexec`：`0` 不限制，`1` 仅 dumpable，`2` 一律禁止。** 旧内核可能不存在。
-158. **空的 macvtap / tun / nvme-generic / nvme-fabrics 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+158. **空的 macvtap / nvme-generic 表示没有对应硬件。** `tun` / `nvme-fabrics` 是 misc 设备（`class/misc/tun`、`/dev/net/tun`），不是独立 class；未加载才写 note。`PermissionDenied` 仍写 note，不要当成缺失。
 159. **`cpu/modalias` 可能很长。** JSON 保留全文，界面与 HTML 截断前缀。
 160. **`message_cost=0` 表示关闭内核网络 printk 限速。** 不是采集失败。
 

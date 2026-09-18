@@ -307,6 +307,15 @@ fn live_snapshot_json_and_html() {
         "cpu modalias 不应是读取失败（无该文件时为 NotFound）"
     );
     assert!(
+        !snap.buses.tun.is_empty()
+            || snap
+                .buses
+                .notes
+                .iter()
+                .any(|n| n.contains("tun") && (n.contains("无") || n.contains("权限"))),
+        "tun 应来自 misc/tun 或 /dev/net/tun；缺失或权限不足才写 note"
+    );
+    assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
         "kexec_loaded 不应是读取失败"
     );

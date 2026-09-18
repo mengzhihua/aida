@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第二十四轮** 补齐 RNG `write_wakeup_threshold` / `urandom_min_reseed_secs`、`memfd_noexec`、TCP FRTO/TSO/pacing、IPv6 RA `accept_ra_defrtr` / `router_solicitations`（`-1` 为 RFC 默认）、CPU `modalias`，以及 macvtap / tun / nvme-generic / nvme-fabrics。不 dump `random/uuid`，不读 `cad_pid`。
+**第二十四轮** 补齐 RNG `write_wakeup_threshold` / `urandom_min_reseed_secs`、`memfd_noexec`、TCP FRTO/TSO/pacing、IPv6 RA `accept_ra_defrtr` / `router_solicitations`（`-1` 为 RFC 默认）、CPU `modalias`，以及 macvtap / nvme-generic；`tun` / `nvme-fabrics` 从 misc 与 `/dev` 识别。不 dump `random/uuid`，不读 `cad_pid`。
 
 | 模块 | 状态 |
 | --- | --- |

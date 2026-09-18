@@ -339,13 +339,7 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let tun = list_optional_names(
-        ctx.sys_path("class/tun"),
-        8,
-        "tun",
-        &mut notes,
-        &mut missing,
-    );
+    let tun = list_misc_device(ctx, "tun", Some("net/tun"), &mut notes, &mut missing);
     let nvme_generic = list_optional_names(
         ctx.sys_path("class/nvme-generic"),
         8,
@@ -353,10 +347,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let nvme_fabrics = list_optional_names(
-        ctx.sys_path("class/nvme-fabrics"),
-        8,
+    let nvme_fabrics = list_misc_device(
+        ctx,
         "nvme-fabrics",
+        Some("nvme-fabrics"),
         &mut notes,
         &mut missing,
     );
@@ -431,6 +425,43 @@ fn list_optional_names(
             Vec::new()
         }
     }
+}
+
+/// TUN / nvme-fabrics 注册为 misc 设备，没有独立 `/sys/class/{tun,nvme-fabrics}`。
+/// 先看 `class/misc/<name>`，没有再看对应 `/dev` 节点；权限不足写 note，不要当成缺失。
+fn list_misc_device(
+    ctx: &ProbeCtx,
+    misc_name: &'static str,
+    dev_rel: Option<&str>,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    let misc_path = ctx.sys_path(format!("class/misc/{misc_name}"));
+    match access::list_dir_names(&misc_path) {
+        Sample {
+            access: AccessKind::Ok,
+            ..
+        } => return vec![misc_name.to_string()],
+        s if matches!(s.access, AccessKind::PermissionDenied | AccessKind::Error) => {
+            notes.push(s.access_label());
+            return Vec::new();
+        }
+        _ => {}
+    }
+    if let Some(rel) = dev_rel {
+        let node = ctx.dev_path(rel);
+        let source = node.display().to_string();
+        match std::fs::metadata(&node) {
+            Ok(_) => return vec![misc_name.to_string()],
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                notes.push(Sample::<String>::denied(source).access_label());
+                return Vec::new();
+            }
+            Err(_) => {}
+        }
+    }
+    missing.push(misc_name);
+    Vec::new()
 }
 
 fn read_rfkill(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<RfkillDev> {
@@ -883,6 +914,7 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/i2c-dev/i2c-0")).unwrap();
         fs::create_dir_all(root.join("sys/class/macvtap/tap0")).unwrap();
         fs::create_dir_all(root.join("sys/class/nvme-generic/ng0n1")).unwrap();
+        fs::create_dir_all(root.join("sys/class/misc/tun")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -917,13 +949,15 @@ mod tests {
         assert_eq!(r.i2c_dev, vec!["i2c-0".to_string()]);
         assert_eq!(r.macvtap, vec!["tap0".to_string()]);
         assert_eq!(r.nvme_generic, vec!["ng0n1".to_string()]);
+        assert_eq!(r.tun, vec!["tun".to_string()]);
+        assert!(r.nvme_fabrics.is_empty());
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
             r.notes
                 .iter()
-                .any(|n| n.contains("typec") && n.contains("tun")),
-            "missing typec/udc/dax/wmi/ubi/tun should share one note: {:?}",
+                .any(|n| n.contains("typec") && n.contains("nvme-fabrics")),
+            "missing typec/udc/dax/wmi/ubi/nvme-fabrics should share one note: {:?}",
             r.notes
         );
         let tty = root.join("sys/class/tty/ttyS0");
@@ -975,5 +1009,66 @@ mod tests {
             r.notes
         );
         assert!(!r.notes.iter().any(|n| n.contains("无 rfkill")));
+    }
+
+    #[test]
+    fn tun_from_dev_node_without_misc_class() {
+        let root = std::env::temp_dir().join(format!("aida-buses-tun-{}", std::process::id()));
+        fs::create_dir_all(root.join("dev/net")).unwrap();
+        fs::write(root.join("dev/net/tun"), "").unwrap();
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.tun, vec!["tun".to_string()]);
+        assert!(
+            !r.notes
+                .iter()
+                .any(|n| n.contains("无") && n.contains("tun")),
+            "present tun via /dev/net/tun must not be listed as missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn denied_misc_tun_is_not_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-buses-tun-deny-{}", std::process::id()));
+        let tun = root.join("sys/class/misc/tun");
+        fs::create_dir_all(&tun).unwrap();
+        fs::set_permissions(&tun, fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = fs::set_permissions(&tun, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&root);
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
+            "{:?}",
+            r.notes
+        );
+        assert!(
+            !r.notes
+                .iter()
+                .any(|n| n.contains("无") && n.contains("tun")),
+            "denied misc/tun must not look like missing: {:?}",
+            r.notes
+        );
     }
 }
