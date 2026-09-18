@@ -38,7 +38,8 @@ struct NvmeAdminCmd {
 
 const _: () = assert!(std::mem::size_of::<NvmeAdminCmd>() == 72);
 
-// Linux _IOWR('N', 0x41, struct nvme_passthru_cmd) == 0xC0484E41 on 64-bit
+// Linux _IOWR('N', 0x41, struct nvme_passthru_cmd) == 0xC0484E41 on 64-bit.
+// musl 的 ioctl request 是 c_int，glibc 是 c_ulong；as _ 两边都能编过。
 const NVME_IOCTL_ADMIN_CMD: libc::c_ulong = 0xC048_4E41;
 
 #[derive(Clone, Debug, Serialize)]
@@ -118,10 +119,7 @@ pub fn collect(ctx: &ProbeCtx) -> NvmeReport {
     if controllers.is_empty() {
         notes.push("未发现 NVMe 控制器（本机可能只有 virtio/SATA 盘）。".into());
     }
-    NvmeReport {
-        controllers,
-        notes,
-    }
+    NvmeReport { controllers, notes }
 }
 
 fn is_namespace_name(name: &str) -> bool {
@@ -155,7 +153,10 @@ fn read_controller(ctx: &ProbeCtx, dir: &std::path::Path, name: &str) -> NvmeCon
                     hint: s.hint,
                 },
             };
-            namespaces.push(NvmeNamespace { name: ns, size_bytes: size });
+            namespaces.push(NvmeNamespace {
+                name: ns,
+                size_bytes: size,
+            });
         }
     }
 
@@ -217,7 +218,7 @@ fn read_smart(dev: &std::path::Path) -> Sample<NvmeSmart> {
         timeout_ms: 0,
         result: 0,
     };
-    let rc = unsafe { libc::ioctl(file.as_raw_fd(), NVME_IOCTL_ADMIN_CMD, &mut cmd) };
+    let rc = unsafe { libc::ioctl(file.as_raw_fd(), NVME_IOCTL_ADMIN_CMD as _, &mut cmd) };
     if rc < 0 {
         let err = std::io::Error::last_os_error();
         if err.kind() == std::io::ErrorKind::PermissionDenied {
@@ -225,7 +226,9 @@ fn read_smart(dev: &std::path::Path) -> Sample<NvmeSmart> {
         }
         return Sample::error(
             source,
-            format!("NVME_IOCTL_ADMIN_CMD 失败: {err}（需要 disk 组或 root，且设备支持 Get Log Page）"),
+            format!(
+                "NVME_IOCTL_ADMIN_CMD 失败: {err}（需要 disk 组或 root，且设备支持 Get Log Page）"
+            ),
         );
     }
     Sample::ok(parse_smart(&buf), source)
