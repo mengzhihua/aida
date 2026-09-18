@@ -82,7 +82,7 @@ pub struct BusesReport {
     pub auxiliary: Vec<String>,
     /// USB monitor（`class/usbmon`）。
     pub usbmon: Vec<String>,
-    /// Generic Counter（`class/counter`）。
+    /// Generic Counter：先 `bus/counter/devices`，再 `class/counter`。
     pub counter: Vec<String>,
     /// DisplayPort AUX（`class/drm_dp_aux_dev`）。
     pub drm_dp_aux_dev: Vec<String>,
@@ -597,8 +597,11 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let counter = list_optional_names(
-        ctx.sys_path("class/counter"),
+    // Generic Counter 真实 ABI 是 bus（sysfs-bus-counter）；没有独立 `class/counter` 时不要当成缺失。
+    let counter = list_alt_dirs(
+        ctx,
+        "bus/counter/devices",
+        "class/counter",
         8,
         "counter",
         &mut notes,
@@ -1476,7 +1479,7 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/uio/uio0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/auxiliary/devices/intel_vsec.telemetry.0")).unwrap();
         fs::create_dir_all(root.join("sys/class/usbmon/usbmon0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/counter/counter0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/counter/devices/counter0")).unwrap();
         fs::create_dir_all(root.join("sys/class/drm_dp_aux_dev/drm_dp_aux0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/mhi/devices/mhi0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
@@ -2105,6 +2108,28 @@ mod tests {
                 .iter()
                 .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "mhi"))),
             "bus/mhi must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn counter_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-counter-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/counter/devices/counter0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.counter, vec!["counter0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n)
+                .is_none_or(|inner| inner.split('/').all(|s| s != "counter"))),
+            "bus/counter must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
