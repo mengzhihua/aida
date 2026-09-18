@@ -214,6 +214,16 @@ pub struct NetReport {
     pub ipv6_accept_ra_min_lft: Sample<u64>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_min_lft_dev: Vec<String>,
+    /// `0` 表示按 RFC 处理窗口缩放，不绕过有符号窗口。
+    pub tcp_workaround_signed_windows: Sample<String>,
+    /// `0` 表示 BSD 紧急指针；`1` 才是 RFC 793。
+    pub tcp_stdurg: Sample<String>,
+    pub tcp_available_ulp: Sample<String>,
+    /// PLB 拥塞阈值（与 `tcp_plb_enabled` 成对）。
+    pub tcp_plb_cong_thresh: Sample<u64>,
+    pub ipv6_accept_ra_rt_info_min_plen: Sample<u64>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_rt_info_min_plen_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -679,6 +689,20 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let ra_min_lft_all = ipv6_accept_ra_min_lft.value.map(|v| v.to_string());
     let ipv6_accept_ra_min_lft_dev =
         conf_dev_diffs(ctx, "ipv6", "accept_ra_min_lft", ra_min_lft_all.as_deref());
+    let tcp_workaround_signed_windows =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_workaround_signed_windows"));
+    let tcp_stdurg = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_stdurg"));
+    let tcp_available_ulp = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_available_ulp"));
+    let tcp_plb_cong_thresh = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_plb_cong_thresh"));
+    let ipv6_accept_ra_rt_info_min_plen =
+        access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_rt_info_min_plen"));
+    let ra_rt_min_all = ipv6_accept_ra_rt_info_min_plen.value.map(|v| v.to_string());
+    let ipv6_accept_ra_rt_info_min_plen_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_rt_info_min_plen",
+        ra_rt_min_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -870,6 +894,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 fwmark_reflect,
                 ipv6_accept_ra_min_lft,
                 ipv6_accept_ra_min_lft_dev,
+                tcp_workaround_signed_windows,
+                tcp_stdurg,
+                tcp_available_ulp,
+                tcp_plb_cong_thresh,
+                ipv6_accept_ra_rt_info_min_plen,
+                ipv6_accept_ra_rt_info_min_plen_dev,
                 notes,
             };
         }
@@ -1169,6 +1199,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         fwmark_reflect,
         ipv6_accept_ra_min_lft,
         ipv6_accept_ra_min_lft_dev,
+        tcp_workaround_signed_windows,
+        tcp_stdurg,
+        tcp_available_ulp,
+        tcp_plb_cong_thresh,
+        ipv6_accept_ra_rt_info_min_plen,
+        ipv6_accept_ra_rt_info_min_plen_dev,
         notes,
     }
 }
@@ -2102,6 +2138,19 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/tcp_workaround_signed_windows"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_stdurg"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_available_ulp"), "mptcp\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_plb_cong_thresh"), "128\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_rt_info_min_plen"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2262,6 +2311,11 @@ mod tests {
         assert_eq!(r.tcp_backlog_ack_defer.value.as_deref(), Some("1"));
         assert_eq!(r.fwmark_reflect.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_ra_min_lft.value, Some(0));
+        assert_eq!(r.tcp_workaround_signed_windows.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_stdurg.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_available_ulp.value.as_deref(), Some("mptcp"));
+        assert_eq!(r.tcp_plb_cong_thresh.value, Some(128));
+        assert_eq!(r.ipv6_accept_ra_rt_info_min_plen.value, Some(0));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2362,6 +2416,16 @@ mod tests {
             "300\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_rt_info_min_plen"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_rt_info_min_plen"),
+            "16\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2460,6 +2524,14 @@ mod tests {
             r.ipv6_accept_ra_min_lft_dev.iter().any(|s| s == "lo:300"),
             "lo accept_ra_min_lft=300 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_min_lft_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_rt_info_min_plen.value, Some(0));
+        assert!(
+            r.ipv6_accept_ra_rt_info_min_plen_dev
+                .iter()
+                .any(|s| s == "lo:16"),
+            "lo accept_ra_rt_info_min_plen=16 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_rt_info_min_plen_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
