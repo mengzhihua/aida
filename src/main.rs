@@ -53,38 +53,26 @@ fn main() -> ExitCode {
 fn print_help() {
     eprintln!(
         "\
-AIDA Linux — 硬件检测与监控（sysfs/procfs，不调用 dmidecode/lspci）
+AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmidecode/lspci）
 
 用法:
-  aida                 有 DISPLAY 时启动 GUI，否则 collect
-  aida gui             启动 egui 界面
-  aida collect         采集快照，默认打印 JSON
-  aida collect --html [FILE]
-  aida collect --json [FILE]
+  aida                              有图形会话则 GUI，否则打印 JSON
+  aida gui                          桌面界面（状态栏 / 传感器折线 / 导出）
+  aida collect [--json FILE] [--html FILE]
   aida bench [--quick] [--cpu] [--memory] [--disk] [--no-direct]
-  aida elevate [gui|collect|bench ...]   通过 pkexec/sudo 提权重启
+  aida elevate [gui|collect|bench ...]   pkexec，没有则 sudo -E
   aida version
 
-权限:
-  普通用户可读 CPU、大部分 PCI、块设备容量、os-release、DRM 公开节点、
-  /sys/class/net、USB sysfs、/proc/bus/input/devices、NUMA node、meminfo、
-  CPU vulnerabilities、/proc/diskstats、mountinfo、/proc/modules、clocksource、
-  loadavg、PSI、/proc/interrupts、virtio、buddyinfo/vmstat/KSM、PTP、block queue、
-  net queues/sockstat、scsi_host、mdstat、watchdog/backlight/leds/i2c、LSM、
-  zram/zswap、/dev/kvm、SMT、iSCSI transport、rfkill/蓝牙/V4L/MMC、
-  snmp/softnet、cgroup v2、file-nr、zoneinfo、ext4 sysfs、consoles、
-  lockdown/kptr/dmesg、/proc/crypto、namespaces、conntrack、tcp congestion、
-  scsi_device、loop backing_file、ttyS、/sys/power、snmp6、aio/inotify、boot_id、
-  cpufreq policy、hidraw、gpio/mtd/infiniband、ieee80211/typec/spi、ipv6_route、device-mapper、
-  TCP keepalive/sack、protocols、bdi/bsg、nfsd/fuse、panic/sysrq。
-  RAPL 在无 powercap 时为空。PCIe current_link_* 在非 PCIe/虚拟桥上常不存在。
-  EDAC 在未开 CONFIG_EDAC 时不存在；/proc/iomem 地址常需 root。
-  ATA/SATA 仅在有 ata_port 时出现。TPM/hwrng/ACPI 表名通常可读。
-  电源 serial、DMI 序列号、NVMe SMART 通常需要 root。
-  DMI 序列号/UUID、SMBIOS 表、NVMe SMART、部分 USB serial 通常需要 root 或 disk 组。
-  桌面请用 `aida elevate gui`（pkexec），不要对 GUI 裸 sudo 以免丢掉 DISPLAY。
-  缺权限时字段标记为 permission_denied，不会伪造数据。
-  GUI 传感器越限会追加 JSONL 到 $AIDA_ALERT_LOG 或 ~/.local/state/aida/alerts.jsonl。"
+环境:
+  AIDA_ALERT_LOG    传感器越限 JSONL（默认 ~/.local/state/aida/alerts.jsonl）
+  AIDA_RECORD_LOG   状态栏历史 JSONL（默认 ~/.local/state/aida/history.jsonl）
+
+权限: 缺权限标 permission_denied，不填假数据。DMI 序列号 / NVMe SMART 通常要
+root 或 disk 组。桌面提权用 `aida elevate gui`，不要对 GUI 裸 sudo 以免丢掉 DISPLAY。
+
+打包: ./scripts/package.sh     本机安装: ./scripts/install.sh
+详见 README.md 与 docs/PACKAGING.md。",
+        env!("CARGO_PKG_VERSION")
     );
 }
 
