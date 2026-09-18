@@ -165,6 +165,21 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 143. **`pipe-user-pages-hard=0` 表示不限制。** soft 默认常为 16384 页。
 144. **`kernel_max` 是内核编译时的最大 CPU 下标，不是在线数量。** `possible`/`present` 是掩码列表。
 145. **`/sys/class/wakeup` 只计数。** 不要展开每个 `wakeupN`。`PermissionDenied` 必须写 note。
+146. **`core_pipe_limit=0` 表示不限制 core dump 管道。** 不要当采集失败。
+147. **`printk_devkmsg` 为 `on` / `off` / `ratelimit`。**
+148. **`kernel.acct` 是三个 token（highwater / lowwater / frequency）。** 保留整行。
+149. **不要读 `kernel.cad_pid`。** 常无权限或为空。
+150. **空的 spi_master / i2c-dev / nvme-subsystem / w1 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+151. **`cpu/enabled` 在较新内核才有。** `NotFound` 不是采集失败。空的 `nohz_full` 表示没有 nohz_full CPU。
+152. **不要 dump `cpu/hotplug/states`。** 那是内部 CPUHP 回调表。
+153. **不要 dump seccomp `actions_logged`。** 只读 `actions_avail`。
+154. **`fib_multipath_hash_policy` 在未开多路径时可能不存在。** `NotFound` 不是采集失败。
+155. **不要 dump `/proc/sys/kernel/random/uuid`。** 每次读取都会变；boot_id 才是稳定的。
+156. **`router_solicitations` 是有符号 i64。** `-1` 表示使用 RFC 默认次数，不要当读取失败。
+157. **`memfd_noexec`：`0` 不限制，`1` 仅 dumpable，`2` 一律禁止。** 旧内核可能不存在。
+158. **空的 macvtap / nvme-generic 表示没有对应硬件。** `tun` / `nvme-fabrics` 是 misc 设备（`class/misc/tun`、`/dev/net/tun`），不是独立 class；未加载才写 note。`PermissionDenied` 仍写 note，不要当成缺失。
+159. **`cpu/modalias` 可能很长。** JSON 保留全文，界面与 HTML 截断前缀。
+160. **`message_cost=0` 表示关闭内核网络 printk 限速。** 不是采集失败。
 
 ## 测试方案
 

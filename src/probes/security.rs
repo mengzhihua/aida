@@ -26,6 +26,8 @@ pub struct SecurityReport {
     pub protected_symlinks: Sample<String>,
     pub protected_fifos: Sample<String>,
     pub protected_regular: Sample<String>,
+    /// 内核支持的 seccomp 动作。不要 dump `actions_logged`。
+    pub seccomp_actions_avail: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -60,6 +62,7 @@ pub fn collect(ctx: &ProbeCtx) -> SecurityReport {
         protected_symlinks: access::read_trimmed(ctx.proc_path("sys/fs/protected_symlinks")),
         protected_fifos: access::read_trimmed(ctx.proc_path("sys/fs/protected_fifos")),
         protected_regular: access::read_trimmed(ctx.proc_path("sys/fs/protected_regular")),
+        seccomp_actions_avail: access::read_trimmed(ctx.proc_path("sys/kernel/seccomp/actions_avail")),
         notes,
     }
 }
@@ -128,6 +131,12 @@ mod tests {
         fs::write(root.join("proc/sys/fs/protected_symlinks"), "1\n").unwrap();
         fs::write(root.join("proc/sys/fs/protected_fifos"), "1\n").unwrap();
         fs::write(root.join("proc/sys/fs/protected_regular"), "2\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/kernel/seccomp")).unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/seccomp/actions_avail"),
+            "kill_process kill_thread trap errno user_notif trace log allow\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -147,6 +156,12 @@ mod tests {
         assert_eq!(r.perf_event_paranoid.value.as_deref(), Some("2"));
         assert_eq!(r.protected_hardlinks.value.as_deref(), Some("1"));
         assert_eq!(r.protected_regular.value.as_deref(), Some("2"));
+        assert!(r
+            .seccomp_actions_avail
+            .value
+            .as_deref()
+            .unwrap_or("")
+            .contains("allow"));
         let _ = fs::remove_dir_all(&root);
     }
 }

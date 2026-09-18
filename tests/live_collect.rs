@@ -71,20 +71,17 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"protocols\""));
     assert!(json.contains("\"nfsd_threads\""));
     assert!(json.contains("\"bdi\""));
-    assert!(
-        !snap.irq.softirqs.is_empty(),
-        "/proc/softirqs 应至少有一行"
-    );
+    assert!(!snap.irq.softirqs.is_empty(), "/proc/softirqs 应至少有一行");
     assert!(
         snap.memory.vmstat.pgfault.value.is_some(),
         "vmstat pgfault 应可读"
     );
+    assert!(!snap.memory.buddy.is_empty(), "buddyinfo 应至少有一个 zone");
     assert!(
-        !snap.memory.buddy.is_empty(),
-        "buddyinfo 应至少有一个 zone"
-    );
-    assert!(
-        snap.net.interfaces.iter().any(|i| i.rx_queues + i.tx_queues > 0)
+        snap.net
+            .interfaces
+            .iter()
+            .any(|i| i.rx_queues + i.tx_queues > 0)
             || snap.net.interfaces.iter().any(|i| i.name == "lo"),
         "网卡应能看到 queues 或至少 lo"
     );
@@ -92,10 +89,7 @@ fn live_snapshot_json_and_html() {
         snap.psi.cpu.is_some() || !snap.psi.notes.is_empty(),
         "PSI 应可读或给出说明"
     );
-    assert!(
-        !snap.irq.lines.is_empty(),
-        "/proc/interrupts 应至少有一行"
-    );
+    assert!(!snap.irq.lines.is_empty(), "/proc/interrupts 应至少有一行");
     assert!(
         snap.software.tainted.value.is_some(),
         "kernel tainted 应可读"
@@ -104,10 +98,7 @@ fn live_snapshot_json_and_html() {
         snap.fs.mounts.iter().any(|m| m.total_bytes.is_some()),
         "至少有一个挂载点能 statvfs"
     );
-    assert!(
-        snap.software.load_1.value.is_some(),
-        "loadavg 应可读"
-    );
+    assert!(snap.software.load_1.value.is_some(), "loadavg 应可读");
     assert!(
         snap.cpu.smt_control.access != aida::access::AccessKind::Error,
         "SMT control 不应是读取失败"
@@ -124,26 +115,14 @@ fn live_snapshot_json_and_html() {
         snap.net.snmp.tcp_in_segs.is_some() || snap.net.snmp.ip_in_receives.is_some(),
         "snmp Tcp/Ip 计数应可读"
     );
-    assert!(
-        snap.net.softnet.cpus >= 1,
-        "softnet_stat 应至少有一行"
-    );
-    assert!(
-        snap.sysctl.pid_max.value.is_some(),
-        "pid_max 应可读"
-    );
-    assert!(
-        snap.sysctl.file_nr_alloc.value.is_some(),
-        "file-nr 应可读"
-    );
+    assert!(snap.net.softnet.cpus >= 1, "softnet_stat 应至少有一行");
+    assert!(snap.sysctl.pid_max.value.is_some(), "pid_max 应可读");
+    assert!(snap.sysctl.file_nr_alloc.value.is_some(), "file-nr 应可读");
     assert!(
         snap.cgroup.controllers.value.is_some() || !snap.cgroup.notes.is_empty(),
         "cgroup v2 应可读或给出说明"
     );
-    assert!(
-        snap.crypto.total >= 1,
-        "/proc/crypto 应至少有一个算法"
-    );
+    assert!(snap.crypto.total >= 1, "/proc/crypto 应至少有一个算法");
     assert!(
         snap.net.tcp_congestion.value.is_some(),
         "tcp_congestion_control 应可读"
@@ -210,6 +189,15 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"ipv6_accept_dad_dev\""));
     assert!(json.contains("\"remoteproc\""));
     assert!(json.contains("\"wakeup_sources\""));
+    assert!(json.contains("\"core_pipe_limit\""));
+    assert!(json.contains("\"ipfrag_high_thresh\""));
+    assert!(json.contains("\"spi_master\""));
+    assert!(json.contains("\"seccomp_actions_avail\""));
+    assert!(json.contains("\"write_wakeup_threshold\""));
+    assert!(json.contains("\"tcp_frto\""));
+    assert!(json.contains("\"ipv6_router_solicitations\""));
+    assert!(json.contains("\"macvtap\""));
+    assert!(json.contains("\"modalias\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -247,18 +235,12 @@ fn live_snapshot_json_and_html() {
         !snap.cgroup.v1_enabled.is_empty() || snap.cgroup.controllers.value.is_some(),
         "cgroup v1 enabled 或 v2 controllers 应至少有一个"
     );
-    assert!(
-        snap.sysctl.dentry_nr.value.is_some(),
-        "dentry-state 应可读"
-    );
+    assert!(snap.sysctl.dentry_nr.value.is_some(), "dentry-state 应可读");
     assert!(
         snap.sysctl.key_users.access != aida::access::AccessKind::Error,
         "key-users 不应是读取失败（无 CONFIG_KEYS 时为 NotFound，不是 0）"
     );
-    assert!(
-        snap.sysctl.pty_max.value.is_some(),
-        "pty/max 应可读"
-    );
+    assert!(snap.sysctl.pty_max.value.is_some(), "pty/max 应可读");
     assert!(
         snap.sysctl.io_uring_disabled.access != aida::access::AccessKind::Error,
         "io_uring_disabled 不应是读取失败"
@@ -289,35 +271,71 @@ fn live_snapshot_json_and_html() {
         "tcp_mem 不应是读取失败（三个页数 token）"
     );
     assert!(
+        snap.sysctl.core_pipe_limit.access != aida::access::AccessKind::Error,
+        "core_pipe_limit 不应是读取失败（0 表示不限制）"
+    );
+    assert!(
+        snap.net.ipfrag_high_thresh.access != aida::access::AccessKind::Error,
+        "ipfrag_high_thresh 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp.retries1.access != aida::access::AccessKind::Error,
+        "tcp_retries1 不应是读取失败"
+    );
+    assert!(
+        snap.cpu.nohz_full.access != aida::access::AccessKind::Error,
+        "nohz_full 不应是读取失败（缺失或空表示无 nohz_full CPU）"
+    );
+    assert!(
+        snap.sysctl.write_wakeup_threshold.access != aida::access::AccessKind::Error,
+        "write_wakeup_threshold 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_frto.access != aida::access::AccessKind::Error,
+        "tcp_frto 不应是读取失败"
+    );
+    assert!(
+        snap.net.ipv6_router_solicitations.access != aida::access::AccessKind::Error,
+        "router_solicitations 不应是读取失败（-1 表示 RFC 默认次数）"
+    );
+    assert!(
+        snap.sysctl.memfd_noexec.access != aida::access::AccessKind::Error,
+        "memfd_noexec 不应是读取失败（旧内核可为 NotFound）"
+    );
+    assert!(
+        snap.cpu.modalias.access != aida::access::AccessKind::Error,
+        "cpu modalias 不应是读取失败（无该文件时为 NotFound）"
+    );
+    assert!(
+        !snap.buses.tun.is_empty()
+            || snap
+                .buses
+                .notes
+                .iter()
+                .any(|n| n.contains("tun") && (n.contains("无") || n.contains("权限"))),
+        "tun 应来自 misc/tun 或 /dev/net/tun；缺失或权限不足才写 note"
+    );
+    assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
         "kexec_loaded 不应是读取失败"
     );
-    assert!(
-        snap.sysctl.boot_id.value.is_some(),
-        "boot_id 应可读"
-    );
+    assert!(snap.sysctl.boot_id.value.is_some(), "boot_id 应可读");
     assert!(
         snap.pm.state.access != aida::access::AccessKind::Error,
         "sys/power/state 不应是读取失败"
     );
-    assert!(
-        !snap.memory.zones.is_empty(),
-        "zoneinfo 应至少有一个 zone"
-    );
-    assert!(
-        !snap.fs.mounts.is_empty(),
-        "mountinfo 应至少有一个挂载点"
-    );
-    assert!(
-        !snap.memory.total_kb.value.is_none(),
-        "MemTotal 应可读"
-    );
+    assert!(!snap.memory.zones.is_empty(), "zoneinfo 应至少有一个 zone");
+    assert!(!snap.fs.mounts.is_empty(), "mountinfo 应至少有一个挂载点");
+    assert!(!snap.memory.total_kb.value.is_none(), "MemTotal 应可读");
     assert!(
         !snap.cpu.vulnerabilities.is_empty(),
         "应至少有 CPU vulnerability 节点"
     );
     assert!(
-        snap.block.devices.iter().any(|d| d.rd_bytes.value.is_some()),
+        snap.block
+            .devices
+            .iter()
+            .any(|d| d.rd_bytes.value.is_some()),
         "diskstats 应能对上至少一个块设备"
     );
     assert!(
@@ -358,15 +376,48 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("fastopen") || html.contains("gpio") || html.contains("nmi"));
     assert!(html.contains("protocols") || html.contains("nfsd") || html.contains("qdisc"));
     assert!(html.contains("somaxconn"));
-    assert!(html.contains("syn/synack") || html.contains("retries2"));
+    assert!(html.contains("syn/synack") || html.contains("retries"));
     assert!(html.contains("maxkeys") || html.contains("watermark") || html.contains("vtcon"));
     assert!(html.contains("shmmax") || html.contains("kexec") || html.contains("protected"));
     assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));
     assert!(html.contains("sched_rt") || html.contains("tcp6") || html.contains("xfrm"));
-    assert!(html.contains("igmp6") || html.contains("printk") || html.contains("binfmt") || html.contains("ieee80211"));
-    assert!(html.contains("byteorder") || html.contains("dentry") || html.contains("key-users") || html.contains("connector"));
-    assert!(html.contains("pty") || html.contains("io_uring") || html.contains("accept_ra") || html.contains("ostype"));
-    assert!(html.contains("tcp_mem") || html.contains("dirty_bytes") || html.contains("addr_gen") || html.contains("remoteproc") || html.contains("wakeup_sources"));
+    assert!(
+        html.contains("igmp6")
+            || html.contains("printk")
+            || html.contains("binfmt")
+            || html.contains("ieee80211")
+    );
+    assert!(
+        html.contains("byteorder")
+            || html.contains("dentry")
+            || html.contains("key-users")
+            || html.contains("connector")
+    );
+    assert!(
+        html.contains("pty")
+            || html.contains("io_uring")
+            || html.contains("accept_ra")
+            || html.contains("ostype")
+    );
+    assert!(
+        html.contains("tcp_mem")
+            || html.contains("dirty_bytes")
+            || html.contains("addr_gen")
+            || html.contains("remoteproc")
+            || html.contains("wakeup_sources")
+    );
+    assert!(
+        html.contains("core_pipe")
+            || html.contains("ipfrag")
+            || html.contains("seccomp")
+            || html.contains("spi_master")
+    );
+    assert!(
+        html.contains("frto")
+            || html.contains("rng_wake")
+            || html.contains("macvtap")
+            || html.contains("modalias")
+    );
     assert!(!html.contains("<script"));
 }
 

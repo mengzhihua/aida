@@ -56,10 +56,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("online", snap.cpu.online.display()),
             (
                 "offline",
-                match (
-                    snap.cpu.offline.access,
-                    snap.cpu.offline.value.as_deref(),
-                ) {
+                match (snap.cpu.offline.access, snap.cpu.offline.value.as_deref()) {
                     (crate::access::AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
                     (crate::access::AccessKind::Ok, _) => "—".into(),
                     _ => snap.cpu.offline.access_label(),
@@ -68,6 +65,24 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("possible", snap.cpu.possible.display()),
             ("present", snap.cpu.present.display()),
             ("kernel_max", snap.cpu.kernel_max.display()),
+            ("enabled", snap.cpu.enabled.display()),
+            (
+                "nohz_full",
+                match (
+                    snap.cpu.nohz_full.access,
+                    snap.cpu.nohz_full.value.as_deref(),
+                ) {
+                    (crate::access::AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
+                    (crate::access::AccessKind::Ok | crate::access::AccessKind::NotFound, _) => {
+                        "—".into()
+                    }
+                    _ => snap.cpu.nohz_full.access_label(),
+                },
+            ),
+            (
+                "modalias",
+                crate::probes::cpu::display_modalias(&snap.cpu.modalias),
+            ),
             ("KVM", snap.kvm.device.display()),
             ("nested", snap.kvm.nested.display()),
             ("microcode", snap.cpu.microcode.display()),
@@ -97,7 +112,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str("</table>");
     }
     if !snap.cpu.freq_policies.is_empty() {
-        html.push_str("<table><tr><th>cpufreq</th><th>driver</th><th>governor</th><th>kHz</th></tr>");
+        html.push_str(
+            "<table><tr><th>cpufreq</th><th>driver</th><th>governor</th><th>kHz</th></tr>",
+        );
         for p in &snap.cpu.freq_policies {
             html.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}-{}</td></tr>",
@@ -315,8 +332,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 z.node,
                 esc(&z.zone),
                 z.free.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
-                z.present.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
-                z.managed.map(|n| n.to_string()).unwrap_or_else(|| "—".into())
+                z.present
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                z.managed
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into())
             ));
         }
         html.push_str("</table>");
@@ -711,6 +732,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("extcon", &snap.buses.extcon),
         ("tee", &snap.buses.tee),
         ("mdio_bus", &snap.buses.mdio_bus),
+        ("spi_master", &snap.buses.spi_master),
+        ("i2c-dev", &snap.buses.i2c_dev),
+        ("nvme-subsystem", &snap.buses.nvme_subsystem),
+        ("w1", &snap.buses.w1),
+        ("macvtap", &snap.buses.macvtap),
+        ("tun", &snap.buses.tun),
+        ("nvme-generic", &snap.buses.nvme_generic),
+        ("nvme-fabrics", &snap.buses.nvme_fabrics),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1010,7 +1039,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {} raw6 {} udplite6 {} igmp6 {} busy_poll {} weight {} notsent {}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries {}/{} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {} raw6 {} udplite6 {} igmp6 {} busy_poll {} weight {} notsent {}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -1045,6 +1074,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp.sack.display(),
         snap.net.tcp.syn_retries.display(),
         snap.net.tcp.synack_retries.display(),
+        snap.net.tcp.retries1.display(),
         snap.net.tcp.retries2.display(),
         snap.net.default_qdisc.display(),
         snap.net.netdev_budget.display(),
@@ -1064,16 +1094,31 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp.notsent_lowat.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">tcp_mem {} udp_mem {} orphans {} dsack {} autocorking {} rps {}</p>",
+        "<p class=\"muted\">tcp_mem {} udp_mem {} orphans {} dsack {} autocorking {} rps {} ipfrag {}/{} early_retrans {} no_pmtu {} fib_mp {}</p>",
         snap.net.tcp_mem.display(),
         snap.net.udp_mem.display(),
         snap.net.tcp_max_orphans.display(),
         snap.net.tcp_dsack.display(),
         snap.net.tcp_autocorking.display(),
-        snap.net.rps_sock_flow_entries.display()
+        snap.net.rps_sock_flow_entries.display(),
+        snap.net.ipfrag_high_thresh.display(),
+        snap.net.ipfrag_low_thresh.display(),
+        snap.net.tcp_early_retrans.display(),
+        snap.net.ip_no_pmtu_disc.display(),
+        snap.net.fib_multipath_hash_policy.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
+        "<p class=\"muted\">frto {} invalid_ratelimit {} min_tso {} pacing_ss {} tstamp_prequeue {} message_cost {} ip6frag_low {}</p>",
+        snap.net.tcp_frto.display(),
+        snap.net.tcp_invalid_ratelimit.display(),
+        snap.net.tcp_min_tso_segs.display(),
+        snap.net.tcp_pacing_ss_ratio.display(),
+        snap.net.netdev_tstamp_prequeue.display(),
+        snap.net.message_cost.display(),
+        snap.net.ip6frag_low_thresh.display()
+    ));
+    html.push_str(&format!(
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1081,6 +1126,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.ipv6_accept_dad.display(),
         snap.net.ipv6_addr_gen_mode.display(),
         snap.net.ip6frag_high_thresh.display(),
+        snap.net.ip6frag_low_thresh.display(),
+        snap.net.ipv6_max_addresses.display(),
+        snap.net.ipv6_accept_ra_defrtr.display(),
+        snap.net.ipv6_router_solicitations.display(),
         snap.net.conntrack_tcp_established.display(),
         snap.net.conntrack_buckets.display(),
         snap.net.tcp_max_tw_buckets.display(),
@@ -1109,6 +1158,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">addr_gen iface {}</p>",
             esc(&snap.net.ipv6_addr_gen_mode_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_accept_ra_defrtr_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ra_defrtr iface {}</p>",
+            esc(&snap.net.ipv6_accept_ra_defrtr_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_router_solicitations_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">router_solicitations iface {}</p>",
+            esc(&snap.net.ipv6_router_solicitations_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -1302,14 +1363,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 let devs = l
                     .devices
                     .iter()
-                    .map(|d| {
-                        format!(
-                            "{} {} {}",
-                            d.name,
-                            d.class.display(),
-                            d.model.display()
-                        )
-                    })
+                    .map(|d| format!("{} {} {}", d.name, d.class.display(), d.model.display()))
                     .collect::<Vec<_>>()
                     .join("; ");
                 html.push_str(&format!(
@@ -1356,7 +1410,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str("</table>");
     }
     if !snap.scsi.devices.is_empty() {
-        html.push_str("<table><tr><th>LUN</th><th>vendor</th><th>model</th><th>type</th><th>状态</th></tr>");
+        html.push_str(
+            "<table><tr><th>LUN</th><th>vendor</th><th>model</th><th>type</th><th>状态</th></tr>",
+        );
         for d in &snap.scsi.devices {
             html.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
@@ -1460,7 +1516,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.fs.nfs_volumes,
         snap.fs.fuse_conns
     ));
-    html.push_str("<table><tr><th>挂载点</th><th>fstype</th><th>源</th><th>kind</th><th>用量</th></tr>");
+    html.push_str(
+        "<table><tr><th>挂载点</th><th>fstype</th><th>源</th><th>kind</th><th>用量</th></tr>",
+    );
     for m in snap.fs.mounts.iter().filter(|m| m.kind != "virtual") {
         let usage = match (m.used_bytes, m.total_bytes) {
             (Some(u), Some(t)) => format!("{} / {}", format_bytes(u), format_bytes(t)),
@@ -1588,11 +1646,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "fs.protected",
                 format!(
-                    "hardlinks {} symlinks {} fifos {} regular {}",
+                    "hardlinks {} symlinks {} fifos {} regular {} seccomp {}",
                     snap.security.protected_hardlinks.display(),
                     snap.security.protected_symlinks.display(),
                     snap.security.protected_fifos.display(),
-                    snap.security.protected_regular.display()
+                    snap.security.protected_regular.display(),
+                    snap.security.seccomp_actions_avail.display()
                 ),
             ),
             (
@@ -1651,7 +1710,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {}",
+                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {} core_pipe {} printk_devkmsg {} delayacct {} acct {} mount_max {} rng_wake {} urandom_reseed {} soft_wd {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
                     snap.sysctl.watchdog_thresh.display(),
@@ -1659,7 +1718,15 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.panic.display(),
                     snap.sysctl.sysrq.display(),
                     snap.sysctl.min_free_kbytes.display(),
-                    snap.sysctl.hung_task_timeout_secs.display()
+                    snap.sysctl.hung_task_timeout_secs.display(),
+                    snap.sysctl.core_pipe_limit.display(),
+                    snap.sysctl.printk_devkmsg.display(),
+                    snap.sysctl.task_delayacct.display(),
+                    snap.sysctl.acct.display(),
+                    snap.sysctl.mount_max.display(),
+                    snap.sysctl.write_wakeup_threshold.display(),
+                    snap.sysctl.urandom_min_reseed_secs.display(),
+                    snap.sysctl.soft_watchdog.display()
                 ),
             ),
             (
@@ -1711,7 +1778,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "ipc",
                 format!(
-                    "shmmax {} shmall {} shmmni {} msgmax {} msgmnb {} msgmni {} mqueue {} sysvipc {}/{}/{}",
+                    "shmmax {} shmall {} shmmni {} msgmax {} msgmnb {} msgmni {} mqueue {} sysvipc {}/{}/{} shm_rmid_forced {}",
                     snap.sysctl.shmmax.display(),
                     snap.sysctl.shmall.display(),
                     snap.sysctl.shmmni.display(),
@@ -1721,7 +1788,8 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.mqueue_queues_max.display(),
                     snap.sysctl.sysvipc_shm,
                     snap.sysctl.sysvipc_sem,
-                    snap.sysctl.sysvipc_msg
+                    snap.sysctl.sysvipc_msg,
+                    snap.sysctl.shm_rmid_forced.display()
                 ),
             ),
             (
@@ -1770,7 +1838,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "vm",
                 format!(
-                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} dirty_expire {}",
+                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} zone_reclaim {} dirty_expire {} dirtytime {} memfd_noexec {}",
                     snap.sysctl.swappiness.display(),
                     snap.sysctl.overcommit_memory.display(),
                     snap.sysctl.overcommit_kbytes.display(),
@@ -1781,7 +1849,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.pipe_user_pages_soft.display(),
                     snap.sysctl.pipe_user_pages_hard.display(),
                     snap.sysctl.compact_unevictable_allowed.display(),
-                    snap.sysctl.dirty_expire_centisecs.display()
+                    snap.sysctl.zone_reclaim_mode.display(),
+                    snap.sysctl.dirty_expire_centisecs.display(),
+                    snap.sysctl.dirtytime_expire_seconds.display(),
+                    snap.sysctl.memfd_noexec.display()
                 ),
             ),
             (
@@ -1935,11 +2006,7 @@ fn html_name_list(
             esc(&names.join(" "))
         ));
     } else if let Some(n) = notes.iter().find(|s| s.contains(path_frag)) {
-        html.push_str(&format!(
-            "<p class=\"warn\">{} {}</p>",
-            esc(label),
-            esc(n)
-        ));
+        html.push_str(&format!("<p class=\"warn\">{} {}</p>", esc(label), esc(n)));
     }
 }
 
