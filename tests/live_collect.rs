@@ -202,6 +202,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"kexec_load_limit_panic\""));
     assert!(json.contains("\"ip_unprivileged_port_start\""));
     assert!(json.contains("\"iscsi_endpoint\""));
+    assert!(json.contains("\"cpuidle_available_governors\""));
+    assert!(json.contains("\"kexec_load_limit_reboot\""));
+    assert!(json.contains("\"tcp_ecn_fallback\""));
+    assert!(json.contains("\"iscsi_flashnode\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -335,6 +339,26 @@ fn live_snapshot_json_and_html() {
         "dad_transmits 不应是读取失败"
     );
     assert!(
+        snap.cpu.cpuidle_available_governors.access != aida::access::AccessKind::Error,
+        "cpuidle available_governors 不应是读取失败（无 cpuidle 时为 NotFound）"
+    );
+    assert!(
+        snap.sysctl.kexec_load_limit_reboot.access != aida::access::AccessKind::Error,
+        "kexec_load_limit_reboot 不应是读取失败（-1 表示不限）"
+    );
+    assert!(
+        snap.sysctl.hung_task_check_interval_secs.access != aida::access::AccessKind::Error,
+        "hung_task_check_interval_secs 不应是读取失败（0 表示沿用 timeout）"
+    );
+    assert!(
+        snap.net.tcp_ecn_fallback.access != aida::access::AccessKind::Error,
+        "tcp_ecn_fallback 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_challenge_ack_limit.access != aida::access::AccessKind::Error,
+        "tcp_challenge_ack_limit 不应是读取失败（INT_MAX 表示不额外收紧）"
+    );
+    assert!(
         !snap.buses.tun.is_empty()
             || snap
                 .buses
@@ -451,6 +475,13 @@ fn live_snapshot_json_and_html() {
             || html.contains("kexec_limit")
             || html.contains("unpriv_port")
             || html.contains("iscsi_endpoint")
+    );
+    assert!(
+        html.contains("available")
+            || html.contains("kexec_reboot")
+            || html.contains("ecn_fb")
+            || html.contains("iscsi_flashnode")
+            || html.contains("challenge_ack")
     );
     assert!(!html.contains("<script"));
 }

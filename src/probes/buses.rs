@@ -51,6 +51,9 @@ pub struct BusesReport {
     pub iscsi_iface: Vec<String>,
     pub iscsi_connection: Vec<String>,
     pub container: Vec<String>,
+    pub iscsi_flashnode: Vec<String>,
+    pub nd: Vec<String>,
+    pub dma_heap: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -386,6 +389,21 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let iscsi_flashnode = list_optional_names(
+        ctx.sys_path("bus/iscsi_flashnode/devices"),
+        8,
+        "iscsi_flashnode",
+        &mut notes,
+        &mut missing,
+    );
+    let nd = list_optional_names(ctx.sys_path("class/nd"), 8, "nd", &mut notes, &mut missing);
+    let dma_heap = list_optional_names(
+        ctx.sys_path("class/dma_heap"),
+        8,
+        "dma_heap",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -435,6 +453,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         iscsi_iface,
         iscsi_connection,
         container,
+        iscsi_flashnode,
+        nd,
+        dma_heap,
         notes,
     }
 }
@@ -955,6 +976,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/iscsi_iface/iface0")).unwrap();
         fs::create_dir_all(root.join("sys/class/iscsi_connection/connection0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/container/devices/ACPI0004:00")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/iscsi_flashnode/devices/flashnode0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/nd/nmem0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/dma_heap/system")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -995,6 +1019,9 @@ mod tests {
         assert_eq!(r.iscsi_iface, vec!["iface0".to_string()]);
         assert_eq!(r.iscsi_connection, vec!["connection0".to_string()]);
         assert_eq!(r.container, vec!["ACPI0004:00".to_string()]);
+        assert_eq!(r.iscsi_flashnode, vec!["flashnode0".to_string()]);
+        assert_eq!(r.nd, vec!["nmem0".to_string()]);
+        assert_eq!(r.dma_heap, vec!["system".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

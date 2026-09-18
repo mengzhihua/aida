@@ -187,6 +187,11 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 165. **`split_lock_mitigate` 在非 x86 上可能不存在。** `NotFound` 不是采集失败。
 166. **空的 iscsi_endpoint / iscsi_iface / iscsi_connection / bus/container 表示没有对应硬件。** `PermissionDenied` 仍写 note，不要当成缺失。
 167. **`dad_transmits` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+168. **`hung_task_check_interval_secs=0` 表示沿用 `hung_task_timeout_secs`。** 不是关闭检测。
+169. **`kexec_load_limit_reboot` 是有符号 i64。** `-1` 表示 reboot 路径不限制 kexec load。
+170. **`max_rcu_stall_to_panic=0` 表示不把 RCU stall 升级为 panic。**
+171. **`tcp_challenge_ack_limit=2147483647`（INT_MAX）是默认上限，表示不额外收紧。** 不要 dump `tcp_fastopen_key`。
+172. **空的 iscsi_flashnode / nd / dma_heap 表示没有对应硬件。** `PermissionDenied` 仍写 note。不 dump `serial-base` 设备名。
 
 ## 测试方案
 

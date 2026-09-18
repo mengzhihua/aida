@@ -589,9 +589,10 @@ impl AidaApp {
             ui,
             "cpuidle",
             &format!(
-                "driver {}  governor {}",
+                "driver {}  governor {}  available {}",
                 self.snap.cpu.cpuidle_driver.display(),
-                self.snap.cpu.cpuidle_governor.display()
+                self.snap.cpu.cpuidle_governor.display(),
+                self.snap.cpu.cpuidle_available_governors.display()
             ),
         );
         if self.snap.cpu.isolated.access == AccessKind::Ok {
@@ -2013,13 +2014,24 @@ impl AidaApp {
             ui,
             "tcp extra",
             &format!(
-                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}",
+                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}",
                 self.snap.net.tcp_orphan_retries.display(),
                 self.snap.net.tcp_rfc1337.display(),
                 self.snap.net.ip_unprivileged_port_start.display(),
                 self.snap.net.bindv6only.display(),
                 self.snap.net.ipfrag_time.display(),
-                self.snap.net.ipv6_dad_transmits.display()
+                self.snap.net.ipv6_dad_transmits.display(),
+                self.snap.net.tcp_ecn_fallback.display(),
+                self.snap.net.ip_nonlocal_bind.display(),
+                self.snap.net.icmp_echo_ignore_all.display(),
+                self.snap.net.ipfrag_max_dist.display(),
+                self.snap.net.tcp_abort_on_overflow.display(),
+                self.snap.net.tcp_no_metrics_save.display(),
+                match self.snap.net.tcp_challenge_ack_limit.value {
+                    Some(2_147_483_647) => "2147483647 不限".into(),
+                    _ => self.snap.net.tcp_challenge_ack_limit.display(),
+                },
+                self.snap.net.ip_dynaddr.display()
             ),
         );
         kv(
@@ -2683,6 +2695,9 @@ impl AidaApp {
             ("iscsi_iface", &self.snap.buses.iscsi_iface),
             ("iscsi_connection", &self.snap.buses.iscsi_connection),
             ("container", &self.snap.buses.container),
+            ("iscsi_flashnode", &self.snap.buses.iscsi_flashnode),
+            ("nd", &self.snap.buses.nd),
+            ("dma_heap", &self.snap.buses.dma_heap),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -2867,7 +2882,7 @@ impl AidaApp {
             ui,
             "nmi/watchdog",
             &format!(
-                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}  wd_mask {}  rcu_stall {}  warn {}  kexec_limit {}  split_lock {}  hung_warn {}",
+                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}  wd_mask {}  rcu_stall {}  warn {}  kexec_limit {}  split_lock {}  hung_warn {}  hung_check {}  hung_interval {}  kexec_reboot {}  rcu_stall_max {}  panic_print {}  io_nmi {}",
                 self.snap.sysctl.nmi_watchdog.display(),
                 self.snap.sysctl.watchdog.display(),
                 self.snap.sysctl.watchdog_thresh.display(),
@@ -2898,7 +2913,22 @@ impl AidaApp {
                     _ => self.snap.sysctl.kexec_load_limit_panic.display(),
                 },
                 self.snap.sysctl.split_lock_mitigate.display(),
-                self.snap.sysctl.hung_task_warnings.display()
+                self.snap.sysctl.hung_task_warnings.display(),
+                self.snap.sysctl.hung_task_check_count.display(),
+                match self.snap.sysctl.hung_task_check_interval_secs.value {
+                    Some(0) => "0 用 timeout".into(),
+                    _ => self.snap.sysctl.hung_task_check_interval_secs.display(),
+                },
+                match self.snap.sysctl.kexec_load_limit_reboot.value {
+                    Some(-1) => "-1 不限".into(),
+                    _ => self.snap.sysctl.kexec_load_limit_reboot.display(),
+                },
+                match self.snap.sysctl.max_rcu_stall_to_panic.value {
+                    Some(0) => "0 不升级".into(),
+                    _ => self.snap.sysctl.max_rcu_stall_to_panic.display(),
+                },
+                self.snap.sysctl.panic_print.display(),
+                self.snap.sysctl.panic_on_io_nmi.display()
             ),
         );
         kv(

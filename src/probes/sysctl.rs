@@ -144,6 +144,16 @@ pub struct SysctlReport {
     pub split_lock_mitigate: Sample<String>,
     /// 可为负；不要当无符号解析。
     pub hung_task_warnings: Sample<i64>,
+    pub hung_task_check_count: Sample<u64>,
+    /// `0` 表示沿用 `hung_task_timeout_secs`。
+    pub hung_task_check_interval_secs: Sample<u64>,
+    /// `-1` 表示不限制 kexec load（reboot 路径）。
+    pub kexec_load_limit_reboot: Sample<i64>,
+    /// `0` 表示不把 RCU stall 升级为 panic。
+    pub max_rcu_stall_to_panic: Sample<u64>,
+    /// panic 附加信息位图，保留原文。
+    pub panic_print: Sample<String>,
+    pub panic_on_io_nmi: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -342,6 +352,18 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         ),
         split_lock_mitigate: access::read_trimmed(ctx.proc_path("sys/kernel/split_lock_mitigate")),
         hung_task_warnings: access::read_i64(ctx.proc_path("sys/kernel/hung_task_warnings")),
+        hung_task_check_count: access::read_u64(ctx.proc_path("sys/kernel/hung_task_check_count")),
+        hung_task_check_interval_secs: access::read_u64(
+            ctx.proc_path("sys/kernel/hung_task_check_interval_secs"),
+        ),
+        kexec_load_limit_reboot: access::read_i64(
+            ctx.proc_path("sys/kernel/kexec_load_limit_reboot"),
+        ),
+        max_rcu_stall_to_panic: access::read_u64(
+            ctx.proc_path("sys/kernel/max_rcu_stall_to_panic"),
+        ),
+        panic_print: access::read_trimmed(ctx.proc_path("sys/kernel/panic_print")),
+        panic_on_io_nmi: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_io_nmi")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -616,6 +638,20 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/split_lock_mitigate"), "1\n").unwrap();
         fs::write(root.join("proc/sys/kernel/hung_task_warnings"), "10\n").unwrap();
         fs::write(
+            root.join("proc/sys/kernel/hung_task_check_count"),
+            "4194304\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/hung_task_check_interval_secs"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/kernel/kexec_load_limit_reboot"), "-1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/max_rcu_stall_to_panic"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/panic_print"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/panic_on_io_nmi"), "0\n").unwrap();
+        fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
         )
@@ -718,6 +754,12 @@ mod tests {
         assert_eq!(r.kexec_load_limit_panic.value, Some(-1));
         assert_eq!(r.split_lock_mitigate.value.as_deref(), Some("1"));
         assert_eq!(r.hung_task_warnings.value, Some(10));
+        assert_eq!(r.hung_task_check_count.value, Some(4_194_304));
+        assert_eq!(r.hung_task_check_interval_secs.value, Some(0));
+        assert_eq!(r.kexec_load_limit_reboot.value, Some(-1));
+        assert_eq!(r.max_rcu_stall_to_panic.value, Some(0));
+        assert_eq!(r.panic_print.value.as_deref(), Some("0"));
+        assert_eq!(r.panic_on_io_nmi.value.as_deref(), Some("0"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
