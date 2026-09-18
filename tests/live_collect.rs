@@ -214,6 +214,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"tcp_early_demux\""));
     assert!(json.contains("\"ipv6_accept_ra_pinfo\""));
     assert!(json.contains("\"rpmsg\""));
+    assert!(json.contains("\"softlockup_all_cpu_backtrace\""));
+    assert!(json.contains("\"tcp_base_mss\""));
+    assert!(json.contains("\"ipv6_enhanced_dad\""));
+    assert!(json.contains("\"scsi_disk\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -391,6 +395,18 @@ fn live_snapshot_json_and_html() {
         "accept_ra_pinfo 不应是读取失败"
     );
     assert!(
+        snap.sysctl.softlockup_all_cpu_backtrace.access != aida::access::AccessKind::Error,
+        "softlockup_all_cpu_backtrace 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_base_mss.access != aida::access::AccessKind::Error,
+        "tcp_base_mss 不应是读取失败"
+    );
+    assert!(
+        snap.net.ipv6_enhanced_dad.access != aida::access::AccessKind::Error,
+        "enhanced_dad 不应是读取失败"
+    );
+    assert!(
         snap.sysctl.sched_deadline_period_max_us.access != aida::access::AccessKind::Error,
         "sched_deadline_period_max_us 不应是读取失败"
     );
@@ -532,6 +548,13 @@ fn live_snapshot_json_and_html() {
             || html.contains("rpmsg")
             || html.contains("ra_pinfo")
             || html.contains("hardlockup_bt")
+    );
+    assert!(
+        html.contains("softlockup_bt")
+            || html.contains("base_mss")
+            || html.contains("scsi_disk")
+            || html.contains("enhanced_dad")
+            || html.contains("extfrag")
     );
     assert!(!html.contains("<script"));
 }

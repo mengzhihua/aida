@@ -159,6 +159,18 @@ pub struct NetReport {
     pub ipv6_accept_ra_pinfo: Sample<String>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_pinfo_dev: Vec<String>,
+    /// `0` 表示不因 TFO 黑洞而关闭 fastopen。
+    pub tcp_fastopen_blackhole_timeout_sec: Sample<u64>,
+    pub tcp_base_mss: Sample<u64>,
+    pub tcp_min_snd_mss: Sample<u64>,
+    pub tcp_reordering: Sample<u64>,
+    pub tcp_recovery: Sample<u64>,
+    pub ipv6_enhanced_dad: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_enhanced_dad_dev: Vec<String>,
+    pub ipv6_auto_flowlabels: Sample<String>,
+    pub icmp_msgs_per_sec: Sample<u64>,
+    pub icmp_msgs_burst: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -528,6 +540,23 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_ra_pinfo",
         ipv6_accept_ra_pinfo.value.as_deref(),
     );
+    let tcp_fastopen_blackhole_timeout_sec =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_fastopen_blackhole_timeout_sec"));
+    let tcp_base_mss = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_base_mss"));
+    let tcp_min_snd_mss = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_min_snd_mss"));
+    let tcp_reordering = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_reordering"));
+    let tcp_recovery = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_recovery"));
+    let ipv6_enhanced_dad =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/enhanced_dad"));
+    let ipv6_enhanced_dad_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "enhanced_dad",
+        ipv6_enhanced_dad.value.as_deref(),
+    );
+    let ipv6_auto_flowlabels = access::read_trimmed(ctx.proc_path("sys/net/ipv6/auto_flowlabels"));
+    let icmp_msgs_per_sec = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_msgs_per_sec"));
+    let icmp_msgs_burst = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_msgs_burst"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -674,6 +703,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_force_mld_version,
                 ipv6_accept_ra_pinfo,
                 ipv6_accept_ra_pinfo_dev,
+                tcp_fastopen_blackhole_timeout_sec,
+                tcp_base_mss,
+                tcp_min_snd_mss,
+                tcp_reordering,
+                tcp_recovery,
+                ipv6_enhanced_dad,
+                ipv6_enhanced_dad_dev,
+                ipv6_auto_flowlabels,
+                icmp_msgs_per_sec,
+                icmp_msgs_burst,
                 notes,
             };
         }
@@ -928,6 +967,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_force_mld_version,
         ipv6_accept_ra_pinfo,
         ipv6_accept_ra_pinfo_dev,
+        tcp_fastopen_blackhole_timeout_sec,
+        tcp_base_mss,
+        tcp_min_snd_mss,
+        tcp_reordering,
+        tcp_recovery,
+        ipv6_enhanced_dad,
+        ipv6_enhanced_dad_dev,
+        ipv6_auto_flowlabels,
+        icmp_msgs_per_sec,
+        icmp_msgs_burst,
         notes,
     }
 }
@@ -1793,6 +1842,19 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/tcp_fastopen_blackhole_timeout_sec"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_base_mss"), "1024\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_min_snd_mss"), "48\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_reordering"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_recovery"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/enhanced_dad"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/auto_flowlabels"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_msgs_per_sec"), "1000\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_msgs_burst"), "50\n").unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1913,6 +1975,15 @@ mod tests {
         assert_eq!(r.tcp_app_win.value, Some(31));
         assert_eq!(r.ipv6_force_mld_version.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_ra_pinfo.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_fastopen_blackhole_timeout_sec.value, Some(0));
+        assert_eq!(r.tcp_base_mss.value, Some(1024));
+        assert_eq!(r.tcp_min_snd_mss.value, Some(48));
+        assert_eq!(r.tcp_reordering.value, Some(3));
+        assert_eq!(r.tcp_recovery.value, Some(1));
+        assert_eq!(r.ipv6_enhanced_dad.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_auto_flowlabels.value.as_deref(), Some("1"));
+        assert_eq!(r.icmp_msgs_per_sec.value, Some(1000));
+        assert_eq!(r.icmp_msgs_burst.value, Some(50));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -1979,6 +2050,8 @@ mod tests {
             "0\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/enhanced_dad"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/enhanced_dad"), "0\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2045,6 +2118,12 @@ mod tests {
             r.ipv6_accept_ra_pinfo_dev.iter().any(|s| s == "lo:0"),
             "lo accept_ra_pinfo=0 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_pinfo_dev
+        );
+        assert_eq!(r.ipv6_enhanced_dad.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_enhanced_dad_dev.iter().any(|s| s == "lo:0"),
+            "lo enhanced_dad=0 must differ from conf/all: {:?}",
+            r.ipv6_enhanced_dad_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

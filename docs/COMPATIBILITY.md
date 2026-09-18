@@ -203,6 +203,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 181. **`core_sort_vma=0` 表示 core dump VMA 按插入顺序。** `1` 按地址排序。
 182. **`min_slab_ratio` / `min_unmapped_ratio` 是 zone reclaim 百分比阈值。** 不是采集失败。
 183. **GUI `refresh_live` 必须更新 `buses.devcoredump`。** 这是设备崩溃后才出现、读完或超时即消失的瞬时 class；不要为此重扫整份 buses。不更新会让界面和后续导出停在启动清单。
+184. **空的 scsi_disk / scsi_tape / graphics 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+185. **`enhanced_dad` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+186. **`tcp_fastopen_blackhole_timeout_sec=0` 表示不因 TFO 黑洞关闭 fastopen。** 不要 dump `tcp_fastopen_key`。
+187. **`stat_interval` 是 vmstat 更新间隔（秒）。** 不是采集失败。
 
 ## 测试方案
 
