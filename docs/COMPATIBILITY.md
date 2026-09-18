@@ -207,6 +207,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 185. **`enhanced_dad` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 186. **`tcp_fastopen_blackhole_timeout_sec=0` 表示不因 TFO 黑洞关闭 fastopen。** 不要 dump `tcp_fastopen_key`。
 187. **`stat_interval` 是 vmstat 更新间隔（秒）。** 不是采集失败。
+188. **空的 cec / media / nbd 表示没有对应硬件。** `PermissionDenied` 仍写 note。不要把 `class/media` 当成 V4L（那是 `video4linux`）。
+189. **`accept_ra_mtu` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+190. **`printk_delay=0` 表示 printk 后不加毫秒延迟。** 不是采集失败。
+191. **`hugetlb_optimize_vmemmap=0` 表示不压缩 hugetlb 页的 vmemmap。** `1` 才优化。
+192. **`tcp_max_reordering` 是允许的乱序上限。** `tcp_reordering` 是初始/当前度量，两者不要混。
+193. **`udp_early_demux` 与 `tcp_early_demux` / `ip_early_demux` 成对。** `1` 表示开启 UDP 早分流。
+194. **不要 dump `vm.mmap_rnd_bits` / `mmap_rnd_compat_bits`。** 非 root 常为 `PermissionDenied`，属于 ASLR 熵配置而不是普通状态。
 
 ## 测试方案
 
