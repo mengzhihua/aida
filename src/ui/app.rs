@@ -184,11 +184,7 @@ impl AidaApp {
         }
         for z in &self.snap.rapl.zones {
             if let Some(w) = z.power_w {
-                let label = z
-                    .label
-                    .value
-                    .clone()
-                    .unwrap_or_else(|| z.name.clone());
+                let label = z.label.value.clone().unwrap_or_else(|| z.name.clone());
                 push_hist(self.rapl_hist.entry(label).or_default(), t, w);
             }
         }
@@ -265,7 +261,12 @@ impl eframe::App for AidaApp {
                     Nav::Sensors,
                     tr(cjk, "传感器", "Sensors"),
                 );
-                nav_btn(ui, &mut self.nav, Nav::Power, tr(cjk, "电源 / 电池", "Power"));
+                nav_btn(
+                    ui,
+                    &mut self.nav,
+                    Nav::Power,
+                    tr(cjk, "电源 / 电池", "Power"),
+                );
                 nav_btn(
                     ui,
                     &mut self.nav,
@@ -409,7 +410,10 @@ impl AidaApp {
             kv(
                 ui,
                 self.t("内存", "Memory"),
-                &format!("{}  (avail {avail})", crate::export::format_bytes(kb * 1024)),
+                &format!(
+                    "{}  (avail {avail})",
+                    crate::export::format_bytes(kb * 1024)
+                ),
             );
         }
         kv(
@@ -576,6 +580,11 @@ impl AidaApp {
                 _ => self.snap.cpu.nohz_full.access_label(),
             },
         );
+        kv(
+            ui,
+            "modalias",
+            &crate::probes::cpu::display_modalias(&self.snap.cpu.modalias),
+        );
         if self.snap.cpu.isolated.access == AccessKind::Ok {
             kv(
                 ui,
@@ -596,7 +605,12 @@ impl AidaApp {
                 .height(140.0)
                 .legend(egui_plot::Legend::default())
                 .show(ui, |plot| {
-                    let pts: PlotPoints = self.cpu_hist.iter().copied().map(|p| [p[0], p[1]]).collect();
+                    let pts: PlotPoints = self
+                        .cpu_hist
+                        .iter()
+                        .copied()
+                        .map(|p| [p[0], p[1]])
+                        .collect();
                     plot.line(Line::new(pts).name("%"));
                 });
         }
@@ -714,7 +728,11 @@ impl AidaApp {
                 );
             }
             if self.snap.cpu.schedstat_cpus > 0 {
-                kv(ui, "schedstat cpus", &self.snap.cpu.schedstat_cpus.to_string());
+                kv(
+                    ui,
+                    "schedstat cpus",
+                    &self.snap.cpu.schedstat_cpus.to_string(),
+                );
             }
         });
     }
@@ -749,7 +767,11 @@ impl AidaApp {
         kv(
             ui,
             "Swap",
-            &format!("{} / {}", kb_disp(&m.swap_total_kb), kb_disp(&m.swap_free_kb)),
+            &format!(
+                "{} / {}",
+                kb_disp(&m.swap_total_kb),
+                kb_disp(&m.swap_free_kb)
+            ),
         );
         kv(
             ui,
@@ -1400,26 +1422,18 @@ impl AidaApp {
                         .unwrap_or_else(|| b.size_bytes.access_label()),
                 );
                 ui.label(b.model.display());
-                ui.label(
-                    b.rd_bps
-                        .map(crate::export::format_bps)
-                        .unwrap_or_else(|| {
-                            b.rd_bytes
-                                .value
-                                .map(crate::export::format_bytes)
-                                .unwrap_or_else(|| b.rd_bytes.access_label())
-                        }),
-                );
-                ui.label(
-                    b.wr_bps
-                        .map(crate::export::format_bps)
-                        .unwrap_or_else(|| {
-                            b.wr_bytes
-                                .value
-                                .map(crate::export::format_bytes)
-                                .unwrap_or_else(|| b.wr_bytes.access_label())
-                        }),
-                );
+                ui.label(b.rd_bps.map(crate::export::format_bps).unwrap_or_else(|| {
+                    b.rd_bytes
+                        .value
+                        .map(crate::export::format_bytes)
+                        .unwrap_or_else(|| b.rd_bytes.access_label())
+                }));
+                ui.label(b.wr_bps.map(crate::export::format_bps).unwrap_or_else(|| {
+                    b.wr_bytes
+                        .value
+                        .map(crate::export::format_bytes)
+                        .unwrap_or_else(|| b.wr_bytes.access_label())
+                }));
                 ui.end_row();
             }
         });
@@ -1763,7 +1777,7 @@ impl AidaApp {
                 ss.tcp_tw
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()),
-                    ss.udp_inuse
+                ss.udp_inuse
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into())
             ),
@@ -1786,8 +1800,12 @@ impl AidaApp {
                 sn.tcp_retrans
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()),
-                sn.udp_in.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
-                sn.udp_out.map(|v| v.to_string()).unwrap_or_else(|| "—".into())
+                sn.udp_in
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                sn.udp_out
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into())
             ),
         );
         kv(
@@ -1821,14 +1839,18 @@ impl AidaApp {
             "TcpExt",
             &format!(
                 "TW {}  listen {}/{}  timeout {}  octets {}/{}",
-                te.timewait.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                te.timewait
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
                 te.listen_overflows
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()),
                 te.listen_drops
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "—".into()),
-                te.timeouts.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                te.timeouts
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
                 te.in_octets
                     .map(crate::export::format_bytes)
                     .unwrap_or_else(|| "—".into()),
@@ -1843,8 +1865,12 @@ impl AidaApp {
             "IPv6",
             &format!(
                 "in {}  out {}  octets {}/{}  TCP6 {} UDP6 {}",
-                s6.in_receives.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
-                s6.out_requests.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+                s6.in_receives
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                s6.out_requests
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
                 s6.in_octets
                     .map(crate::export::format_bytes)
                     .unwrap_or_else(|| "—".into()),
@@ -1961,9 +1987,22 @@ impl AidaApp {
         );
         kv(
             ui,
+            "tcp tso / frto",
+            &format!(
+                "frto {}  invalid_ratelimit {}  min_tso {}  pacing_ss {}  tstamp_prequeue {}  message_cost {}",
+                self.snap.net.tcp_frto.display(),
+                self.snap.net.tcp_invalid_ratelimit.display(),
+                self.snap.net.tcp_min_tso_segs.display(),
+                self.snap.net.tcp_pacing_ss_ratio.display(),
+                self.snap.net.netdev_tstamp_prequeue.display(),
+                self.snap.net.message_cost.display()
+            ),
+        );
+        kv(
+            ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}  max_addrs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -1981,7 +2020,10 @@ impl AidaApp {
                     _ => self.snap.net.ipv6_addr_gen_mode.display(),
                 },
                 self.snap.net.ip6frag_high_thresh.display(),
+                self.snap.net.ip6frag_low_thresh.display(),
                 self.snap.net.ipv6_max_addresses.display(),
+                self.snap.net.ipv6_accept_ra_defrtr.display(),
+                self.snap.net.ipv6_router_solicitations.display(),
                 self.snap.net.rps_sock_flow_entries.display(),
                 self.snap.net.fib_multipath_hash_policy.display(),
                 self.snap.net.igmp_ifaces,
@@ -2004,7 +2046,11 @@ impl AidaApp {
             ),
         );
         if !self.snap.net.rp_filter_dev.is_empty() {
-            kv(ui, "rp_filter iface", &self.snap.net.rp_filter_dev.join("  "));
+            kv(
+                ui,
+                "rp_filter iface",
+                &self.snap.net.rp_filter_dev.join("  "),
+            );
         }
         if !self.snap.net.ipv6_use_tempaddr_dev.is_empty() {
             kv(
@@ -2014,13 +2060,31 @@ impl AidaApp {
             );
         }
         if !self.snap.net.ipv6_accept_dad_dev.is_empty() {
-            kv(ui, "accept_dad iface", &self.snap.net.ipv6_accept_dad_dev.join("  "));
+            kv(
+                ui,
+                "accept_dad iface",
+                &self.snap.net.ipv6_accept_dad_dev.join("  "),
+            );
         }
         if !self.snap.net.ipv6_addr_gen_mode_dev.is_empty() {
             kv(
                 ui,
                 "addr_gen iface",
                 &self.snap.net.ipv6_addr_gen_mode_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_accept_ra_defrtr_dev.is_empty() {
+            kv(
+                ui,
+                "ra_defrtr iface",
+                &self.snap.net.ipv6_accept_ra_defrtr_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_router_solicitations_dev.is_empty() {
+            kv(
+                ui,
+                "router_solicitations iface",
+                &self.snap.net.ipv6_router_solicitations_dev.join("  "),
             );
         }
         kv(
@@ -2082,11 +2146,7 @@ impl AidaApp {
             kv(
                 ui,
                 &format!("bond {}", b.name),
-                &format!(
-                    "mode {}  slaves {}",
-                    b.mode.display(),
-                    b.slaves.display()
-                ),
+                &format!("mode {}  slaves {}", b.mode.display(), b.slaves.display()),
             );
         }
     }
@@ -2265,11 +2325,7 @@ impl AidaApp {
             ui.weak(n);
         }
         for g in &self.snap.iommu.groups {
-            kv(
-                ui,
-                &format!("group {}", g.id),
-                &g.devices.join(" "),
-            );
+            kv(ui, &format!("group {}", g.id), &g.devices.join(" "));
         }
     }
 
@@ -2288,7 +2344,7 @@ impl AidaApp {
                 self.snap.platform.msr_devices
             ),
         );
-                if !self.snap.platform.platform_devices.is_empty() {
+        if !self.snap.platform.platform_devices.is_empty() {
             kv(
                 ui,
                 "platform",
@@ -2304,7 +2360,11 @@ impl AidaApp {
             kv(ui, "workqueue", &self.snap.platform.workqueues.join(" "));
         }
         if !self.snap.platform.event_sources.is_empty() {
-            kv(ui, "perf events", &self.snap.platform.event_sources.join(" "));
+            kv(
+                ui,
+                "perf events",
+                &self.snap.platform.event_sources.join(" "),
+            );
         }
         for v in &self.snap.platform.vtconsoles {
             kv(
@@ -2482,11 +2542,7 @@ impl AidaApp {
             );
         }
         for mei in &self.snap.buses.mei {
-            kv(
-                ui,
-                &format!("MEI {}", mei.name),
-                &mei.fw_status.display(),
-            );
+            kv(ui, &format!("MEI {}", mei.name), &mei.fw_status.display());
         }
         if !self.snap.buses.serial.is_empty() || !self.snap.buses.tty_drivers.is_empty() {
             ui.separator();
@@ -2530,7 +2586,12 @@ impl AidaApp {
             kv(
                 ui,
                 &g.name,
-                &format!("{}  ngpio {}  base {}", g.label.display(), g.ngpio.display(), g.base.display()),
+                &format!(
+                    "{}  ngpio {}  base {}",
+                    g.label.display(),
+                    g.ngpio.display(),
+                    g.base.display()
+                ),
             );
         }
         for m in &self.snap.buses.mtd {
@@ -2583,6 +2644,10 @@ impl AidaApp {
             ("i2c-dev", &self.snap.buses.i2c_dev),
             ("nvme-subsystem", &self.snap.buses.nvme_subsystem),
             ("w1", &self.snap.buses.w1),
+            ("macvtap", &self.snap.buses.macvtap),
+            ("tun", &self.snap.buses.tun),
+            ("nvme-generic", &self.snap.buses.nvme_generic),
+            ("nvme-fabrics", &self.snap.buses.nvme_fabrics),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -2637,7 +2702,11 @@ impl AidaApp {
         );
         kv(ui, "LSM", &self.snap.software.lsm.display());
         if self.snap.software.selinux_enforce.access == AccessKind::Ok {
-            kv(ui, "SELinux enforce", &self.snap.software.selinux_enforce.display());
+            kv(
+                ui,
+                "SELinux enforce",
+                &self.snap.software.selinux_enforce.display(),
+            );
         }
         kv(ui, "lockdown", &self.snap.security.lockdown.display());
         kv(
@@ -2679,9 +2748,7 @@ impl AidaApp {
             "crypto",
             &format!(
                 "{} algs ({} internal, {} selftest≠passed)",
-                self.snap.crypto.total,
-                self.snap.crypto.internal,
-                self.snap.crypto.failed_selftest
+                self.snap.crypto.total, self.snap.crypto.internal, self.snap.crypto.failed_selftest
             ),
         );
         if !self.snap.crypto.types.is_empty() {
@@ -2721,20 +2788,14 @@ impl AidaApp {
                         format!(
                             "{}:{}",
                             n.kind,
-                            n.inode
-                                .map(|i| i.to_string())
-                                .unwrap_or_else(|| "—".into())
+                            n.inode.map(|i| i.to_string()).unwrap_or_else(|| "—".into())
                         )
                     })
                     .collect::<Vec<_>>()
                     .join("  "),
             );
         }
-        kv(
-            ui,
-            "max_user_namespaces",
-            &self.snap.ns.max_user.display(),
-        );
+        kv(ui, "max_user_namespaces", &self.snap.ns.max_user.display());
         kv(ui, "entropy", &self.snap.software.entropy_avail.display());
         kv(ui, "boot_id", &self.snap.sysctl.boot_id.display());
         kv(ui, "machine-id", &self.snap.software.machine_id.display());
@@ -2771,7 +2832,7 @@ impl AidaApp {
             ui,
             "nmi/watchdog",
             &format!(
-                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}",
+                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}",
                 self.snap.sysctl.nmi_watchdog.display(),
                 self.snap.sysctl.watchdog.display(),
                 self.snap.sysctl.watchdog_thresh.display(),
@@ -2787,7 +2848,10 @@ impl AidaApp {
                 self.snap.sysctl.printk_devkmsg.display(),
                 self.snap.sysctl.task_delayacct.display(),
                 self.snap.sysctl.acct.display(),
-                self.snap.sysctl.mount_max.display()
+                self.snap.sysctl.mount_max.display(),
+                self.snap.sysctl.write_wakeup_threshold.display(),
+                self.snap.sysctl.urandom_min_reseed_secs.display(),
+                self.snap.sysctl.soft_watchdog.display()
             ),
         );
         kv(
@@ -2873,7 +2937,7 @@ impl AidaApp {
             ui,
             "ipc",
             &format!(
-                "shmmax {}  shmall {}  shmmni {}  msgmax {}  msgmnb {}  msgmni {}  sem {}  mqueue {}  sysvipc shm/sem/msg {}/{}/{}",
+                "shmmax {}  shmall {}  shmmni {}  msgmax {}  msgmnb {}  msgmni {}  sem {}  mqueue {}  sysvipc shm/sem/msg {}/{}/{}  shm_rmid_forced {}",
                 self.snap.sysctl.shmmax.display(),
                 self.snap.sysctl.shmall.display(),
                 self.snap.sysctl.shmmni.display(),
@@ -2884,7 +2948,8 @@ impl AidaApp {
                 self.snap.sysctl.mqueue_queues_max.display(),
                 self.snap.sysctl.sysvipc_shm,
                 self.snap.sysctl.sysvipc_sem,
-                self.snap.sysctl.sysvipc_msg
+                self.snap.sysctl.sysvipc_msg,
+                self.snap.sysctl.shm_rmid_forced.display()
             ),
         );
         kv(
@@ -2917,7 +2982,7 @@ impl AidaApp {
             ui,
             "vm",
             &format!(
-                "swappiness {}  overcommit {}  overcommit_kbytes {}  dirty {}/{}  dirty_bytes {}/{}  watermark {}  boost {}  pipe_pages {}/{}  compact_unevict {}  zone_reclaim {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}",
+                "swappiness {}  overcommit {}  overcommit_kbytes {}  dirty {}/{}  dirty_bytes {}/{}  watermark {}  boost {}  pipe_pages {}/{}  compact_unevict {}  zone_reclaim {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}  dirtytime {}  memfd_noexec {}",
                 self.snap.sysctl.swappiness.display(),
                 self.snap.sysctl.overcommit_memory.display(),
                 self.snap.sysctl.overcommit_kbytes.display(),
@@ -2934,7 +2999,9 @@ impl AidaApp {
                 self.snap.sysctl.dirty_expire_centisecs.display(),
                 self.snap.sysctl.dirty_writeback_centisecs.display(),
                 self.snap.sysctl.page_cluster.display(),
-                self.snap.sysctl.admin_reserve_kbytes.display()
+                self.snap.sysctl.admin_reserve_kbytes.display(),
+                self.snap.sysctl.dirtytime_expire_seconds.display(),
+                self.snap.sysctl.memfd_noexec.display()
             ),
         );
         kv(ui, "ASLR", &self.snap.sysctl.aslr.display());
@@ -3024,14 +3091,22 @@ impl AidaApp {
             kv(
                 ui,
                 "PSI memory",
-                &format!("some {:.2}  full {:.2}", mem.some.avg10, mem.full.as_ref().map(|f| f.avg10).unwrap_or(0.0)),
+                &format!(
+                    "some {:.2}  full {:.2}",
+                    mem.some.avg10,
+                    mem.full.as_ref().map(|f| f.avg10).unwrap_or(0.0)
+                ),
             );
         }
         if let Some(io) = &self.snap.psi.io {
             kv(
                 ui,
                 "PSI io",
-                &format!("some {:.2}  full {:.2}", io.some.avg10, io.full.as_ref().map(|f| f.avg10).unwrap_or(0.0)),
+                &format!(
+                    "some {:.2}  full {:.2}",
+                    io.some.avg10,
+                    io.full.as_ref().map(|f| f.avg10).unwrap_or(0.0)
+                ),
             );
         }
         for n in &self.snap.psi.notes {
@@ -3107,11 +3182,7 @@ impl AidaApp {
                     kv(
                         ui,
                         &s.name,
-                        &format!(
-                            "×{}  {}",
-                            s.count,
-                            crate::export::format_bytes(s.size)
-                        ),
+                        &format!("×{}  {}", s.count, crate::export::format_bytes(s.size)),
                     );
                 }
             });
@@ -3147,9 +3218,17 @@ impl AidaApp {
                 self.snap.firmware.acpi_tables.join(" ")
             },
         );
-        kv(ui, "ACPI pm_profile", &self.snap.firmware.acpi_pm_profile.display());
+        kv(
+            ui,
+            "ACPI pm_profile",
+            &self.snap.firmware.acpi_pm_profile.display(),
+        );
         kv(ui, "pstore", &self.snap.firmware.pstore_files.to_string());
-        kv(ui, "firmware timeout", &self.snap.firmware.firmware_timeout.display());
+        kv(
+            ui,
+            "firmware timeout",
+            &self.snap.firmware.firmware_timeout.display(),
+        );
         kv(ui, "memmap", &self.snap.firmware.memmap_entries.to_string());
         if self.snap.firmware.dt_model.access == AccessKind::Ok {
             kv(ui, "device-tree", &self.snap.firmware.dt_model.display());
@@ -3159,11 +3238,7 @@ impl AidaApp {
             kv(
                 ui,
                 &format!("TPM {}", t.name),
-                &format!(
-                    "v{}  {}",
-                    t.version_major.display(),
-                    t.pcr_banks.join(",")
-                ),
+                &format!("v{}  {}", t.version_major.display(), t.pcr_banks.join(",")),
             );
         }
         for n in &self.snap.firmware.notes {
