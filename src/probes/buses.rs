@@ -58,6 +58,8 @@ pub struct BusesReport {
     pub devfreq: Vec<String>,
     pub fpga: Vec<String>,
     pub gnss: Vec<String>,
+    pub rpmsg: Vec<String>,
+    pub devcoredump: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -438,6 +440,20 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let rpmsg = list_optional_names(
+        ctx.sys_path("class/rpmsg"),
+        8,
+        "rpmsg",
+        &mut notes,
+        &mut missing,
+    );
+    let devcoredump = list_optional_names(
+        ctx.sys_path("class/devcoredump"),
+        8,
+        "devcoredump",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -494,6 +510,8 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         devfreq,
         fpga,
         gnss,
+        rpmsg,
+        devcoredump,
         notes,
     }
 }
@@ -1061,6 +1079,8 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/devfreq/devfreq0")).unwrap();
         fs::create_dir_all(root.join("sys/class/fpga/fpga0")).unwrap();
         fs::create_dir_all(root.join("sys/class/gnss/gnss0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/rpmsg/rpmsg0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/devcoredump/devcd0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1108,6 +1128,8 @@ mod tests {
         assert_eq!(r.devfreq, vec!["devfreq0".to_string()]);
         assert_eq!(r.fpga, vec!["fpga0".to_string()]);
         assert_eq!(r.gnss, vec!["gnss0".to_string()]);
+        assert_eq!(r.rpmsg, vec!["rpmsg0".to_string()]);
+        assert_eq!(r.devcoredump, vec!["devcd0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

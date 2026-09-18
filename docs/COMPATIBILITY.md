@@ -196,6 +196,12 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 174. **空的 cxl / devfreq / fpga / gnss 表示没有对应硬件。** `PermissionDenied` 仍写 note。
 175. **`ndisc_notify` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 176. **不要读 `compact_memory`。** 那是一次性触发器，不是状态。
+177. **空的 rpmsg / devcoredump 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+178. **`accept_ra_pinfo` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+179. **`print-fatal-signals` 路径带连字符。** 不要写成 `print_fatal_signals`。
+180. **`bpf_stats_enabled=0` 表示不采集 BPF 运行统计。** 不是采集失败。
+181. **`core_sort_vma=0` 表示 core dump VMA 按插入顺序。** `1` 按地址排序。
+182. **`min_slab_ratio` / `min_unmapped_ratio` 是 zone reclaim 百分比阈值。** 不是采集失败。
 
 ## 测试方案
 
