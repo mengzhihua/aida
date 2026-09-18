@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十一轮** 补齐内核加固（lockdown/Yama/kptr/dmesg/FIPS）、`/proc/crypto`、命名空间、conntrack/TCP 拥塞/TcpExt、SCSI LUN、loop backing_file 和串口 ttyS。
+**第十二轮** 补齐睡眠/PM、IPv6 snmp6、net.core、aio/inotify、boot_id/machine-id、DirectMap/THP 细节、ioports 和 misc。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -12,16 +12,16 @@
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；TcpExt |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6；conntrack；net.core |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
-| 内存 | meminfo + hugepages + THP + buddyinfo + zoneinfo + vmstat + KSM + zswap |
+| 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
-| EDAC / RAPL / 电源 / 声卡 | 对应 sysfs；无节点时说明 |
-| 固件 | EFI / Secure Boot / ACPI 表名 / TPM / hwrng |
+| EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
+| 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；modules；clocksource + RTC + PTP |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts+affinity、tainted、LSM、file-nr、cgroup v2、lockdown/kptr |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、lockdown/kptr、file-nr、aio/inotify、boot_id |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm） |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
 | 传感器告警 | hwmon 阈值，越限写 JSONL |
@@ -49,7 +49,7 @@
    topology/idle  /dmi/id      /hwmon      ioctl       class 03    queues
                                   │
                                   ├── virtio / KVM / RAPL / PTP / buddyinfo / zoneinfo / vmstat / KSM / zswap
-                                  ├── input / audio / power / firmware / EDAC / TPM / sysctl / cgroup / security / crypto / ns
+                                  ├── input / audio / power / firmware / EDAC / TPM / sysctl / cgroup / security / crypto / ns / pm
                                   ├── memory + iomem + modules + clocksource + PSI/IRQ / zram
                                   └── fs: mountinfo / swaps / statvfs / ext4
 ```
@@ -58,7 +58,7 @@
 
 1. **所有探测函数只读文件或发 ioctl**，把结果放进 `Sample<T>`，失败原因跟着字段走。
 2. **`ProbeCtx` 把 `/proc` `/sys` `/dev` 做成可替换根**，单元测试用临时目录夹具，不 mock 整个操作系统。
-3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 刷新传感器、告警、网卡/磁盘速率、RAPL 瓦特、内存、zram/zswap、loadavg、clocksource/PTP、EDAC、PSI、IRQ/softirq、挂载用量、平台亮度、sysctl/cgroup/security 和 `/proc/stat`，不全量重扫 PCI/USB/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
+3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 刷新传感器、告警、网卡/磁盘速率、RAPL 瓦特、内存、zram/zswap、loadavg、clocksource/PTP、EDAC、PSI、IRQ/softirq、挂载用量、平台亮度、sysctl/cgroup/security/pm 和 `/proc/stat`，不全量重扫 PCI/USB/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
 
 ## 运行
 

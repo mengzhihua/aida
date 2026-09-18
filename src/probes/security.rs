@@ -15,6 +15,9 @@ pub struct SecurityReport {
     pub dmesg_restrict: Sample<String>,
     pub fips_enabled: Sample<String>,
     pub apparmor_enabled: Sample<String>,
+    pub unprivileged_bpf_disabled: Sample<String>,
+    pub modules_disabled: Sample<String>,
+    pub perf_event_paranoid: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -37,6 +40,11 @@ pub fn collect(ctx: &ProbeCtx) -> SecurityReport {
         dmesg_restrict: access::read_trimmed(ctx.proc_path("sys/kernel/dmesg_restrict")),
         fips_enabled: access::read_trimmed(ctx.proc_path("sys/crypto/fips_enabled")),
         apparmor_enabled: apparmor,
+        unprivileged_bpf_disabled: access::read_trimmed(
+            ctx.proc_path("sys/kernel/unprivileged_bpf_disabled"),
+        ),
+        modules_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/modules_disabled")),
+        perf_event_paranoid: access::read_trimmed(ctx.proc_path("sys/kernel/perf_event_paranoid")),
         notes,
     }
 }
@@ -92,6 +100,9 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/kptr_restrict"), "2\n").unwrap();
         fs::write(root.join("proc/sys/kernel/dmesg_restrict"), "1\n").unwrap();
         fs::write(root.join("proc/sys/crypto/fips_enabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/unprivileged_bpf_disabled"), "2\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/modules_disabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/perf_event_paranoid"), "2\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -104,6 +115,8 @@ mod tests {
         assert_eq!(r.ptrace_scope.value.as_deref(), Some("1"));
         assert_eq!(r.kptr_restrict.value.as_deref(), Some("2"));
         assert_eq!(r.apparmor_enabled.value.as_deref(), Some("Y"));
+        assert_eq!(r.unprivileged_bpf_disabled.value.as_deref(), Some("2"));
+        assert_eq!(r.perf_event_paranoid.value.as_deref(), Some("2"));
         let _ = fs::remove_dir_all(&root);
     }
 }

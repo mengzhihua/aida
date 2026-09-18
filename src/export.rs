@@ -127,6 +127,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.firmware.acpi_tables.join(" ")
                 },
             ),
+            ("ACPI pm_profile", snap.firmware.acpi_pm_profile.display()),
             ("hwrng", snap.firmware.rng_current.display()),
         ],
     );
@@ -166,6 +167,15 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ),
             ),
             ("THP", snap.memory.thp_enabled.display()),
+            (
+                "DirectMap",
+                format!(
+                    "4k {} 2M {} 1G {}",
+                    kb_html(&snap.memory.directmap_4k_kb),
+                    kb_html(&snap.memory.directmap_2m_kb),
+                    kb_html(&snap.memory.directmap_1g_kb)
+                ),
+            ),
             (
                 "zswap",
                 format!(
@@ -392,6 +402,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.power.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
+    html.push_str(&format!(
+        "<p class=\"muted\">sleep state {} mem_sleep {} suspend ok {} fail {} wakeups {}</p>",
+        esc(&snap.pm.state.display()),
+        esc(&snap.pm.mem_sleep.display()),
+        esc(&snap.pm.suspend_success.display()),
+        esc(&snap.pm.suspend_fail.display()),
+        snap.pm.wakeups
+    ));
     if !snap.rapl.zones.is_empty() {
         html.push_str("<table><tr><th>RAPL</th><th>功率</th><th>限制</th><th>energy_uj</th></tr>");
         for z in &snap.rapl.zones {
@@ -510,6 +528,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&s.name),
             esc(&s.irq.display()),
             esc(&s.uartclk.display())
+        ));
+    }
+    if !snap.buses.misc.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">misc {}</p>",
+            esc(&snap.buses.misc.join(" "))
         ));
     }
     for n in &snap.buses.notes {
@@ -794,6 +818,36 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .out_octets
             .map(format_bytes)
             .unwrap_or_else(|| "—".into())
+    ));
+    html.push_str(&format!(
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} somaxconn {}</p>",
+        snap.net
+            .snmp6
+            .in_receives
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .snmp6
+            .out_requests
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .snmp6
+            .in_octets
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .snmp6
+            .out_octets
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .sockstat6
+            .tcp_inuse
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net.unix_sockets,
+        snap.net.somaxconn.display()
     ));
     for b in &snap.net.bridges {
         html.push_str(&format!(
@@ -1195,6 +1249,25 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
             ("max_user_namespaces", snap.ns.max_user.display()),
             ("entropy", snap.software.entropy_avail.display()),
+            ("boot_id", snap.sysctl.boot_id.display()),
+            ("machine-id", snap.software.machine_id.display()),
+            (
+                "aio/inotify",
+                format!(
+                    "{} / {} watches {}",
+                    snap.sysctl.aio_nr.display(),
+                    snap.sysctl.aio_max_nr.display(),
+                    snap.sysctl.inotify_max_user_watches.display()
+                ),
+            ),
+            (
+                "bpf/perf",
+                format!(
+                    "unpriv_bpf {} perf {}",
+                    snap.security.unprivileged_bpf_disabled.display(),
+                    snap.security.perf_event_paranoid.display()
+                ),
+            ),
             (
                 "file-nr",
                 format!(
@@ -1282,6 +1355,19 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
     for n in &snap.iomem.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
+    }
+    if !snap.iomem.ioports.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ioports {}</p>",
+            esc(&snap
+                .iomem
+                .ioports
+                .iter()
+                .take(16)
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" "))
+        ));
     }
 
     html.push_str("</body></html>");

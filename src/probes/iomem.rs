@@ -8,6 +8,7 @@ use crate::access::{self, AccessKind, ProbeCtx};
 pub struct IomemReport {
     pub regions: Vec<IomemRegion>,
     pub summaries: Vec<IomemSummary>,
+    pub ioports: Vec<IomemRegion>,
     pub notes: Vec<String>,
 }
 
@@ -42,9 +43,18 @@ pub fn collect(ctx: &ProbeCtx) -> IomemReport {
         );
     }
     let summaries = summarize(&regions);
+    let ports_sample = access::read_trimmed(ctx.proc_path("ioports"));
+    let ioports = match (ports_sample.access, ports_sample.value.as_deref()) {
+        (AccessKind::Ok, Some(text)) => parse_iomem(text),
+        _ => Vec::new(),
+    };
+    if !ioports.is_empty() && ioports.iter().all(|r| r.start == 0 && r.end == 0) {
+        notes.push("ioports 地址为 0：非 root 时内核会隐藏真实端口范围。".into());
+    }
     IomemReport {
         regions,
         summaries,
+        ioports,
         notes,
     }
 }
@@ -105,5 +115,8 @@ mod tests {
         let s = summarize(&r);
         let ram = s.iter().find(|x| x.name == "System RAM").unwrap();
         assert_eq!(ram.count, 2);
+        let ports = parse_iomem("0000-0000 : serial\n0000-0000 : PCI conf1\n");
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0].name, "serial");
     }
 }

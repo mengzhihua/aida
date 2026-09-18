@@ -23,6 +23,15 @@ pub struct NetReport {
     pub tcp_congestion: Sample<String>,
     pub tcp_available_congestion: Sample<String>,
     pub tcpext: TcpExt,
+    pub snmp6: Snmp6,
+    pub sockstat6: SockStat6,
+    pub somaxconn: Sample<u64>,
+    pub netdev_max_backlog: Sample<u64>,
+    pub rmem_max: Sample<u64>,
+    pub wmem_max: Sample<u64>,
+    pub arp_entries: usize,
+    pub route_entries: usize,
+    pub unix_sockets: usize,
     pub notes: Vec<String>,
 }
 
@@ -89,6 +98,21 @@ pub struct TcpExt {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
+pub struct Snmp6 {
+    pub in_receives: Option<u64>,
+    pub in_delivers: Option<u64>,
+    pub out_requests: Option<u64>,
+    pub in_octets: Option<u64>,
+    pub out_octets: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SockStat6 {
+    pub tcp_inuse: Option<u64>,
+    pub udp_inuse: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Softnet {
     pub processed: u64,
     pub dropped: u64,
@@ -136,6 +160,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let tcp_congestion = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_congestion_control"));
     let tcp_available_congestion =
         access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_available_congestion_control"));
+    let snmp6 = parse_snmp6(&access::read_trimmed(ctx.proc_path("net/snmp6")));
+    let sockstat6 = parse_sockstat6(&access::read_trimmed(ctx.proc_path("net/sockstat6")));
+    let somaxconn = access::read_u64(ctx.proc_path("sys/net/core/somaxconn"));
+    let netdev_max_backlog = access::read_u64(ctx.proc_path("sys/net/core/netdev_max_backlog"));
+    let rmem_max = access::read_u64(ctx.proc_path("sys/net/core/rmem_max"));
+    let wmem_max = access::read_u64(ctx.proc_path("sys/net/core/wmem_max"));
+    let arp_entries = count_table_rows(&access::read_trimmed(ctx.proc_path("net/arp")));
+    let route_entries = count_table_rows(&access::read_trimmed(ctx.proc_path("net/route")));
+    let unix_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/unix")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -157,6 +190,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_congestion,
                 tcp_available_congestion,
                 tcpext,
+                snmp6,
+                sockstat6,
+                somaxconn,
+                netdev_max_backlog,
+                rmem_max,
+                wmem_max,
+                arp_entries,
+                route_entries,
+                unix_sockets,
                 notes,
             };
         }
@@ -286,6 +328,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_congestion,
         tcp_available_congestion,
         tcpext,
+        snmp6,
+        sockstat6,
+        somaxconn,
+        netdev_max_backlog,
+        rmem_max,
+        wmem_max,
+        arp_entries,
+        route_entries,
+        unix_sockets,
         notes,
     }
 }
@@ -377,6 +428,63 @@ pub fn parse_snmp(sample: &Sample<String>) -> Snmp {
         udp_in: pick("Udp.InDatagrams"),
         udp_out: pick("Udp.OutDatagrams"),
     }
+}
+
+/// `/proc/net/snmp6`：每行 `Key  Value`，与 IPv4 snmp 两行组不同。
+pub fn parse_snmp6(sample: &Sample<String>) -> Snmp6 {
+    let Some(text) = sample.value.as_deref() else {
+        return Snmp6::default();
+    };
+    let mut map = std::collections::BTreeMap::<String, u64>::new();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        let Some(k) = it.next() else { continue };
+        if let Some(v) = it.next().and_then(|s| s.parse::<u64>().ok()) {
+            map.insert(k.to_string(), v);
+        }
+    }
+    let pick = |k: &str| map.get(k).copied();
+    Snmp6 {
+        in_receives: pick("Ip6InReceives"),
+        in_delivers: pick("Ip6InDelivers"),
+        out_requests: pick("Ip6OutRequests"),
+        in_octets: pick("Ip6InOctets"),
+        out_octets: pick("Ip6OutOctets"),
+    }
+}
+
+pub fn parse_sockstat6(sample: &Sample<String>) -> SockStat6 {
+    let Some(text) = sample.value.as_deref() else {
+        return SockStat6::default();
+    };
+    let mut out = SockStat6::default();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        let Some(kind) = it.next() else { continue };
+        let kind = kind.trim_end_matches(':');
+        let mut map = std::collections::BTreeMap::new();
+        while let (Some(k), Some(v)) = (it.next(), it.next()) {
+            if let Ok(n) = v.parse::<u64>() {
+                map.insert(k, n);
+            }
+        }
+        match kind {
+            "TCP6" => out.tcp_inuse = map.get("inuse").copied(),
+            "UDP6" => out.udp_inuse = map.get("inuse").copied(),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn count_table_rows(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .count()
 }
 
 /// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
@@ -648,5 +756,28 @@ mod tests {
         assert_eq!(r.conntrack_max.value, Some(262144));
         assert_eq!(r.tcp_congestion.value.as_deref(), Some("cubic"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn snmp6_sockstat6_and_unix_rows() {
+        let s6 = parse_snmp6(&Sample::ok(
+            "Ip6InReceives                    \t110\nIp6InDelivers                    \t100\nIp6OutRequests                   \t90\nIp6InOctets                      \t1000\nIp6OutOctets                     \t2000\n".into(),
+            "snmp6",
+        ));
+        assert_eq!(s6.in_receives, Some(110));
+        assert_eq!(s6.out_octets, Some(2000));
+        let sk = parse_sockstat6(&Sample::ok(
+            "TCP6: inuse 9\nUDP6: inuse 2\n".into(),
+            "sockstat6",
+        ));
+        assert_eq!(sk.tcp_inuse, Some(9));
+        assert_eq!(sk.udp_inuse, Some(2));
+        assert_eq!(
+            count_table_rows(&Sample::ok(
+                "Num RefCount\na 1\nb 2\n".into(),
+                "unix"
+            )),
+            2
+        );
     }
 }

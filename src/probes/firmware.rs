@@ -13,6 +13,7 @@ pub struct FirmwareReport {
     pub tpms: Vec<TpmDevice>,
     pub rng_current: Sample<String>,
     pub rng_available: Sample<String>,
+    pub acpi_pm_profile: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -62,6 +63,7 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
         tpms,
         rng_current: access::read_trimmed(rng_dir.join("rng_current")),
         rng_available: access::read_trimmed(rng_dir.join("rng_available")),
+        acpi_pm_profile: access::read_trimmed(ctx.sys_path("firmware/acpi/pm_profile")),
         notes,
     }
 }

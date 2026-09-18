@@ -20,6 +20,14 @@ pub struct SysctlReport {
     pub core_pattern: Sample<String>,
     pub printk: Sample<String>,
     pub ip_forward: Sample<String>,
+    pub aio_nr: Sample<u64>,
+    pub aio_max_nr: Sample<u64>,
+    pub inotify_max_user_watches: Sample<u64>,
+    pub inotify_max_user_instances: Sample<u64>,
+    pub nr_open: Sample<u64>,
+    pub max_map_count: Sample<u64>,
+    pub mmap_min_addr: Sample<u64>,
+    pub boot_id: Sample<String>,
     pub consoles: Vec<Console>,
     pub notes: Vec<String>,
 }
@@ -69,6 +77,16 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         core_pattern: access::read_trimmed(ctx.proc_path("sys/kernel/core_pattern")),
         printk: access::read_trimmed(ctx.proc_path("sys/kernel/printk")),
         ip_forward: access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_forward")),
+        aio_nr: access::read_u64(ctx.proc_path("sys/fs/aio-nr")),
+        aio_max_nr: access::read_u64(ctx.proc_path("sys/fs/aio-max-nr")),
+        inotify_max_user_watches: access::read_u64(ctx.proc_path("sys/fs/inotify/max_user_watches")),
+        inotify_max_user_instances: access::read_u64(
+            ctx.proc_path("sys/fs/inotify/max_user_instances"),
+        ),
+        nr_open: access::read_u64(ctx.proc_path("sys/fs/nr_open")),
+        max_map_count: access::read_u64(ctx.proc_path("sys/vm/max_map_count")),
+        mmap_min_addr: access::read_u64(ctx.proc_path("sys/vm/mmap_min_addr")),
+        boot_id: access::read_trimmed(ctx.proc_path("sys/kernel/random/boot_id")),
         consoles,
         notes,
     }
@@ -152,6 +170,12 @@ mod tests {
         fs::write(root.join("proc/sys/vm/overcommit_memory"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/randomize_va_space"), "2\n").unwrap();
         fs::write(root.join("proc/sys/kernel/core_pattern"), "core\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/fs/inotify")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/kernel/random")).unwrap();
+        fs::write(root.join("proc/sys/fs/aio-nr"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/fs/aio-max-nr"), "65536\n").unwrap();
+        fs::write(root.join("proc/sys/fs/inotify/max_user_watches"), "8192\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/random/boot_id"), "aaaa-bbbb\n").unwrap();
         fs::write(root.join("proc/consoles"), "tty0                 -WU (E    )    4:1\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
@@ -165,6 +189,8 @@ mod tests {
         assert_eq!(r.pid_max.value, Some(32768));
         assert_eq!(r.aslr.value.as_deref(), Some("2"));
         assert_eq!(r.consoles[0].name, "tty0");
+        assert_eq!(r.aio_max_nr.value, Some(65536));
+        assert_eq!(r.boot_id.value.as_deref(), Some("aaaa-bbbb"));
         let _ = fs::remove_dir_all(&root);
     }
 }

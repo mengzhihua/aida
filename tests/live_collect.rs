@@ -58,6 +58,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"conntrack_count\""));
     assert!(json.contains("\"tcp_congestion\""));
     assert!(json.contains("\"self_ns\""));
+    assert!(json.contains("\"snmp6\""));
+    assert!(json.contains("\"boot_id\""));
+    assert!(json.contains("\"directmap_2m_kb\""));
+    assert!(json.contains("\"suspend_success\""));
     assert!(
         !snap.irq.softirqs.is_empty(),
         "/proc/softirqs 应至少有一行"
@@ -140,6 +144,18 @@ fn live_snapshot_json_and_html() {
         "/proc/self/ns 应至少有一个命名空间"
     );
     assert!(
+        snap.net.snmp6.in_receives.is_some() || snap.net.unix_sockets > 0,
+        "snmp6 或 unix 套接字应可读"
+    );
+    assert!(
+        snap.sysctl.boot_id.value.is_some(),
+        "boot_id 应可读"
+    );
+    assert!(
+        snap.pm.state.access != aida::access::AccessKind::Error,
+        "sys/power/state 不应是读取失败"
+    );
+    assert!(
         !snap.memory.zones.is_empty(),
         "zoneinfo 应至少有一个 zone"
     );
@@ -193,6 +209,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("TCP") || html.contains("softnet"));
     assert!(html.contains("cgroup") || html.contains("file-nr"));
     assert!(html.contains("conntrack") || html.contains("crypto") || html.contains("lockdown"));
+    assert!(html.contains("IPv6") || html.contains("sleep") || html.contains("DirectMap"));
     assert!(!html.contains("<script"));
 }
 
