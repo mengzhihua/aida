@@ -179,6 +179,13 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"dma_isa\""));
     assert!(json.contains("\"pci_buses\""));
     assert!(json.contains("\"pwm_chips\""));
+    assert!(json.contains("\"sched_rt_runtime_us\""));
+    assert!(json.contains("\"tcp6_socks\""));
+    assert!(json.contains("\"platform_devices\""));
+    assert!(json.contains("\"memory_tiers\""));
+    assert!(json.contains("\"xfrm_in_no_states\""));
+    assert!(json.contains("\"ptypes\""));
+    assert!(json.contains("\"fib_trie_leaves\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -187,6 +194,14 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.sysctl.panic.access != aida::access::AccessKind::Error,
         "kernel.panic 不应是读取失败（负数也是合法值）"
+    );
+    assert!(
+        snap.sysctl.sched_rt_runtime_us.access != aida::access::AccessKind::Error,
+        "sched_rt_runtime_us 不应是读取失败（-1 表示不限）"
+    );
+    assert!(
+        snap.sysctl.panic_on_oom.access != aida::access::AccessKind::Error,
+        "panic_on_oom 不应是读取失败"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -262,6 +277,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("maxkeys") || html.contains("watermark") || html.contains("vtcon"));
     assert!(html.contains("shmmax") || html.contains("kexec") || html.contains("protected"));
     assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));
+    assert!(html.contains("sched_rt") || html.contains("tcp6") || html.contains("xfrm"));
     assert!(!html.contains("<script"));
 }
 

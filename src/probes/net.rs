@@ -61,6 +61,14 @@ pub struct NetReport {
     pub netlink_sockets: usize,
     pub tcp_socks: usize,
     pub udp_socks: usize,
+    pub tcp6_socks: usize,
+    pub udp6_socks: usize,
+    pub raw_socks: usize,
+    pub udplite_socks: usize,
+    pub xfrm_in_no_states: Option<u64>,
+    pub xfrm_out_no_states: Option<u64>,
+    pub ptypes: Vec<String>,
+    pub fib_trie_leaves: Option<u64>,
     pub notes: Vec<String>,
 }
 
@@ -278,6 +286,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let netlink_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/netlink")));
     let tcp_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/tcp")));
     let udp_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udp")));
+    let tcp6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/tcp6")));
+    let udp6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udp6")));
+    let raw_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/raw")));
+    let udplite_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udplite")));
+    let (xfrm_in_no_states, xfrm_out_no_states) =
+        parse_xfrm_stat(&access::read_trimmed(ctx.proc_path("net/xfrm_stat")));
+    let ptypes = parse_ptype(&access::read_trimmed(ctx.proc_path("net/ptype")));
+    let fib_trie_leaves = parse_fib_leaves(&access::read_trimmed(ctx.proc_path("net/fib_triestat")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -336,6 +352,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 netlink_sockets,
                 tcp_socks,
                 udp_socks,
+                tcp6_socks,
+                udp6_socks,
+                raw_socks,
+                udplite_socks,
+                xfrm_in_no_states,
+                xfrm_out_no_states,
+                ptypes,
+                fib_trie_leaves,
                 notes,
             };
         }
@@ -502,6 +526,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         netlink_sockets,
         tcp_socks,
         udp_socks,
+        tcp6_socks,
+        udp6_socks,
+        raw_socks,
+        udplite_socks,
+        xfrm_in_no_states,
+        xfrm_out_no_states,
+        ptypes,
+        fib_trie_leaves,
         notes,
     }
 }
@@ -650,6 +682,60 @@ fn count_table_rows(sample: &Sample<String>) -> usize {
         .skip(1)
         .filter(|l| !l.trim().is_empty())
         .count()
+}
+
+/// `/proc/net/xfrm_stat`：每行 `Key  Value`，与 snmp6 相同。
+pub fn parse_xfrm_stat(sample: &Sample<String>) -> (Option<u64>, Option<u64>) {
+    let Some(text) = sample.value.as_deref() else {
+        return (None, None);
+    };
+    let mut inn = None;
+    let mut out = None;
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        let Some(k) = it.next() else { continue };
+        let Some(v) = it.next().and_then(|s| s.parse::<u64>().ok()) else {
+            continue;
+        };
+        match k {
+            "XfrmInNoStates" => inn = Some(v),
+            "XfrmOutNoStates" => out = Some(v),
+            _ => {}
+        }
+    }
+    (inn, out)
+}
+
+/// `/proc/net/ptype`：跳过表头，最多 8 条 `type:function`。
+pub fn parse_ptype(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines().skip(1) {
+        let mut it = line.split_whitespace();
+        let Some(typ) = it.next() else { continue };
+        let Some(func) = it.next() else { continue };
+        // 中间 Device 列常空，function 是最后一个 token。
+        let func = it.last().unwrap_or(func);
+        out.push(format!("{typ}:{func}"));
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// `/proc/net/fib_triestat` 第一段 `Leaves:` 是主表。不要读巨大的 `fib_trie`。
+pub fn parse_fib_leaves(sample: &Sample<String>) -> Option<u64> {
+    let text = sample.value.as_deref()?;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Leaves:") {
+            return rest.trim().parse().ok();
+        }
+    }
+    None
 }
 
 fn count_data_lines(sample: &Sample<String>) -> usize {
@@ -1042,6 +1128,29 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/net/tcp6"),
+            "sl local rem\n 0: 0 0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/net/udp6"), "sl local rem\n").unwrap();
+        fs::write(root.join("proc/net/raw"), "sl local rem\n").unwrap();
+        fs::write(root.join("proc/net/udplite"), "sl local rem\n").unwrap();
+        fs::write(
+            root.join("proc/net/xfrm_stat"),
+            "XfrmInNoStates\t3\nXfrmOutNoStates\t1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/ptype"),
+            "Type Device      Function\n0800          ip_rcv\n0806          arp_rcv\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/fib_triestat"),
+            "Basic info:\nMain:\n\tLeaves:         3\nLocal:\n\tLeaves:         7\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1076,6 +1185,14 @@ mod tests {
         assert_eq!(r.optmem_max.value, Some(131072));
         assert_eq!(r.accept_redirects.value.as_deref(), Some("0"));
         assert_eq!(r.tcp_socks, 2);
+        assert_eq!(r.tcp6_socks, 1);
+        assert_eq!(r.udp6_socks, 0);
+        assert_eq!(r.raw_socks, 0);
+        assert_eq!(r.udplite_socks, 0);
+        assert_eq!(r.xfrm_in_no_states, Some(3));
+        assert_eq!(r.xfrm_out_no_states, Some(1));
+        assert_eq!(r.ptypes, vec!["0800:ip_rcv".to_string(), "0806:arp_rcv".to_string()]);
+        assert_eq!(r.fib_trie_leaves, Some(3));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));

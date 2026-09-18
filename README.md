@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十七轮** 补齐 DMA（`/proc/dma` + dmaengine）、PWM / IIO / nvmem / regulator、devlink 与 `pci_bus`。不写 pwm `export`、不转储 nvmem 二进制、不调用 `devlink`。
+**第十八轮** 补齐调度/OOM sysctl、IPv6/raw/udplite 套接字表、xfrm/ptype/fib_triestat、platform 设备名与 memory_tier。不读巨大的 `/proc/net/fib_trie`，不调用 `sysctl`/`ip`/`devlink`。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -12,16 +12,16 @@
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem；protocols；conntrack；net.core；rp_filter per-iface |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem；tcp6/udp6/raw/udplite；xfrm_stat；ptype；fib_triestat Leaves；protocols；conntrack；net.core；rp_filter per-iface |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
-| 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap |
+| 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap + memory_tier |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
 | EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
 | 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout / memmap |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices` |
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |

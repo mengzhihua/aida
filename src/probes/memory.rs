@@ -33,6 +33,7 @@ pub struct MemoryReport {
     pub vmstat: Vmstat,
     pub ksm: KsmInfo,
     pub mem_blocks: MemoryBlocks,
+    pub memory_tiers: Vec<String>,
     pub zones: Vec<MemZone>,
     pub notes: Vec<String>,
 }
@@ -106,6 +107,23 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
     let vmstat = parse_vmstat(&access::read_trimmed(ctx.proc_path("vmstat")));
     let ksm = read_ksm(ctx);
     let mem_blocks = read_memory_blocks(ctx);
+    let memory_tiers = match access::list_dir_names(ctx.sys_path("bus/memory_tiering/devices")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(mut n),
+            ..
+        } => {
+            n.retain(|x| x.starts_with("memory_tier"));
+            n.sort();
+            n.truncate(8);
+            n
+        }
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            Vec::new()
+        }
+        _ => Vec::new(),
+    };
     let zones = parse_zoneinfo(&access::read_trimmed(ctx.proc_path("zoneinfo")));
     if zones.is_empty() {
         notes.push("无 zoneinfo（容器或权限不足时常见）。".into());
@@ -146,6 +164,7 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
         vmstat,
         ksm,
         mem_blocks,
+        memory_tiers,
         zones,
         notes,
     }
@@ -541,6 +560,8 @@ mod tests {
         fs::write(mem.join("block_size_bytes"), "8000000\n").unwrap();
         fs::write(mem.join("memory0/state"), "online\n").unwrap();
         fs::write(mem.join("memory1/state"), "offline\n").unwrap();
+        fs::create_dir_all(root.join("sys/bus/memory_tiering/devices/memory_tier4")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/memory_tiering/devices/other")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -567,6 +588,7 @@ mod tests {
         assert_eq!(r.mem_blocks.total, 2);
         assert_eq!(r.mem_blocks.online, 1);
         assert_eq!(r.mem_blocks.offline, 1);
+        assert_eq!(r.memory_tiers, vec!["memory_tier4".to_string()]);
         let _ = fs::remove_dir_all(&root);
     }
 

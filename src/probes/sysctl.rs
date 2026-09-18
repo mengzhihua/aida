@@ -61,6 +61,17 @@ pub struct SysctlReport {
     pub epoll_max_user_watches: Sample<u64>,
     pub dirty_writeback_centisecs: Sample<u64>,
     pub page_cluster: Sample<u64>,
+    /// `-1` 表示 RT 运行时不限（占满 period）。
+    pub sched_rt_runtime_us: Sample<i64>,
+    pub sched_rt_period_us: Sample<u64>,
+    pub sched_rr_timeslice_ms: Sample<u64>,
+    pub numa_balancing: Sample<String>,
+    pub timer_migration: Sample<String>,
+    pub panic_on_oom: Sample<String>,
+    pub oom_kill_allocating_task: Sample<String>,
+    pub laptop_mode: Sample<String>,
+    pub kexec_load_disabled: Sample<String>,
+    pub hung_task_panic: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -159,6 +170,18 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
             ctx.proc_path("sys/vm/dirty_writeback_centisecs"),
         ),
         page_cluster: access::read_u64(ctx.proc_path("sys/vm/page-cluster")),
+        sched_rt_runtime_us: access::read_i64(ctx.proc_path("sys/kernel/sched_rt_runtime_us")),
+        sched_rt_period_us: access::read_u64(ctx.proc_path("sys/kernel/sched_rt_period_us")),
+        sched_rr_timeslice_ms: access::read_u64(ctx.proc_path("sys/kernel/sched_rr_timeslice_ms")),
+        numa_balancing: access::read_trimmed(ctx.proc_path("sys/kernel/numa_balancing")),
+        timer_migration: access::read_trimmed(ctx.proc_path("sys/kernel/timer_migration")),
+        panic_on_oom: access::read_trimmed(ctx.proc_path("sys/vm/panic_on_oom")),
+        oom_kill_allocating_task: access::read_trimmed(
+            ctx.proc_path("sys/vm/oom_kill_allocating_task"),
+        ),
+        laptop_mode: access::read_trimmed(ctx.proc_path("sys/vm/laptop_mode")),
+        kexec_load_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/kexec_load_disabled")),
+        hung_task_panic: access::read_trimmed(ctx.proc_path("sys/kernel/hung_task_panic")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -273,6 +296,16 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/keys/maxkeys"), "200\n").unwrap();
         fs::write(root.join("proc/sys/kernel/keys/maxbytes"), "20000\n").unwrap();
         fs::write(root.join("proc/sys/kernel/hung_task_timeout_secs"), "120\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/sched_rt_runtime_us"), "-1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/sched_rt_period_us"), "1000000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/sched_rr_timeslice_ms"), "100\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/numa_balancing"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/timer_migration"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/vm/panic_on_oom"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/oom_kill_allocating_task"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/laptop_mode"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/kexec_load_disabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/hung_task_panic"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
@@ -308,6 +341,16 @@ mod tests {
         assert_eq!(r.keys_maxkeys.value, Some(200));
         assert_eq!(r.keys_maxbytes.value, Some(20000));
         assert_eq!(r.hung_task_timeout_secs.value, Some(120));
+        assert_eq!(r.sched_rt_runtime_us.value, Some(-1));
+        assert_eq!(r.sched_rt_period_us.value, Some(1_000_000));
+        assert_eq!(r.sched_rr_timeslice_ms.value, Some(100));
+        assert_eq!(r.numa_balancing.value.as_deref(), Some("0"));
+        assert_eq!(r.timer_migration.value.as_deref(), Some("1"));
+        assert_eq!(r.panic_on_oom.value.as_deref(), Some("0"));
+        assert_eq!(r.oom_kill_allocating_task.value.as_deref(), Some("0"));
+        assert_eq!(r.laptop_mode.value.as_deref(), Some("0"));
+        assert_eq!(r.kexec_load_disabled.value.as_deref(), Some("0"));
+        assert_eq!(r.hung_task_panic.value.as_deref(), Some("0"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
