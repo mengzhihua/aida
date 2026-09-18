@@ -120,7 +120,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 98. **`kexec_loaded=0` 表示未加载 crash/kexec 内核。** 云 VM 常见。
 99. **`/proc/net/tcp` 行数含 TIME_WAIT。** 不是 established-only。
 100. **`firmware/memmap` 编号目录是 e820 段。** 不要展开每一段的 type/start（长度已够）。
-101. **`rp_filter` / `use_tempaddr` 是 per-iface。** 只读 `conf/all` 会漏掉 `eth0:1` 或 `lo:-1`。
+101. **`rp_filter` / `use_tempaddr` / `accept_dad` / `addr_gen_mode` 是 per-iface。** 只读 `conf/all` 会漏掉 `eth0:1` 或 `lo:-1`。不要用 `default` 代替现有接口。
 102. **`clockevents` 只列 `broadcast` 与 `clockeventN`。** 目录 PermissionDenied 不要当成没有时钟事件设备。
 103. **`/proc/dma` 的 `4: cascade` 在 PC 上正常。** 这是 ISA DMA 级联，不是采集错误。
 104. **空的 `/sys/class/dma` 表示没有 dmaengine 通道。** 云 VM 常见，不要当读失败。
@@ -144,9 +144,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 122. **`tcp_notsent_lowat=4294967295` 表示不限制。** 用 u64 解析。
 123. **不要读 `/proc/sys/vm/drop_caches` 或 `compact_memory`。** 它们是只写触发器。
 124. **不要转储 `/sys/kernel/notes` 二进制。**
-125. **不要 dump `/proc/keys`。** 只计 `/proc/key-users` 行数。
+125. **不要 dump `/proc/keys`。** 只计 `/proc/key-users` 行数。读取失败或 `CONFIG_KEYS` 未开是 `NotFound`/`PermissionDenied`，不是 0。
 126. **`/proc/cgroups` 最后一列才是 enabled。** `0` 表示该 v1 子系统未启用，不要列进去。
-127. **`dentry-state` 第一列是 nr_dentry，第二列 nr_unused。** 不要把整行当单个整数。
+127. **`dentry-state` 第一列是 nr_dentry，第二列 nr_unused。** 一次读取再拆两列，不要把整行当单个整数。
 128. **不要读 `/sys/kernel/vmcoreinfo` 当文本。** 那是二进制地址范围。
 129. **`/proc/net/connector` 跳过表头。** 只取 Name 列。
 130. **`sched_cfs_bandwidth_slice_us` 在未开 `CONFIG_CFS_BANDWIDTH` 时不存在。** `NotFound` 不是采集失败。
@@ -157,6 +157,29 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 135. **空的 scsi_generic/wwan/ppp/phy 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
 136. **无 device-tree `model` 在 x86/云主机上常见。** 先读 sysfs 再读 `/proc/device-tree`，不要当采集失败。字符串属性以 NUL 结尾，导出前要去掉。
 137. **`nf_conntrack_tcp_timeout_established` 单位是秒。** 未加载 conntrack 时 `NotFound`。
+138. **`dirty_bytes=0` 表示改用 `dirty_ratio`。** `dirty_background_bytes=0` 同理。不要把 0 当成采集失败。
+139. **`overcommit_kbytes=0` 表示改用 `overcommit_ratio`。**
+140. **空的 remoteproc/extcon/tee/mdio_bus 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+141. **`tcp_mem` / `udp_mem` 是三个页数（min / pressure / max）。** 保留整行字符串，不要拆成单个整数。
+142. **IPv6 `addr_gen_mode`：`0` EUI64，`1` none，`2` stable-privacy，`3` random。** 与 `accept_dad` 一样列出和 `conf/all` 不同的接口。`lo` 上 `accept_dad=-1` 常见。
+143. **`pipe-user-pages-hard=0` 表示不限制。** soft 默认常为 16384 页。
+144. **`kernel_max` 是内核编译时的最大 CPU 下标，不是在线数量。** `possible`/`present` 是掩码列表。
+145. **`/sys/class/wakeup` 只计数。** 不要展开每个 `wakeupN`。`PermissionDenied` 必须写 note。
+146. **`core_pipe_limit=0` 表示不限制 core dump 管道。** 不要当采集失败。
+147. **`printk_devkmsg` 为 `on` / `off` / `ratelimit`。**
+148. **`kernel.acct` 是三个 token（highwater / lowwater / frequency）。** 保留整行。
+149. **不要读 `kernel.cad_pid`。** 常无权限或为空。
+150. **空的 spi_master / i2c-dev / nvme-subsystem / w1 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+151. **`cpu/enabled` 在较新内核才有。** `NotFound` 不是采集失败。空的 `nohz_full` 表示没有 nohz_full CPU。
+152. **不要 dump `cpu/hotplug/states`。** 那是内部 CPUHP 回调表。
+153. **不要 dump seccomp `actions_logged`。** 只读 `actions_avail`。
+154. **`fib_multipath_hash_policy` 在未开多路径时可能不存在。** `NotFound` 不是采集失败。
+155. **不要 dump `/proc/sys/kernel/random/uuid`。** 每次读取都会变；boot_id 才是稳定的。
+156. **`router_solicitations` 是有符号 i64。** `-1` 表示使用 RFC 默认次数，不要当读取失败。
+157. **`memfd_noexec`：`0` 不限制，`1` 仅 dumpable，`2` 一律禁止。** 旧内核可能不存在。
+158. **空的 macvtap / nvme-generic 表示没有对应硬件。** `tun` / `nvme-fabrics` 是 misc 设备（`class/misc/tun`、`/dev/net/tun`），不是独立 class；未加载才写 note。`PermissionDenied` 仍写 note，不要当成缺失。
+159. **`cpu/modalias` 可能很长。** JSON 保留全文，界面与 HTML 截断前缀。
+160. **`message_cost=0` 表示关闭内核网络 printk 限速。** 不是采集失败。
 
 ## 测试方案
 

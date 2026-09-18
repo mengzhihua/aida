@@ -29,6 +29,16 @@ pub struct CpuInfo {
     pub online: Sample<String>,
     /// 空文件表示没有离线 CPU，不是读失败。
     pub offline: Sample<String>,
+    pub possible: Sample<String>,
+    pub present: Sample<String>,
+    /// 内核编译时的最大 CPU 下标（通常是 `NR_CPUS-1`），不是在线数量。
+    pub kernel_max: Sample<u64>,
+    /// 较新内核才有；缺失不是采集失败。
+    pub enabled: Sample<String>,
+    /// 空文件或缺失表示没有 `nohz_full` CPU。
+    pub nohz_full: Sample<String>,
+    /// 整机 CPU `modalias`；字符串可能很长，界面只展示前缀。
+    pub modalias: Sample<String>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
@@ -206,7 +216,11 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         .values()
         .map(|s| s.len() as u32)
         .max()
-        .or_else(|| first.and_then(|m| m.get("cpu cores")).and_then(|s| s.parse().ok()));
+        .or_else(|| {
+            first
+                .and_then(|m| m.get("cpu cores"))
+                .and_then(|s| s.parse().ok())
+        });
     let cores_per_package = match cores_per_package {
         Some(n) => Sample::ok(n, ctx.proc_path("cpuinfo").display().to_string()),
         None => Sample::missing(ctx.proc_path("cpuinfo").display().to_string()),
@@ -242,6 +256,12 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
     let isolated = access::read_trimmed(ctx.sys_path("devices/system/cpu/isolated"));
     let online = access::read_trimmed(ctx.sys_path("devices/system/cpu/online"));
     let offline = access::read_trimmed(ctx.sys_path("devices/system/cpu/offline"));
+    let possible = access::read_trimmed(ctx.sys_path("devices/system/cpu/possible"));
+    let present = access::read_trimmed(ctx.sys_path("devices/system/cpu/present"));
+    let kernel_max = access::read_u64(ctx.sys_path("devices/system/cpu/kernel_max"));
+    let enabled = access::read_trimmed(ctx.sys_path("devices/system/cpu/enabled"));
+    let nohz_full = access::read_trimmed(ctx.sys_path("devices/system/cpu/nohz_full"));
+    let modalias = access::read_trimmed(ctx.sys_path("devices/system/cpu/modalias"));
     if smt_control
         .value
         .as_deref()
@@ -270,6 +290,12 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         isolated,
         online,
         offline,
+        possible,
+        present,
+        kernel_max,
+        enabled,
+        nohz_full,
+        modalias,
         logical,
         caches,
         utilization_pct,
@@ -278,6 +304,24 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         freq_policies: collect_freq_policies(ctx),
         schedstat_cpus: parse_schedstat_cpus(&access::read_trimmed(ctx.proc_path("schedstat"))),
         notes,
+    }
+}
+
+/// `modalias` 可能很长；界面与 HTML 只展示前缀，JSON 仍保留全文。
+pub fn display_modalias(sample: &Sample<String>) -> String {
+    match sample.value.as_deref() {
+        Some(v) if v.len() > 72 => {
+            let mut prefix = String::new();
+            for (i, ch) in v.chars().enumerate() {
+                if i >= 72 {
+                    break;
+                }
+                prefix.push(ch);
+            }
+            format!("{prefix}…")
+        }
+        Some(v) => v.to_string(),
+        None => sample.access_label(),
     }
 }
 
@@ -313,11 +357,7 @@ pub fn read_proc_stat(ctx: &ProbeCtx) -> Option<CpuStatSnap> {
     })
 }
 
-pub fn apply_per_cpu(
-    logical: &mut [LogicalCpu],
-    a: &Option<CpuStatSnap>,
-    b: &Option<CpuStatSnap>,
-) {
+pub fn apply_per_cpu(logical: &mut [LogicalCpu], a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) {
     let (Some(a), Some(b)) = (a, b) else {
         return;
     };
@@ -573,10 +613,36 @@ flags\t\t: fpu hypervisor sse
         );
         std::fs::write(root.join("sys/devices/system/cpu/online"), "0-3\n").unwrap();
         std::fs::write(root.join("sys/devices/system/cpu/offline"), "\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/possible"), "0-3\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/present"), "0-3\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/kernel_max"), "63\n").unwrap();
         let info = collect_with_util(&ctx, None);
         assert_eq!(info.online.value.as_deref(), Some("0-3"));
         assert_eq!(info.offline.access, AccessKind::Ok);
         assert!(info.offline.value.is_none());
+        assert_eq!(info.possible.value.as_deref(), Some("0-3"));
+        assert_eq!(info.present.value.as_deref(), Some("0-3"));
+        assert_eq!(info.kernel_max.value, Some(63));
+        assert_eq!(info.nohz_full.access, AccessKind::NotFound);
+        std::fs::write(root.join("sys/devices/system/cpu/enabled"), "0-3\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/nohz_full"), "\n").unwrap();
+        let info = collect_with_util(&ctx, None);
+        assert_eq!(info.enabled.value.as_deref(), Some("0-3"));
+        assert!(info.nohz_full.value.is_none());
+        std::fs::write(
+            root.join("sys/devices/system/cpu/modalias"),
+            "cpu:type:x86,ven0000fam0006mod00CF:feature:,0000,0001\n",
+        )
+        .unwrap();
+        let info = collect_with_util(&ctx, None);
+        assert_eq!(
+            info.modalias.value.as_deref(),
+            Some("cpu:type:x86,ven0000fam0006mod00CF:feature:,0000,0001")
+        );
+        assert_eq!(
+            display_modalias(&Sample::ok("a".repeat(80), "modalias")),
+            format!("{}…", "a".repeat(72))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

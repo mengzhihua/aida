@@ -92,8 +92,8 @@ pub struct SysctlReport {
     pub perf_event_max_sample_rate: Sample<u64>,
     pub perf_cpu_time_max_percent: Sample<u64>,
     pub keys_gc_delay: Sample<u64>,
-    /// `/proc/key-users` 行数。不要 dump `/proc/keys`。
-    pub key_users: usize,
+    /// `/proc/key-users` 行数。不要 dump `/proc/keys`。失败不是 0。
+    pub key_users: Sample<usize>,
     pub vsyscall32: Sample<String>,
     pub ldisc_autoload: Sample<String>,
     /// `inode-state`：`inode_inuse = nr_inodes - nr_unused`，`inode_free` 为第 2 列。
@@ -110,6 +110,31 @@ pub struct SysctlReport {
     pub io_uring_disabled: Sample<String>,
     /// `-1` 表示未绑定用户组。
     pub io_uring_group: Sample<i64>,
+    /// `0` 表示改用 `dirty_ratio`。
+    pub dirty_bytes: Sample<u64>,
+    pub dirty_background_bytes: Sample<u64>,
+    /// `0` 表示改用 `overcommit_ratio`。
+    pub overcommit_kbytes: Sample<u64>,
+    pub pipe_user_pages_soft: Sample<u64>,
+    pub pipe_user_pages_hard: Sample<u64>,
+    pub compact_unevictable_allowed: Sample<String>,
+    pub watermark_boost_factor: Sample<u64>,
+    pub unknown_nmi_panic: Sample<String>,
+    /// `0` 表示不限制 core dump 管道。
+    pub core_pipe_limit: Sample<u64>,
+    pub printk_devkmsg: Sample<String>,
+    pub task_delayacct: Sample<String>,
+    /// 三个 token：highwater / lowwater / frequency。
+    pub acct: Sample<String>,
+    pub zone_reclaim_mode: Sample<u64>,
+    pub mount_max: Sample<u64>,
+    pub write_wakeup_threshold: Sample<u64>,
+    pub urandom_min_reseed_secs: Sample<u64>,
+    pub shm_rmid_forced: Sample<String>,
+    /// `0` 不限制；`1` 仅 dumpable；`2` 一律禁止可执行 memfd。
+    pub memfd_noexec: Sample<String>,
+    pub dirtytime_expire_seconds: Sample<u64>,
+    pub soft_watchdog: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -149,6 +174,7 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
     }
     let (inode_inuse, inode_free) =
         parse_inode_state(&access::read_trimmed(ctx.proc_path("sys/fs/inode-state")));
+    let dentry_state = access::read_trimmed(ctx.proc_path("sys/fs/dentry-state"));
     SysctlReport {
         file_nr_alloc,
         file_nr_max,
@@ -166,7 +192,9 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         ip_forward: access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_forward")),
         aio_nr: access::read_u64(ctx.proc_path("sys/fs/aio-nr")),
         aio_max_nr: access::read_u64(ctx.proc_path("sys/fs/aio-max-nr")),
-        inotify_max_user_watches: access::read_u64(ctx.proc_path("sys/fs/inotify/max_user_watches")),
+        inotify_max_user_watches: access::read_u64(
+            ctx.proc_path("sys/fs/inotify/max_user_watches"),
+        ),
         inotify_max_user_instances: access::read_u64(
             ctx.proc_path("sys/fs/inotify/max_user_instances"),
         ),
@@ -193,7 +221,9 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         cap_last_cap: access::read_u64(ctx.proc_path("sys/kernel/cap_last_cap")),
         keys_maxkeys: access::read_u64(ctx.proc_path("sys/kernel/keys/maxkeys")),
         keys_maxbytes: access::read_u64(ctx.proc_path("sys/kernel/keys/maxbytes")),
-        hung_task_timeout_secs: access::read_u64(ctx.proc_path("sys/kernel/hung_task_timeout_secs")),
+        hung_task_timeout_secs: access::read_u64(
+            ctx.proc_path("sys/kernel/hung_task_timeout_secs"),
+        ),
         panic_on_oops: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_oops")),
         panic_on_warn: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_warn")),
         core_uses_pid: access::read_trimmed(ctx.proc_path("sys/kernel/core_uses_pid")),
@@ -223,7 +253,9 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         kexec_load_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/kexec_load_disabled")),
         hung_task_panic: access::read_trimmed(ctx.proc_path("sys/kernel/hung_task_panic")),
         printk_ratelimit: access::read_u64(ctx.proc_path("sys/kernel/printk_ratelimit")),
-        printk_ratelimit_burst: access::read_u64(ctx.proc_path("sys/kernel/printk_ratelimit_burst")),
+        printk_ratelimit_burst: access::read_u64(
+            ctx.proc_path("sys/kernel/printk_ratelimit_burst"),
+        ),
         sched_cfs_bandwidth_slice_us: access::read_u64(
             ctx.proc_path("sys/kernel/sched_cfs_bandwidth_slice_us"),
         ),
@@ -239,12 +271,11 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         overflowuid: access::read_u64(ctx.proc_path("sys/fs/overflowuid")),
         dir_notify_enable: access::read_trimmed(ctx.proc_path("sys/fs/dir-notify-enable")),
         lease_break_time: access::read_u64(ctx.proc_path("sys/fs/lease-break-time")),
-        sysctl_writes_strict: access::read_trimmed(ctx.proc_path("sys/kernel/sysctl_writes_strict")),
-        dentry_nr: parse_state_nth(&access::read_trimmed(ctx.proc_path("sys/fs/dentry-state")), 0),
-        dentry_unused: parse_state_nth(
-            &access::read_trimmed(ctx.proc_path("sys/fs/dentry-state")),
-            1,
+        sysctl_writes_strict: access::read_trimmed(
+            ctx.proc_path("sys/kernel/sysctl_writes_strict"),
         ),
+        dentry_nr: parse_state_nth(&dentry_state, 0),
+        dentry_unused: parse_state_nth(&dentry_state, 1),
         admin_reserve_kbytes: access::read_u64(ctx.proc_path("sys/vm/admin_reserve_kbytes")),
         perf_event_max_sample_rate: access::read_u64(
             ctx.proc_path("sys/kernel/perf_event_max_sample_rate"),
@@ -266,6 +297,34 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         overflowgid: access::read_u64(ctx.proc_path("sys/fs/overflowgid")),
         io_uring_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/io_uring_disabled")),
         io_uring_group: access::read_i64(ctx.proc_path("sys/kernel/io_uring_group")),
+        dirty_bytes: access::read_u64(ctx.proc_path("sys/vm/dirty_bytes")),
+        dirty_background_bytes: access::read_u64(ctx.proc_path("sys/vm/dirty_background_bytes")),
+        overcommit_kbytes: access::read_u64(ctx.proc_path("sys/vm/overcommit_kbytes")),
+        pipe_user_pages_soft: access::read_u64(ctx.proc_path("sys/fs/pipe-user-pages-soft")),
+        pipe_user_pages_hard: access::read_u64(ctx.proc_path("sys/fs/pipe-user-pages-hard")),
+        compact_unevictable_allowed: access::read_trimmed(
+            ctx.proc_path("sys/vm/compact_unevictable_allowed"),
+        ),
+        watermark_boost_factor: access::read_u64(ctx.proc_path("sys/vm/watermark_boost_factor")),
+        unknown_nmi_panic: access::read_trimmed(ctx.proc_path("sys/kernel/unknown_nmi_panic")),
+        core_pipe_limit: access::read_u64(ctx.proc_path("sys/kernel/core_pipe_limit")),
+        printk_devkmsg: access::read_trimmed(ctx.proc_path("sys/kernel/printk_devkmsg")),
+        task_delayacct: access::read_trimmed(ctx.proc_path("sys/kernel/task_delayacct")),
+        acct: access::read_trimmed(ctx.proc_path("sys/kernel/acct")),
+        zone_reclaim_mode: access::read_u64(ctx.proc_path("sys/vm/zone_reclaim_mode")),
+        mount_max: access::read_u64(ctx.proc_path("sys/fs/mount-max")),
+        write_wakeup_threshold: access::read_u64(
+            ctx.proc_path("sys/kernel/random/write_wakeup_threshold"),
+        ),
+        urandom_min_reseed_secs: access::read_u64(
+            ctx.proc_path("sys/kernel/random/urandom_min_reseed_secs"),
+        ),
+        shm_rmid_forced: access::read_trimmed(ctx.proc_path("sys/kernel/shm_rmid_forced")),
+        memfd_noexec: access::read_trimmed(ctx.proc_path("sys/vm/memfd_noexec")),
+        dirtytime_expire_seconds: access::read_u64(
+            ctx.proc_path("sys/vm/dirtytime_expire_seconds"),
+        ),
+        soft_watchdog: access::read_trimmed(ctx.proc_path("sys/kernel/soft_watchdog")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -284,11 +343,19 @@ fn count_table_rows(sample: &Sample<String>) -> usize {
         .count()
 }
 
-fn count_data_lines(sample: &Sample<String>) -> usize {
-    let Some(text) = sample.value.as_deref() else {
-        return 0;
-    };
-    text.lines().filter(|l| !l.trim().is_empty()).count()
+fn count_data_lines(sample: &Sample<String>) -> Sample<usize> {
+    match sample.value.as_deref() {
+        Some(text) => Sample::ok(
+            text.lines().filter(|l| !l.trim().is_empty()).count(),
+            sample.source.clone(),
+        ),
+        None => Sample {
+            value: None,
+            access: sample.access,
+            source: sample.source.clone(),
+            hint: sample.hint.clone(),
+        },
+    }
 }
 
 fn parse_state_nth(sample: &Sample<String>, idx: usize) -> Sample<u64> {
@@ -301,7 +368,11 @@ fn parse_state_nth(sample: &Sample<String>, idx: usize) -> Sample<u64> {
     let Some(text) = sample.value.as_deref() else {
         return miss();
     };
-    match text.split_whitespace().nth(idx).and_then(|s| s.parse().ok()) {
+    match text
+        .split_whitespace()
+        .nth(idx)
+        .and_then(|s| s.parse().ok())
+    {
         Some(v) => Sample::ok(v, sample.source.clone()),
         None => miss(),
     }
@@ -442,7 +513,11 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/kexec_load_disabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/hung_task_panic"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/printk_ratelimit"), "5\n").unwrap();
-        fs::write(root.join("proc/sys/kernel/sched_cfs_bandwidth_slice_us"), "5000\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/sched_cfs_bandwidth_slice_us"),
+            "5000\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/kernel/oops_limit"), "10000\n").unwrap();
         fs::write(root.join("proc/sys/kernel/hardlockup_panic"), "0\n").unwrap();
         fs::write(root.join("proc/sys/vm/oom_dump_tasks"), "1\n").unwrap();
@@ -455,8 +530,16 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/sysctl_writes_strict"), "1\n").unwrap();
         fs::write(root.join("proc/sys/fs/dentry-state"), "100 40 45 0 0 0\n").unwrap();
         fs::write(root.join("proc/sys/vm/admin_reserve_kbytes"), "8192\n").unwrap();
-        fs::write(root.join("proc/sys/kernel/perf_event_max_sample_rate"), "100000\n").unwrap();
-        fs::write(root.join("proc/sys/kernel/perf_cpu_time_max_percent"), "25\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/perf_event_max_sample_rate"),
+            "100000\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/perf_cpu_time_max_percent"),
+            "25\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/kernel/keys/gc_delay"), "300\n").unwrap();
         fs::write(
             root.join("proc/key-users"),
@@ -471,24 +554,60 @@ mod tests {
         fs::create_dir_all(root.join("proc/sys/kernel/pty")).unwrap();
         fs::write(root.join("proc/sys/kernel/pty/max"), "4096\n").unwrap();
         fs::write(root.join("proc/sys/kernel/pty/nr"), "3\n").unwrap();
-        fs::write(root.join("proc/sys/kernel/shmall"), "18446744073692774399\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/shmall"),
+            "18446744073692774399\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/kernel/msgmnb"), "16384\n").unwrap();
         fs::write(root.join("proc/sys/kernel/msgmni"), "32000\n").unwrap();
         fs::write(root.join("proc/sys/fs/overflowgid"), "65534\n").unwrap();
         fs::write(root.join("proc/sys/kernel/io_uring_disabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/io_uring_group"), "-1\n").unwrap();
-        fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
+        fs::write(root.join("proc/sys/vm/dirty_bytes"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/dirty_background_bytes"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/overcommit_kbytes"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/fs/pipe-user-pages-soft"), "16384\n").unwrap();
+        fs::write(root.join("proc/sys/fs/pipe-user-pages-hard"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/compact_unevictable_allowed"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/vm/watermark_boost_factor"), "15000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/unknown_nmi_panic"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/core_pipe_limit"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/printk_devkmsg"), "on\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/task_delayacct"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/acct"), "4\t2\t30\n").unwrap();
+        fs::write(root.join("proc/sys/vm/zone_reclaim_mode"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/fs/mount-max"), "100000\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/random/write_wakeup_threshold"),
+            "256\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/random/urandom_min_reseed_secs"),
+            "60\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/kernel/shm_rmid_forced"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/memfd_noexec"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/dirtytime_expire_seconds"), "43200\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/soft_watchdog"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/shmmax"),
+            "18446744073692774399\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
         fs::write(root.join("proc/sys/fs/mqueue/queues_max"), "256\n").unwrap();
         fs::create_dir_all(root.join("proc/sysvipc")).unwrap();
+        fs::write(root.join("proc/sysvipc/shm"), "key shmid\n0 7\n0 10\n").unwrap();
+        fs::write(root.join("proc/sys/fs/suid_dumpable"), "0\n").unwrap();
         fs::write(
-            root.join("proc/sysvipc/shm"),
-            "key shmid\n0 7\n0 10\n",
+            root.join("proc/consoles"),
+            "tty0                 -WU (E    )    4:1\n",
         )
         .unwrap();
-        fs::write(root.join("proc/sys/fs/suid_dumpable"), "0\n").unwrap();
-        fs::write(root.join("proc/consoles"), "tty0                 -WU (E    )    4:1\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -537,7 +656,7 @@ mod tests {
         assert_eq!(r.dentry_unused.value, Some(40));
         assert_eq!(r.admin_reserve_kbytes.value, Some(8192));
         assert_eq!(r.perf_event_max_sample_rate.value, Some(100_000));
-        assert_eq!(r.key_users, 2);
+        assert_eq!(r.key_users.value, Some(2));
         assert_eq!(r.vsyscall32.value.as_deref(), Some("1"));
         assert_eq!(r.ldisc_autoload.value.as_deref(), Some("1"));
         assert_eq!(r.inode_inuse.value, Some(68));
@@ -550,6 +669,26 @@ mod tests {
         assert_eq!(r.overflowgid.value, Some(65534));
         assert_eq!(r.io_uring_disabled.value.as_deref(), Some("0"));
         assert_eq!(r.io_uring_group.value, Some(-1));
+        assert_eq!(r.dirty_bytes.value, Some(0));
+        assert_eq!(r.dirty_background_bytes.value, Some(0));
+        assert_eq!(r.overcommit_kbytes.value, Some(0));
+        assert_eq!(r.pipe_user_pages_soft.value, Some(16384));
+        assert_eq!(r.pipe_user_pages_hard.value, Some(0));
+        assert_eq!(r.compact_unevictable_allowed.value.as_deref(), Some("1"));
+        assert_eq!(r.watermark_boost_factor.value, Some(15000));
+        assert_eq!(r.unknown_nmi_panic.value.as_deref(), Some("0"));
+        assert_eq!(r.core_pipe_limit.value, Some(0));
+        assert_eq!(r.printk_devkmsg.value.as_deref(), Some("on"));
+        assert_eq!(r.task_delayacct.value.as_deref(), Some("0"));
+        assert_eq!(r.acct.value.as_deref(), Some("4\t2\t30"));
+        assert_eq!(r.zone_reclaim_mode.value, Some(0));
+        assert_eq!(r.mount_max.value, Some(100000));
+        assert_eq!(r.write_wakeup_threshold.value, Some(256));
+        assert_eq!(r.urandom_min_reseed_secs.value, Some(60));
+        assert_eq!(r.shm_rmid_forced.value.as_deref(), Some("0"));
+        assert_eq!(r.memfd_noexec.value.as_deref(), Some("0"));
+        assert_eq!(r.dirtytime_expire_seconds.value, Some(43200));
+        assert_eq!(r.soft_watchdog.value.as_deref(), Some("0"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
@@ -578,13 +717,30 @@ mod tests {
 
     #[test]
     fn inode_state_inuse_subtracts_unused() {
-        let (inuse, free) = parse_inode_state(&Sample::ok("80 12 45 0 0 0 0".into(), "inode-state"));
+        let (inuse, free) =
+            parse_inode_state(&Sample::ok("80 12 45 0 0 0 0".into(), "inode-state"));
         assert_eq!(inuse.value, Some(68));
         assert_eq!(free.value, Some(12));
-        let (bad_inuse, bad_free) =
-            parse_inode_state(&Sample::ok("10 12".into(), "inode-state"));
+        let (bad_inuse, bad_free) = parse_inode_state(&Sample::ok("10 12".into(), "inode-state"));
         assert_eq!(bad_inuse.access, crate::access::AccessKind::Error);
         assert_eq!(bad_free.access, crate::access::AccessKind::Error);
         assert!(bad_inuse.value.is_none());
+    }
+
+    #[test]
+    fn missing_key_users_is_not_zero() {
+        let root = std::env::temp_dir().join(format!("aida-key-users-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.key_users.value.is_none());
+        assert_eq!(r.key_users.access, crate::access::AccessKind::NotFound);
+        let _ = fs::remove_dir_all(&root);
     }
 }

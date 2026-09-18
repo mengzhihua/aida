@@ -87,6 +87,39 @@ pub struct NetReport {
     pub busy_read: Sample<u64>,
     pub icmp_ratelimit: Sample<u64>,
     pub ip_default_ttl: Sample<u64>,
+    /// 三个页数：min / pressure / max。
+    pub tcp_mem: Sample<String>,
+    pub udp_mem: Sample<String>,
+    pub tcp_max_orphans: Sample<u64>,
+    pub tcp_dsack: Sample<String>,
+    pub tcp_autocorking: Sample<String>,
+    pub ipv6_accept_dad: Sample<String>,
+    /// `0` EUI64，`1` none，`2` stable-privacy，`3` random。
+    pub ipv6_addr_gen_mode: Sample<String>,
+    /// 与 `conf/all` 不同的接口值。
+    pub ipv6_accept_dad_dev: Vec<String>,
+    pub ipv6_addr_gen_mode_dev: Vec<String>,
+    pub ip6frag_high_thresh: Sample<u64>,
+    pub rps_sock_flow_entries: Sample<u64>,
+    pub ipfrag_high_thresh: Sample<u64>,
+    pub ipfrag_low_thresh: Sample<u64>,
+    pub tcp_early_retrans: Sample<u64>,
+    pub ip_no_pmtu_disc: Sample<String>,
+    pub fib_multipath_hash_policy: Sample<u64>,
+    pub ipv6_max_addresses: Sample<u64>,
+    pub tcp_frto: Sample<String>,
+    pub tcp_invalid_ratelimit: Sample<u64>,
+    pub tcp_min_tso_segs: Sample<u64>,
+    pub tcp_pacing_ss_ratio: Sample<u64>,
+    pub netdev_tstamp_prequeue: Sample<String>,
+    /// `0` 关闭内核网络日志限速。
+    pub message_cost: Sample<u64>,
+    pub ipv6_accept_ra_defrtr: Sample<String>,
+    /// `-1` 表示使用 RFC 默认次数。
+    pub ipv6_router_solicitations: Sample<i64>,
+    pub ipv6_accept_ra_defrtr_dev: Vec<String>,
+    pub ipv6_router_solicitations_dev: Vec<String>,
+    pub ip6frag_low_thresh: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -101,6 +134,7 @@ pub struct TcpTune {
     pub ecn: Sample<String>,
     pub tw_reuse: Sample<String>,
     pub retries2: Sample<u64>,
+    pub retries1: Sample<u64>,
     pub slow_start_after_idle: Sample<String>,
     pub syn_retries: Sample<u64>,
     pub synack_retries: Sample<u64>,
@@ -266,6 +300,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ecn: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_ecn")),
         tw_reuse: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_tw_reuse")),
         retries2: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_retries2")),
+        retries1: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_retries1")),
         slow_start_after_idle: access::read_trimmed(
             ctx.proc_path("sys/net/ipv4/tcp_slow_start_after_idle"),
         ),
@@ -318,7 +353,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let (xfrm_in_no_states, xfrm_out_no_states) =
         parse_xfrm_stat(&access::read_trimmed(ctx.proc_path("net/xfrm_stat")));
     let ptypes = parse_ptype(&access::read_trimmed(ctx.proc_path("net/ptype")));
-    let fib_trie_leaves = parse_fib_leaves(&access::read_trimmed(ctx.proc_path("net/fib_triestat")));
+    let fib_trie_leaves =
+        parse_fib_leaves(&access::read_trimmed(ctx.proc_path("net/fib_triestat")));
     let busy_poll = access::read_u64(ctx.proc_path("sys/net/core/busy_poll"));
     let dev_weight = access::read_u64(ctx.proc_path("sys/net/core/dev_weight"));
     let unix_max_dgram_qlen = access::read_u64(ctx.proc_path("sys/net/unix/max_dgram_qlen"));
@@ -334,19 +370,65 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         &mut notes,
     );
     let connectors = parse_connector(&access::read_trimmed(ctx.proc_path("net/connector")));
-    let ipv6_accept_ra =
-        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra"));
+    let ipv6_accept_ra = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra"));
     let ipv6_autoconf = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/autoconf"));
     let ipv6_hop_limit = access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/hop_limit"));
-    let conntrack_tcp_established = access::read_u64(
-        ctx.proc_path("sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
-    );
+    let conntrack_tcp_established =
+        access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_tcp_timeout_established"));
     let conntrack_buckets =
         access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_buckets"));
     let tcp_max_tw_buckets = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_tw_buckets"));
     let busy_read = access::read_u64(ctx.proc_path("sys/net/core/busy_read"));
     let icmp_ratelimit = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_ratelimit"));
     let ip_default_ttl = access::read_u64(ctx.proc_path("sys/net/ipv4/ip_default_ttl"));
+    let tcp_mem = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_mem"));
+    let udp_mem = access::read_trimmed(ctx.proc_path("sys/net/ipv4/udp_mem"));
+    let tcp_max_orphans = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_orphans"));
+    let tcp_dsack = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_dsack"));
+    let tcp_autocorking = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_autocorking"));
+    let ipv6_accept_dad = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_dad"));
+    let ipv6_addr_gen_mode =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/addr_gen_mode"));
+    let ipv6_accept_dad_dev =
+        conf_dev_diffs(ctx, "ipv6", "accept_dad", ipv6_accept_dad.value.as_deref());
+    let ipv6_addr_gen_mode_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "addr_gen_mode",
+        ipv6_addr_gen_mode.value.as_deref(),
+    );
+    let ip6frag_high_thresh = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_high_thresh"));
+    let rps_sock_flow_entries =
+        access::read_u64(ctx.proc_path("sys/net/core/rps_sock_flow_entries"));
+    let ipfrag_high_thresh = access::read_u64(ctx.proc_path("sys/net/ipv4/ipfrag_high_thresh"));
+    let ipfrag_low_thresh = access::read_u64(ctx.proc_path("sys/net/ipv4/ipfrag_low_thresh"));
+    let tcp_early_retrans = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_early_retrans"));
+    let ip_no_pmtu_disc = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_no_pmtu_disc"));
+    let fib_multipath_hash_policy =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/fib_multipath_hash_policy"));
+    let ipv6_max_addresses = access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/max_addresses"));
+    let tcp_frto = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_frto"));
+    let tcp_invalid_ratelimit =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_invalid_ratelimit"));
+    let tcp_min_tso_segs = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_min_tso_segs"));
+    let tcp_pacing_ss_ratio = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_pacing_ss_ratio"));
+    let netdev_tstamp_prequeue =
+        access::read_trimmed(ctx.proc_path("sys/net/core/netdev_tstamp_prequeue"));
+    let message_cost = access::read_u64(ctx.proc_path("sys/net/core/message_cost"));
+    let ipv6_accept_ra_defrtr =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_defrtr"));
+    let ipv6_router_solicitations =
+        access::read_i64(ctx.proc_path("sys/net/ipv6/conf/all/router_solicitations"));
+    let ipv6_accept_ra_defrtr_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_defrtr",
+        ipv6_accept_ra_defrtr.value.as_deref(),
+    );
+    let rs_all = ipv6_router_solicitations.value.map(|v| v.to_string());
+    let ipv6_router_solicitations_dev =
+        conf_dev_diffs(ctx, "ipv6", "router_solicitations", rs_all.as_deref());
+    let ip6frag_low_thresh = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_low_thresh"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -431,6 +513,34 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 busy_read,
                 icmp_ratelimit,
                 ip_default_ttl,
+                tcp_mem,
+                udp_mem,
+                tcp_max_orphans,
+                tcp_dsack,
+                tcp_autocorking,
+                ipv6_accept_dad,
+                ipv6_addr_gen_mode,
+                ipv6_accept_dad_dev,
+                ipv6_addr_gen_mode_dev,
+                ip6frag_high_thresh,
+                rps_sock_flow_entries,
+                ipfrag_high_thresh,
+                ipfrag_low_thresh,
+                tcp_early_retrans,
+                ip_no_pmtu_disc,
+                fib_multipath_hash_policy,
+                ipv6_max_addresses,
+                tcp_frto,
+                tcp_invalid_ratelimit,
+                tcp_min_tso_segs,
+                tcp_pacing_ss_ratio,
+                netdev_tstamp_prequeue,
+                message_cost,
+                ipv6_accept_ra_defrtr,
+                ipv6_router_solicitations,
+                ipv6_accept_ra_defrtr_dev,
+                ipv6_router_solicitations_dev,
+                ip6frag_low_thresh,
                 notes,
             };
         }
@@ -623,6 +733,34 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         busy_read,
         icmp_ratelimit,
         ip_default_ttl,
+        tcp_mem,
+        udp_mem,
+        tcp_max_orphans,
+        tcp_dsack,
+        tcp_autocorking,
+        ipv6_accept_dad,
+        ipv6_addr_gen_mode,
+        ipv6_accept_dad_dev,
+        ipv6_addr_gen_mode_dev,
+        ip6frag_high_thresh,
+        rps_sock_flow_entries,
+        ipfrag_high_thresh,
+        ipfrag_low_thresh,
+        tcp_early_retrans,
+        ip_no_pmtu_disc,
+        fib_multipath_hash_policy,
+        ipv6_max_addresses,
+        tcp_frto,
+        tcp_invalid_ratelimit,
+        tcp_min_tso_segs,
+        tcp_pacing_ss_ratio,
+        netdev_tstamp_prequeue,
+        message_cost,
+        ipv6_accept_ra_defrtr,
+        ipv6_router_solicitations,
+        ipv6_accept_ra_defrtr_dev,
+        ipv6_router_solicitations_dev,
+        ip6frag_low_thresh,
         notes,
     }
 }
@@ -1283,11 +1421,7 @@ mod tests {
             "sl local rem\n 0: 0 0\n 1: 0 0\n",
         )
         .unwrap();
-        fs::write(
-            root.join("proc/net/tcp6"),
-            "sl local rem\n 0: 0 0\n",
-        )
-        .unwrap();
+        fs::write(root.join("proc/net/tcp6"), "sl local rem\n 0: 0 0\n").unwrap();
         fs::write(root.join("proc/net/udp6"), "sl local rem\n").unwrap();
         fs::write(root.join("proc/net/raw"), "sl local rem\n").unwrap();
         fs::write(root.join("proc/net/udplite"), "sl local rem\n").unwrap();
@@ -1348,6 +1482,79 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv4/icmp_ratelimit"), "1000\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/ip_default_ttl"), "64\n").unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/tcp_mem"),
+            "181818\t242425\t363636\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/udp_mem"),
+            "363636\t484848\t727272\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_max_orphans"), "16384\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_dsack"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_autocorking"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_dad"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/addr_gen_mode"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/ip6frag_high_thresh"),
+            "4194304\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/core/rps_sock_flow_entries"),
+            "32768\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/ipfrag_high_thresh"),
+            "4194304\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/ipfrag_low_thresh"),
+            "3145728\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_retries1"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_early_retrans"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_no_pmtu_disc"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/fib_multipath_hash_policy"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/max_addresses"),
+            "16\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_frto"), "2\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_invalid_ratelimit"),
+            "500\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_min_tso_segs"), "2\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_pacing_ss_ratio"), "200\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/netdev_tstamp_prequeue"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/message_cost"), "5\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_defrtr"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/router_solicitations"),
+            "-1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/ip6frag_low_thresh"),
+            "3145728\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1388,7 +1595,10 @@ mod tests {
         assert_eq!(r.udplite_socks, 0);
         assert_eq!(r.xfrm_in_no_states, Some(3));
         assert_eq!(r.xfrm_out_no_states, Some(1));
-        assert_eq!(r.ptypes, vec!["0800:ip_rcv".to_string(), "0806:arp_rcv".to_string()]);
+        assert_eq!(
+            r.ptypes,
+            vec!["0800:ip_rcv".to_string(), "0806:arp_rcv".to_string()]
+        );
         assert_eq!(r.fib_trie_leaves, Some(3));
         assert_eq!(r.busy_poll.value, Some(0));
         assert_eq!(r.dev_weight.value, Some(64));
@@ -1409,6 +1619,31 @@ mod tests {
         assert_eq!(r.busy_read.value, Some(0));
         assert_eq!(r.icmp_ratelimit.value, Some(1000));
         assert_eq!(r.ip_default_ttl.value, Some(64));
+        assert_eq!(r.tcp_mem.value.as_deref(), Some("181818\t242425\t363636"));
+        assert_eq!(r.udp_mem.value.as_deref(), Some("363636\t484848\t727272"));
+        assert_eq!(r.tcp_max_orphans.value, Some(16384));
+        assert_eq!(r.tcp_dsack.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_autocorking.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_accept_dad.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_addr_gen_mode.value.as_deref(), Some("0"));
+        assert_eq!(r.ip6frag_high_thresh.value, Some(4_194_304));
+        assert_eq!(r.rps_sock_flow_entries.value, Some(32768));
+        assert_eq!(r.ipfrag_high_thresh.value, Some(4_194_304));
+        assert_eq!(r.ipfrag_low_thresh.value, Some(3_145_728));
+        assert_eq!(r.tcp.retries1.value, Some(3));
+        assert_eq!(r.tcp_early_retrans.value, Some(3));
+        assert_eq!(r.ip_no_pmtu_disc.value.as_deref(), Some("0"));
+        assert_eq!(r.fib_multipath_hash_policy.value, Some(0));
+        assert_eq!(r.ipv6_max_addresses.value, Some(16));
+        assert_eq!(r.tcp_frto.value.as_deref(), Some("2"));
+        assert_eq!(r.tcp_invalid_ratelimit.value, Some(500));
+        assert_eq!(r.tcp_min_tso_segs.value, Some(2));
+        assert_eq!(r.tcp_pacing_ss_ratio.value, Some(200));
+        assert_eq!(r.netdev_tstamp_prequeue.value.as_deref(), Some("1"));
+        assert_eq!(r.message_cost.value, Some(5));
+        assert_eq!(r.ipv6_accept_ra_defrtr.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_router_solicitations.value, Some(-1));
+        assert_eq!(r.ip6frag_low_thresh.value, Some(3_145_728));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -1432,6 +1667,35 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv4/conf/lo/rp_filter"), "0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/all/use_tempaddr"), "0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/lo/use_tempaddr"), "-1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_dad"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/accept_dad"), "-1\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/eth0")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/addr_gen_mode"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/eth0/addr_gen_mode"),
+            "3\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_defrtr"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/eth0/accept_ra_defrtr"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/router_solicitations"),
+            "-1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/router_solicitations"),
+            "3\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -1456,6 +1720,30 @@ mod tests {
             r.ipv6_use_tempaddr_dev.iter().any(|s| s == "lo:-1"),
             "lo use_tempaddr=-1 must differ from conf/all: {:?}",
             r.ipv6_use_tempaddr_dev
+        );
+        assert_eq!(r.ipv6_accept_dad.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_accept_dad_dev.iter().any(|s| s == "lo:-1"),
+            "lo accept_dad=-1 must differ from conf/all: {:?}",
+            r.ipv6_accept_dad_dev
+        );
+        assert_eq!(r.ipv6_addr_gen_mode.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_addr_gen_mode_dev.iter().any(|s| s == "eth0:3"),
+            "eth0 addr_gen_mode=3 must differ from conf/all: {:?}",
+            r.ipv6_addr_gen_mode_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_defrtr.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_accept_ra_defrtr_dev.iter().any(|s| s == "eth0:0"),
+            "eth0 accept_ra_defrtr=0 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_defrtr_dev
+        );
+        assert_eq!(r.ipv6_router_solicitations.value, Some(-1));
+        assert!(
+            r.ipv6_router_solicitations_dev.iter().any(|s| s == "lo:3"),
+            "lo router_solicitations=3 must differ from conf/all: {:?}",
+            r.ipv6_router_solicitations_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
