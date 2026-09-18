@@ -103,6 +103,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 81. **无 `/proc/config.gz` 很常见。** 需要 `CONFIG_IKCONFIG_PROC`；不要解压 gzip 加依赖。
 82. **`nmi_watchdog=0` 在虚拟机上正常。** 不是采集失败。
 83. **`/proc/net/if_inet6` 和 `ipv6_route` 没有表头。** 不要像 unix/packet 那样 skip 第一行。
+84. **`/proc/net/protocols` 第三列才是 sockets。** 不要把 size 当连接数。
+85. **nfsd `threads` 不存在表示未加载 nfsd。** 空 `/proc/fs/nfsd` 目录不是失败。
+86. **BDI 名字是主:次设备号。** 不要调用 `dmsetup`/`lsblk` 去解析。
 
 ## 测试方案
 

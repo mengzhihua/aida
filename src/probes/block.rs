@@ -9,7 +9,16 @@ pub struct BlockReport {
     pub devices: Vec<BlockDevice>,
     pub loops: Vec<LoopDevice>,
     pub mapper: Vec<DmDevice>,
+    pub bdi: Vec<BdiDev>,
+    pub bsg: Vec<String>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BdiDev {
+    pub name: String,
+    pub read_ahead_kb: Sample<u64>,
+    pub max_ratio: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -87,6 +96,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
                 devices: Vec::new(),
                 loops: Vec::new(),
                 mapper: Vec::new(),
+                bdi: Vec::new(),
+                bsg: Vec::new(),
                 notes,
             };
         }
@@ -216,12 +227,56 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
     if mapper.is_empty() {
         notes.push("无 device-mapper 设备（无 LVM/crypt 时常见）。".into());
     }
+    let bdi = read_bdi(ctx);
+    let bsg = match access::list_dir_names(ctx.sys_path("class/bsg")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(mut n),
+            ..
+        } => {
+            n.sort();
+            n.truncate(16);
+            n
+        }
+        _ => Vec::new(),
+    };
     BlockReport {
         devices,
         loops,
         mapper,
+        bdi,
+        bsg,
         notes,
     }
+}
+
+fn read_bdi(ctx: &ProbeCtx) -> Vec<BdiDev> {
+    let root = ctx.sys_path("class/bdi");
+    let names = match access::list_dir_names(&root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        if name == "." || name == ".." {
+            continue;
+        }
+        let dir = root.join(&name);
+        out.push(BdiDev {
+            read_ahead_kb: access::read_u64(dir.join("read_ahead_kb")),
+            max_ratio: access::read_trimmed(dir.join("max_ratio")),
+            name,
+        });
+        if out.len() >= 16 {
+            break;
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 enum LoopRead {
@@ -555,6 +610,11 @@ mod tests {
         std::fs::write(dm.join("dm/name"), "vg-root\n").unwrap();
         std::fs::write(dm.join("dm/uuid"), "LVM-abc\n").unwrap();
         std::fs::write(dm.join("dm/suspended"), "0\n").unwrap();
+        let bdi = root.join("sys/class/bdi/254:0");
+        std::fs::create_dir_all(&bdi).unwrap();
+        std::fs::write(bdi.join("read_ahead_kb"), "128\n").unwrap();
+        std::fs::write(bdi.join("max_ratio"), "100\n").unwrap();
+        std::fs::create_dir_all(root.join("sys/class/bsg/0:0:0:0")).unwrap();
         std::fs::create_dir_all(root.join("proc")).unwrap();
         std::fs::write(root.join("proc/diskstats"), "").unwrap();
         let ctx = ProbeCtx {
@@ -568,6 +628,8 @@ mod tests {
         assert_eq!(r.mapper.len(), 1);
         assert_eq!(r.mapper[0].mapper_name.value.as_deref(), Some("vg-root"));
         assert_eq!(r.devices[0].r#type, "Device Mapper");
+        assert_eq!(r.bdi[0].read_ahead_kb.value, Some(128));
+        assert_eq!(r.bsg, vec!["0:0:0:0".to_string()]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

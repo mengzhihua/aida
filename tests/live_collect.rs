@@ -67,6 +67,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"gpio\""));
     assert!(json.contains("\"mapper\""));
     assert!(json.contains("\"nmi_watchdog\""));
+    assert!(json.contains("\"tcp\""));
+    assert!(json.contains("\"protocols\""));
+    assert!(json.contains("\"nfsd_threads\""));
+    assert!(json.contains("\"bdi\""));
     assert!(
         !snap.irq.softirqs.is_empty(),
         "/proc/softirqs 应至少有一行"
@@ -216,6 +220,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("conntrack") || html.contains("crypto") || html.contains("lockdown"));
     assert!(html.contains("IPv6") || html.contains("sleep") || html.contains("DirectMap"));
     assert!(html.contains("fastopen") || html.contains("gpio") || html.contains("nmi"));
+    assert!(html.contains("protocols") || html.contains("nfsd") || html.contains("qdisc"));
     assert!(!html.contains("<script"));
 }
 

@@ -469,10 +469,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
 
     section(&mut html, "平台");
     html.push_str(&format!(
-        "<p class=\"muted\">ACPI {} PnP {} workqueue {}</p>",
+        "<p class=\"muted\">ACPI {} PnP {} workqueue {} events {}</p>",
         snap.platform.acpi_devices,
         snap.platform.pnp_devices,
-        esc(&snap.platform.workqueues.join(" "))
+        esc(&snap.platform.workqueues.join(" ")),
+        esc(&snap.platform.event_sources.join(" "))
     ));
     if !snap.platform.watchdogs.is_empty() {
         html.push_str("<table><tr><th>watchdog</th><th>identity</th><th>timeout</th></tr>");
@@ -871,7 +872,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} ka {} sack {} qdisc {}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -900,8 +901,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.unix_sockets,
         snap.net.inet6_addrs,
         snap.net.ipv6_routes,
-        snap.net.tcp_fastopen.display()
+        snap.net.tcp_fastopen.display(),
+        snap.net.tcp.keepalive_time.display(),
+        snap.net.tcp.sack.display(),
+        snap.net.default_qdisc.display()
     ));
+    if !snap.net.protocols.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">protocols {}</p>",
+            esc(&snap.net.protocols.join(" "))
+        ));
+    }
     for b in &snap.net.bridges {
         html.push_str(&format!(
             "<p>bridge {} {} members {}</p>",
@@ -1180,11 +1190,30 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&d.uuid.display())
         ));
     }
+    if !snap.block.bdi.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">bdi {}</p>",
+            esc(&snap
+                .block
+                .bdi
+                .iter()
+                .take(8)
+                .map(|b| format!("{} ra {}", b.name, b.read_ahead_kb.display()))
+                .collect::<Vec<_>>()
+                .join(", "))
+        ));
+    }
     for n in &snap.block.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
 
     section(&mut html, "文件系统");
+    html.push_str(&format!(
+        "<p class=\"muted\">nfsd {} volumes {} fuse {}</p>",
+        esc(&snap.fs.nfsd_threads.display()),
+        snap.fs.nfs_volumes,
+        snap.fs.fuse_conns
+    ));
     html.push_str("<table><tr><th>挂载点</th><th>fstype</th><th>源</th><th>kind</th><th>用量</th></tr>");
     for m in snap.fs.mounts.iter().filter(|m| m.kind != "virtual") {
         let usage = match (m.used_bytes, m.total_bytes) {
@@ -1329,10 +1358,13 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {}",
+                    "nmi {} wd {} thresh {} panic {} sysrq {} min_free {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
-                    snap.sysctl.watchdog_thresh.display()
+                    snap.sysctl.watchdog_thresh.display(),
+                    snap.sysctl.panic.display(),
+                    snap.sysctl.sysrq.display(),
+                    snap.sysctl.min_free_kbytes.display()
                 ),
             ),
             (

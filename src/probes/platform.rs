@@ -13,6 +13,7 @@ pub struct PlatformReport {
     pub acpi_devices: usize,
     pub pnp_devices: usize,
     pub workqueues: Vec<String>,
+    pub event_sources: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -82,6 +83,17 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         }
         _ => Vec::new(),
     };
+    let event_sources = match access::list_dir_names(ctx.sys_path("bus/event_source/devices")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(mut n),
+            ..
+        } => {
+            n.sort();
+            n
+        }
+        _ => Vec::new(),
+    };
     PlatformReport {
         watchdogs,
         backlights,
@@ -90,6 +102,7 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         acpi_devices,
         pnp_devices,
         workqueues,
+        event_sources,
         notes,
     }
 }
@@ -262,6 +275,7 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/acpi/devices/ACPI0001:00")).unwrap();
         fs::create_dir_all(root.join("sys/bus/pnp/devices/00:00")).unwrap();
         fs::create_dir_all(root.join("sys/bus/workqueue/devices/writeback")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/event_source/devices/software")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -277,6 +291,7 @@ mod tests {
         assert_eq!(r.acpi_devices, 1);
         assert_eq!(r.pnp_devices, 1);
         assert_eq!(r.workqueues, vec!["writeback".to_string()]);
+        assert_eq!(r.event_sources, vec!["software".to_string()]);
         let _ = fs::remove_dir_all(&root);
     }
 
