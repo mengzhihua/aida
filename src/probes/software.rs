@@ -10,6 +10,7 @@ pub struct SoftwareInfo {
     pub os_id: Sample<String>,
     pub os_version: Sample<String>,
     pub kernel_release: Sample<String>,
+    pub ostype: Sample<String>,
     pub kernel_version_banner: Sample<String>,
     pub hostname: Sample<String>,
     pub uptime_sec: Sample<f64>,
@@ -96,6 +97,7 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         os_id: os.id,
         os_version: os.version,
         kernel_release: access::read_trimmed(ctx.proc_path("sys/kernel/osrelease")),
+        ostype: access::read_trimmed(ctx.proc_path("sys/kernel/ostype")),
         kernel_version_banner: access::read_trimmed(ctx.proc_path("version")),
         hostname: access::read_trimmed(ctx.proc_path("sys/kernel/hostname")),
         uptime_sec: uptime,
@@ -542,6 +544,10 @@ mod tests {
         assert_eq!(r.cpu_byteorder.value.as_deref(), Some("little"));
         assert_eq!(r.address_bits.value.as_deref(), Some("64"));
         assert_eq!(r.profiling.value.as_deref(), Some("0"));
+        fs::create_dir_all(root.join("proc/sys/kernel")).unwrap();
+        fs::write(root.join("proc/sys/kernel/ostype"), "Linux\n").unwrap();
+        let r2 = collect(&ctx);
+        assert_eq!(r2.ostype.value.as_deref(), Some("Linux"));
         let _ = fs::remove_dir_all(&root);
     }
 }

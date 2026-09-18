@@ -53,6 +53,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.cpu.smt_control.display()
                 ),
             ),
+            ("online", snap.cpu.online.display()),
+            (
+                "offline",
+                match (
+                    snap.cpu.offline.access,
+                    snap.cpu.offline.value.as_deref(),
+                ) {
+                    (crate::access::AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
+                    (crate::access::AccessKind::Ok, _) => "—".into(),
+                    _ => snap.cpu.offline.access_label(),
+                },
+            ),
             ("KVM", snap.kvm.device.display()),
             ("nested", snap.kvm.nested.display()),
             ("microcode", snap.cpu.microcode.display()),
@@ -145,6 +157,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("pstore", snap.firmware.pstore_files.to_string()),
             ("firmware timeout", snap.firmware.firmware_timeout.display()),
             ("memmap", snap.firmware.memmap_entries.to_string()),
+            ("device-tree", snap.firmware.dt_model.display()),
             ("hwrng", snap.firmware.rng_current.display()),
         ],
     );
@@ -686,6 +699,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("spi", &snap.buses.spi),
         ("serio", &snap.buses.serio),
         ("ubi", &snap.buses.ubi),
+        ("scsi_generic", &snap.buses.scsi_generic),
+        ("wwan", &snap.buses.wwan),
+        ("ppp", &snap.buses.ppp),
+        ("phy", &snap.buses.phy),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1037,6 +1054,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.busy_poll.display(),
         snap.net.dev_weight.display(),
         snap.net.tcp.notsent_lowat.display()
+    ));
+    html.push_str(&format!(
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
+        snap.net.ipv6_accept_ra.display(),
+        snap.net.ipv6_autoconf.display(),
+        snap.net.ipv6_hop_limit.display(),
+        snap.net.ip_default_ttl.display(),
+        snap.net.conntrack_tcp_established.display(),
+        snap.net.conntrack_buckets.display(),
+        snap.net.tcp_max_tw_buckets.display(),
+        snap.net.busy_read.display(),
+        snap.net.icmp_ratelimit.display()
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1443,6 +1472,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         &[
             ("操作系统", snap.software.os_name.display()),
             ("内核", snap.software.kernel_release.display()),
+            ("ostype", snap.software.ostype.display()),
             ("主机名", snap.software.hostname.display()),
             (
                 "内存",
@@ -1648,9 +1678,13 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "ipc",
                 format!(
-                    "shmmax {} shmmni {} mqueue {} sysvipc {}/{}/{}",
+                    "shmmax {} shmall {} shmmni {} msgmax {} msgmnb {} msgmni {} mqueue {} sysvipc {}/{}/{}",
                     snap.sysctl.shmmax.display(),
+                    snap.sysctl.shmall.display(),
                     snap.sysctl.shmmni.display(),
+                    snap.sysctl.msgmax.display(),
+                    snap.sysctl.msgmnb.display(),
+                    snap.sysctl.msgmni.display(),
                     snap.sysctl.mqueue_queues_max.display(),
                     snap.sysctl.sysvipc_shm,
                     snap.sysctl.sysvipc_sem,
@@ -1660,15 +1694,22 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "aio/inotify",
                 format!(
-                    "{} / {} watches {} dentry {}/{} overflowuid {} vsyscall32 {} ldisc {}",
+                    "{} / {} watches {} dentry {}/{} inode {}/{} pty {}/{} overflowuid {} overflowgid {} vsyscall32 {} ldisc {} io_uring {}/{}",
                     snap.sysctl.aio_nr.display(),
                     snap.sysctl.aio_max_nr.display(),
                     snap.sysctl.inotify_max_user_watches.display(),
                     snap.sysctl.dentry_nr.display(),
                     snap.sysctl.dentry_unused.display(),
+                    snap.sysctl.inode_inuse.display(),
+                    snap.sysctl.inode_free.display(),
+                    snap.sysctl.pty_max.display(),
+                    snap.sysctl.pty_nr.display(),
                     snap.sysctl.overflowuid.display(),
+                    snap.sysctl.overflowgid.display(),
                     snap.sysctl.vsyscall32.display(),
-                    snap.sysctl.ldisc_autoload.display()
+                    snap.sysctl.ldisc_autoload.display(),
+                    snap.sysctl.io_uring_disabled.display(),
+                    snap.sysctl.io_uring_group.display()
                 ),
             ),
             (
