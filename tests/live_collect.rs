@@ -229,6 +229,9 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"fc\""));
     assert!(json.contains("\"accel\""));
     assert!(json.contains("\"vdpa\""));
+    assert!(json.contains("\"uio\""));
+    assert!(json.contains("\"auxiliary\""));
+    assert!(json.contains("\"usbmon\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -612,6 +615,14 @@ fn live_snapshot_json_and_html() {
             || html.contains("legacy_va")
             || html.contains("vdpa")
             || html.contains("accel")
+    );
+    assert!(
+        html.contains("ra_min_lft")
+            || html.contains("plb")
+            || html.contains("uio")
+            || html.contains("usbmon")
+            || html.contains("zonelist")
+            || html.contains("auto_msgmni")
     );
     assert!(!html.contains("<script"));
 }

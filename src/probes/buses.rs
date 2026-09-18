@@ -76,6 +76,12 @@ pub struct BusesReport {
     pub accel: Vec<String>,
     /// vDPA：先 `bus/vdpa/devices`，再 `class/vdpa`。
     pub vdpa: Vec<String>,
+    /// Userspace I/O（`class/uio`）。
+    pub uio: Vec<String>,
+    /// auxiliary bus：先 `bus/auxiliary/devices`，再 `class/auxiliary`。
+    pub auxiliary: Vec<String>,
+    /// USB monitor（`class/usbmon`）。
+    pub usbmon: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -562,6 +568,29 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let uio = list_optional_names(
+        ctx.sys_path("class/uio"),
+        8,
+        "uio",
+        &mut notes,
+        &mut missing,
+    );
+    let auxiliary = list_alt_dirs(
+        ctx,
+        "bus/auxiliary/devices",
+        "class/auxiliary",
+        8,
+        "auxiliary",
+        &mut notes,
+        &mut missing,
+    );
+    let usbmon = list_optional_names(
+        ctx.sys_path("class/usbmon"),
+        8,
+        "usbmon",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -632,6 +661,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         fc,
         accel,
         vdpa,
+        uio,
+        auxiliary,
+        usbmon,
         notes,
     }
 }
@@ -1408,6 +1440,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/fc_host/host0")).unwrap();
         fs::create_dir_all(root.join("sys/class/accel/accel0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/vdpa/devices/vdpa0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/uio/uio0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/auxiliary/devices/intel_vsec.telemetry.0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/usbmon/usbmon0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1479,6 +1514,9 @@ mod tests {
         assert_eq!(r.fc, vec!["fc_host/host0".to_string()]);
         assert_eq!(r.accel, vec!["accel0".to_string()]);
         assert_eq!(r.vdpa, vec!["vdpa0".to_string()]);
+        assert_eq!(r.uio, vec!["uio0".to_string()]);
+        assert_eq!(r.auxiliary, vec!["intel_vsec.telemetry.0".to_string()]);
+        assert_eq!(r.usbmon, vec!["usbmon0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -1957,6 +1995,54 @@ mod tests {
         assert!(
             labels.contains(&"fc") && labels.contains(&"accel") && labels.contains(&"vdpa"),
             "missing fc/accel/vdpa must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn auxiliary_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-aux-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/auxiliary/devices/mlx5_core.eth.0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.auxiliary, vec!["mlx5_core.eth.0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n)
+                    .is_none_or(|inner| inner.split('/').all(|s| s != "auxiliary"))),
+            "bus/auxiliary must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_uio_aux_usbmon_when_classes_missing() {
+        let root =
+            std::env::temp_dir().join(format!("aida-uio-aux-usbmon-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"uio") && labels.contains(&"auxiliary") && labels.contains(&"usbmon"),
+            "missing uio/auxiliary/usbmon must leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

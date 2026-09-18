@@ -2207,7 +2207,7 @@ impl AidaApp {
             ui,
             "tcp extra",
             &format!(
-                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}  thin_linear {}  limit_out {}  comp_sack {}  fwd_prio {}  fib_notify {}  echo_probe {}  fwmark {}  ndisc_notify {}  early_demux {}/{}  sack_delay {}ns  sack_slack {}ns  app_win {}  tfo_blackhole {}s  base_mss {}  min_snd_mss {}  reorder {}  recovery {}  max_reorder {}  tso_div {}  udp_demux {}  syn_linear {}  fwd_pmtu {}  no_ssthresh {}  min_rtt_wlen {}  mtu_floor {}  tso_rtt_log {}  udp_rmem_min {}  udp_wmem_min {}  shrink_win {}  l3mdev {}  migrate_req {}  reflect_tos {}  rto_min {}us",
+                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}  thin_linear {}  limit_out {}  comp_sack {}  fwd_prio {}  fib_notify {}  echo_probe {}  fwmark {}  ndisc_notify {}  early_demux {}/{}  sack_delay {}ns  sack_slack {}ns  app_win {}  tfo_blackhole {}s  base_mss {}  min_snd_mss {}  reorder {}  recovery {}  max_reorder {}  tso_div {}  udp_demux {}  syn_linear {}  fwd_pmtu {}  no_ssthresh {}  min_rtt_wlen {}  mtu_floor {}  tso_rtt_log {}  udp_rmem_min {}  udp_wmem_min {}  shrink_win {}  l3mdev {}  migrate_req {}  reflect_tos {}  rto_min {}us  plb {}  udp_l3mdev {}  backlog_ack {}  fwmark_reflect {}",
                 self.snap.net.tcp_orphan_retries.display(),
                 self.snap.net.tcp_rfc1337.display(),
                 self.snap.net.ip_unprivileged_port_start.display(),
@@ -2273,14 +2273,27 @@ impl AidaApp {
                     Some("0") => "0 关".into(),
                     _ => self.snap.net.tcp_reflect_tos.display(),
                 },
-                self.snap.net.tcp_rto_min_us.display()
+                self.snap.net.tcp_rto_min_us.display(),
+                match self.snap.net.tcp_plb_enabled.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.net.tcp_plb_enabled.display(),
+                },
+                match self.snap.net.udp_l3mdev_accept.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.net.udp_l3mdev_accept.display(),
+                },
+                self.snap.net.tcp_backlog_ack_defer.display(),
+                match self.snap.net.fwmark_reflect.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.net.fwmark_reflect.display(),
+                }
             ),
         );
         kv(
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2317,7 +2330,11 @@ impl AidaApp {
                 self.snap.net.ipv6_idgen_delay.display(),
                 self.snap.net.ipv6_ip6frag_time.display(),
                 self.snap.net.ipv6_keep_addr_on_down.display(),
-                self.snap.net.ipv6_accept_ra_min_hop_limit.display()
+                self.snap.net.ipv6_accept_ra_min_hop_limit.display(),
+                match self.snap.net.ipv6_accept_ra_min_lft.value {
+                    Some(0) => "0".into(),
+                    _ => self.snap.net.ipv6_accept_ra_min_lft.display(),
+                }
             ),
         );
         kv(
@@ -2432,6 +2449,13 @@ impl AidaApp {
                 ui,
                 "accept_ra_min_hop iface",
                 &self.snap.net.ipv6_accept_ra_min_hop_limit_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_accept_ra_min_lft_dev.is_empty() {
+            kv(
+                ui,
+                "accept_ra_min_lft iface",
+                &self.snap.net.ipv6_accept_ra_min_lft_dev.join("  "),
             );
         }
         kv(
@@ -3020,6 +3044,9 @@ impl AidaApp {
             ("fc", &self.snap.buses.fc),
             ("accel", &self.snap.buses.accel),
             ("vdpa", &self.snap.buses.vdpa),
+            ("uio", &self.snap.buses.uio),
+            ("auxiliary", &self.snap.buses.auxiliary),
+            ("usbmon", &self.snap.buses.usbmon),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -3353,13 +3380,17 @@ impl AidaApp {
             ui,
             "ipc",
             &format!(
-                "shmmax {}  shmall {}  shmmni {}  msgmax {}  msgmnb {}  msgmni {}  sem {}  mqueue {}  sysvipc shm/sem/msg {}/{}/{}  shm_rmid_forced {}",
+                "shmmax {}  shmall {}  shmmni {}  msgmax {}  msgmnb {}  msgmni {}  auto_msgmni {}  sem {}  mqueue {}  sysvipc shm/sem/msg {}/{}/{}  shm_rmid_forced {}",
                 self.snap.sysctl.shmmax.display(),
                 self.snap.sysctl.shmall.display(),
                 self.snap.sysctl.shmmni.display(),
                 self.snap.sysctl.msgmax.display(),
                 self.snap.sysctl.msgmnb.display(),
                 self.snap.sysctl.msgmni.display(),
+                match self.snap.sysctl.auto_msgmni.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.sysctl.auto_msgmni.display(),
+                },
                 self.snap.sysctl.sem.display(),
                 self.snap.sysctl.mqueue_queues_max.display(),
                 self.snap.sysctl.sysvipc_shm,
@@ -3401,7 +3432,7 @@ impl AidaApp {
             ui,
             "vm",
             &format!(
-                "swappiness {}  overcommit {}  overcommit_kbytes {}  dirty {}/{}  dirty_bytes {}/{}  watermark {}  boost {}  pipe_pages {}/{}  compact_unevict {}  zone_reclaim {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}  dirtytime {}  memfd_noexec {}  compact_proact {}  page_lock {}  min_slab {}  min_unmapped {}  extfrag {}  stat_interval {}  hugetlb_vmemmap {}  percpu_high {}  numa_stat {}  legacy_va {}  hugetlb_shm {}  core_note {}",
+                "swappiness {}  overcommit {}  overcommit_kbytes {}  dirty {}/{}  dirty_bytes {}/{}  watermark {}  boost {}  pipe_pages {}/{}  compact_unevict {}  zone_reclaim {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}  dirtytime {}  memfd_noexec {}  compact_proact {}  page_lock {}  min_slab {}  min_unmapped {}  extfrag {}  stat_interval {}  hugetlb_vmemmap {}  percpu_high {}  numa_stat {}  legacy_va {}  hugetlb_shm {}  core_note {}  zonelist {}  lowmem_reserve {}  nr_overcommit_hp {}",
                 self.snap.sysctl.swappiness.display(),
                 self.snap.sysctl.overcommit_memory.display(),
                 self.snap.sysctl.overcommit_kbytes.display(),
@@ -3447,7 +3478,13 @@ impl AidaApp {
                     Some(0) => "0 无".into(),
                     _ => self.snap.sysctl.hugetlb_shm_group.display(),
                 },
-                self.snap.sysctl.core_file_note_size_limit.display()
+                self.snap.sysctl.core_file_note_size_limit.display(),
+                self.snap.sysctl.numa_zonelist_order.display(),
+                self.snap.sysctl.lowmem_reserve_ratio.display(),
+                match self.snap.sysctl.nr_overcommit_hugepages.value {
+                    Some(0) => "0".into(),
+                    _ => self.snap.sysctl.nr_overcommit_hugepages.display(),
+                }
             ),
         );
         kv(ui, "ASLR", &self.snap.sysctl.aslr.display());

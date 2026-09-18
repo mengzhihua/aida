@@ -231,6 +231,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 209. **`tcp_rto_min_us` 是最小 RTO（微秒）。** 不是毫秒。
 210. **`icmp_errors_use_inbound_ifaddr=0` 表示 ICMP 错误用出接口地址。** `1` 才用入接口。
 211. **`core_file_note_size_limit` 是 core dump note 大小上限。** 不是 core 文件总大小。
+212. **`auto_msgmni=0` 表示不自动重算 `msgmni`。** 不是采集失败。
+213. **`tcp_plb_enabled=0` 表示关闭 Protective Load Balancing。**
+214. **`udp_l3mdev_accept` 与 `tcp_l3mdev_accept` 成对。** `0` 表示不接受跨 L3 master 的套接字。
+215. **`accept_ra_min_lft` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+216. **空的 uio / auxiliary / usbmon 表示没有对应硬件。** auxiliary 先看 `bus/auxiliary/devices`，没有再看 `class/auxiliary`。`PermissionDenied` 仍写 note。
+217. **不要读 `vm.stat_refresh`。** 那是一次性触发器，不是状态。
+218. **`nr_overcommit_hugepages=0` 表示不额外 overcommit hugepage。** `lowmem_reserve_ratio` 是各 zone 预留比例，保留原文。
 
 ## 测试方案
 
