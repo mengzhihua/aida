@@ -126,6 +126,7 @@ pub fn collect(ctx: &ProbeCtx) -> ClockReport {
             value: Some(mut n),
             ..
         } => {
+            n.retain(|x| x == "broadcast" || x.starts_with("clockevent"));
             n.sort();
             n.truncate(16);
             n
@@ -169,6 +170,8 @@ mod tests {
         fs::write(pps.join("mode"), "1\n").unwrap();
         fs::create_dir_all(root.join("sys/devices/system/clockevents/broadcast")).unwrap();
         fs::create_dir_all(root.join("sys/devices/system/clockevents/clockevent0")).unwrap();
+        fs::create_dir_all(root.join("sys/devices/system/clockevents/power")).unwrap();
+        fs::write(root.join("sys/devices/system/clockevents/uevent"), "").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -184,6 +187,7 @@ mod tests {
         assert_eq!(r.pps[0].path.value.as_deref(), Some("/dev/pps0"));
         assert!(r.clockevents.contains(&"broadcast".to_string()));
         assert!(r.clockevents.contains(&"clockevent0".to_string()));
+        assert!(!r.clockevents.iter().any(|n| n == "power" || n == "uevent"));
         let _ = fs::remove_dir_all(&root);
     }
 }
