@@ -40,7 +40,7 @@
 | PM | `/sys/power` | state / mem_sleep / suspend_stats；wakeup |
 | RAPL | `/sys/class/powercap/*/energy_uj` | 差分瓦特；回绕用 `max_energy_range_uj` |
 | Audio | `/proc/asound/cards` | `/sys/class/sound/cardN/id` |
-| Firmware | `/sys/firmware/efi` | SecureBoot；ACPI 表名；pm_profile；TPM；hwrng；pstore；`class/firmware/timeout`；memmap；devicetree `model`（x86 常无） |
+| Firmware | `/sys/firmware/efi` | SecureBoot；ACPI 表名；pm_profile；TPM；hwrng；pstore；`class/firmware/timeout`；memmap；devicetree `model`（去尾 NUL；x86 常无） |
 | Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs`；ext4 sysfs；xfs stats；nfsd；fuse connections |
 | Modules | `/proc/modules` | 按名称排序 |
 | Clock | `clocksource0/current_clocksource` | `/sys/class/rtc`；`/sys/class/ptp`；`/sys/class/pps`；`clockevents` |
@@ -59,7 +59,7 @@
 | Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；MSR；vtconsole；`bus/platform/devices` 名（最多 16）；不调用 i2cdetect |
 | Periph | `/proc/dma`；`/sys/class/dma` | PWM `pwmchipN/npwm`；IIO `name`；nvmem `type`（不读二进制）；regulator 电压；devlink `status`；`pci_bus` cpulist；不调用 `devlink` |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI / ttyS / misc / hidraw / gpio / mtd / IB | ieee80211 / typec / udc / dax / wmi / spi / serio / ubi / scsi_generic / wwan / ppp / phy 名（缺类合并一条 note）；`/proc/tty/drivers`；不调用 setserial/`iw`；ttyS `type=0` 跳过 |
-| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC（含 shmall/msgmnb/msgmni）；mqueue；consoles；sched_rt（`-1` 不限）；OOM/laptop/kexec_load_disabled；printk_ratelimit；cfs bandwidth；oops_limit；uffd；dentry-state；inode-state；pty max/nr；overflowuid/gid；vsyscall32；ldisc_autoload；io_uring_disabled/group（`-1` 未绑定组）；`/proc/key-users` 只计数 |
+| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC（含 shmall/msgmnb/msgmni）；mqueue；consoles；sched_rt（`-1` 不限）；OOM/laptop/kexec_load_disabled；printk_ratelimit；cfs bandwidth；oops_limit；uffd；dentry-state；inode-state（inuse=nr_inodes-nr_unused）；pty max/nr；overflowuid/gid；vsyscall32；ldisc_autoload；io_uring_disabled/group（`-1` 未绑定组）；`/proc/key-users` 只计数 |
 | Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current；第一层 `.slice`/`.scope`；`/proc/cgroups` enabled=1 |
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf / fs.protected_* | bpf_jit_enable/harden；binfmt_misc status（不写 register）；不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |

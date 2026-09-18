@@ -96,7 +96,7 @@ pub struct SysctlReport {
     pub key_users: usize,
     pub vsyscall32: Sample<String>,
     pub ldisc_autoload: Sample<String>,
-    /// `inode-state` 第 1 列 nr_inodes，第 2 列 nr_free_inodes。
+    /// `inode-state`：`inode_inuse = nr_inodes - nr_unused`，`inode_free` 为第 2 列。
     pub inode_inuse: Sample<u64>,
     pub inode_free: Sample<u64>,
     pub pty_max: Sample<u64>,
@@ -147,6 +147,8 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
     if consoles.is_empty() {
         notes.push("无 /proc/consoles 行（容器里常见）。".into());
     }
+    let (inode_inuse, inode_free) =
+        parse_inode_state(&access::read_trimmed(ctx.proc_path("sys/fs/inode-state")));
     SysctlReport {
         file_nr_alloc,
         file_nr_max,
@@ -254,14 +256,8 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         key_users: count_data_lines(&access::read_trimmed(ctx.proc_path("key-users"))),
         vsyscall32: access::read_trimmed(ctx.proc_path("sys/abi/vsyscall32")),
         ldisc_autoload: access::read_trimmed(ctx.proc_path("sys/dev/tty/ldisc_autoload")),
-        inode_inuse: parse_state_nth(
-            &access::read_trimmed(ctx.proc_path("sys/fs/inode-state")),
-            0,
-        ),
-        inode_free: parse_state_nth(
-            &access::read_trimmed(ctx.proc_path("sys/fs/inode-state")),
-            1,
-        ),
+        inode_inuse,
+        inode_free,
         pty_max: access::read_u64(ctx.proc_path("sys/kernel/pty/max")),
         pty_nr: access::read_u64(ctx.proc_path("sys/kernel/pty/nr")),
         shmall: access::read_trimmed(ctx.proc_path("sys/kernel/shmall")),
@@ -308,6 +304,34 @@ fn parse_state_nth(sample: &Sample<String>, idx: usize) -> Sample<u64> {
     match text.split_whitespace().nth(idx).and_then(|s| s.parse().ok()) {
         Some(v) => Sample::ok(v, sample.source.clone()),
         None => miss(),
+    }
+}
+
+/// `inode-state`：第 1 列 nr_inodes（已分配），第 2 列 nr_unused。
+/// `inode_inuse = nr_inodes - nr_unused`，空闲大于已分配时记为读取失败。
+pub fn parse_inode_state(sample: &Sample<String>) -> (Sample<u64>, Sample<u64>) {
+    let miss = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let Some(text) = sample.value.as_deref() else {
+        return (miss(), miss());
+    };
+    let mut it = text.split_whitespace();
+    let nr = it.next().and_then(|s| s.parse::<u64>().ok());
+    let free = it.next().and_then(|s| s.parse::<u64>().ok());
+    match (nr, free) {
+        (Some(nr), Some(free)) if free <= nr => (
+            Sample::ok(nr - free, sample.source.clone()),
+            Sample::ok(free, sample.source.clone()),
+        ),
+        (Some(_), Some(_)) => (
+            Sample::error(sample.source.clone(), "inode-state 空闲大于已分配"),
+            Sample::error(sample.source.clone(), "inode-state 空闲大于已分配"),
+        ),
+        _ => (miss(), miss()),
     }
 }
 
@@ -516,7 +540,7 @@ mod tests {
         assert_eq!(r.key_users, 2);
         assert_eq!(r.vsyscall32.value.as_deref(), Some("1"));
         assert_eq!(r.ldisc_autoload.value.as_deref(), Some("1"));
-        assert_eq!(r.inode_inuse.value, Some(80));
+        assert_eq!(r.inode_inuse.value, Some(68));
         assert_eq!(r.inode_free.value, Some(12));
         assert_eq!(r.pty_max.value, Some(4096));
         assert_eq!(r.pty_nr.value, Some(3));
@@ -550,5 +574,17 @@ mod tests {
         assert_eq!(r.panic.value, Some(-1));
         assert_eq!(r.panic.access, crate::access::AccessKind::Ok);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn inode_state_inuse_subtracts_unused() {
+        let (inuse, free) = parse_inode_state(&Sample::ok("80 12 45 0 0 0 0".into(), "inode-state"));
+        assert_eq!(inuse.value, Some(68));
+        assert_eq!(free.value, Some(12));
+        let (bad_inuse, bad_free) =
+            parse_inode_state(&Sample::ok("10 12".into(), "inode-state"));
+        assert_eq!(bad_inuse.access, crate::access::AccessKind::Error);
+        assert_eq!(bad_free.access, crate::access::AccessKind::Error);
+        assert!(bad_inuse.value.is_none());
     }
 }
