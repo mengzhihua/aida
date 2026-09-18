@@ -88,6 +88,12 @@ pub struct BusesReport {
     pub drm_dp_aux_dev: Vec<String>,
     /// MHI：先 `bus/mhi/devices`，再 `class/mhi`。
     pub mhi: Vec<String>,
+    /// IPMI：`class/ipmi`，BMC 另见 `class/ipmi_bmc`。
+    pub ipmi: Vec<String>,
+    /// USB dual-role switch（`class/usb_role`）。
+    pub usb_role: Vec<String>,
+    /// I3C：先 `bus/i3c/devices`，再 `class/i3c`。
+    pub i3c: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -621,6 +627,32 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    // IPMI 消息接口是 `class/ipmi`；OpenBMC 还有 `class/ipmi_bmc`。两边都缺失才 leftover。
+    let ipmi = list_prefixed_classes(
+        ctx,
+        &[("class/ipmi", "ipmi"), ("class/ipmi_bmc", "ipmi_bmc")],
+        8,
+        "ipmi",
+        &mut notes,
+        &mut missing,
+    );
+    let usb_role = list_optional_names(
+        ctx.sys_path("class/usb_role"),
+        8,
+        "usb_role",
+        &mut notes,
+        &mut missing,
+    );
+    // I3C 真实 ABI 是 bus；没有独立 `class/i3c` 时不要当成缺失。
+    let i3c = list_alt_dirs(
+        ctx,
+        "bus/i3c/devices",
+        "class/i3c",
+        8,
+        "i3c",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -697,6 +729,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         counter,
         drm_dp_aux_dev,
         mhi,
+        ipmi,
+        usb_role,
+        i3c,
         notes,
     }
 }
@@ -1479,6 +1514,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/counter/counter0")).unwrap();
         fs::create_dir_all(root.join("sys/class/drm_dp_aux_dev/drm_dp_aux0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/mhi/devices/mhi0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/ipmi/ipmi0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/usb_role/dual-role-switch0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/i3c/devices/i3c-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1556,6 +1594,9 @@ mod tests {
         assert_eq!(r.counter, vec!["counter0".to_string()]);
         assert_eq!(r.drm_dp_aux_dev, vec!["drm_dp_aux0".to_string()]);
         assert_eq!(r.mhi, vec!["mhi0".to_string()]);
+        assert_eq!(r.ipmi, vec!["ipmi/ipmi0".to_string()]);
+        assert_eq!(r.usb_role, vec!["dual-role-switch0".to_string()]);
+        assert_eq!(r.i3c, vec!["i3c-0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2133,6 +2174,78 @@ mod tests {
                 && labels.contains(&"drm_dp_aux_dev")
                 && labels.contains(&"mhi"),
             "missing counter/drm_dp_aux_dev/mhi must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn i3c_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-i3c-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/i3c/devices/i3c-0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.i3c, vec!["i3c-0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "i3c"))),
+            "bus/i3c must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ipmi_bmc_without_msghandler_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ipmi-bmc-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/ipmi_bmc/ipmi-bmc0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ipmi, vec!["ipmi_bmc/ipmi-bmc0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "ipmi"))),
+            "class/ipmi_bmc must not leftover ipmi: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_ipmi_usbrole_i3c_when_classes_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "aida-ipmi-usbrole-i3c-miss-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"ipmi") && labels.contains(&"usb_role") && labels.contains(&"i3c"),
+            "missing ipmi/usb_role/i3c must leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

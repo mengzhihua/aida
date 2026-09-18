@@ -237,6 +237,12 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"mhi\""));
     assert!(json.contains("\"tcp_stdurg\""));
     assert!(json.contains("\"nr_hugepages_mempolicy\""));
+    assert!(json.contains("\"ipmi\""));
+    assert!(json.contains("\"usb_role\""));
+    assert!(json.contains("\"i3c\""));
+    assert!(json.contains("\"tcp_allowed_congestion\""));
+    assert!(json.contains("\"tcp_plb_idle_rehash_rounds\""));
+    assert!(json.contains("\"nr_hugepages\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),

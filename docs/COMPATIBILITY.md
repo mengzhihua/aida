@@ -247,6 +247,11 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 225. **`accept_ra_rt_info_min_plen` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 226. **空的 counter / drm_dp_aux_dev / mhi 表示没有对应硬件。** MHI 先看 `bus/mhi/devices`，没有再看 `class/mhi`。`PermissionDenied` 仍写 note。
 227. **`nr_hugepages_mempolicy=0` 表示 hugepage 计数不按 NUMA mempolicy 节点拆。** 不是采集失败。
+228. **空的 ipmi / usb_role / i3c 表示没有对应硬件。** IPMI 合并 `class/ipmi` 与 `class/ipmi_bmc`，两边都缺失才 leftover。I3C 先看 `bus/i3c/devices`，没有再看 `class/i3c`。`PermissionDenied` 仍写 note。
+229. **`tcp_allowed_congestion_control` 是非特权进程可 `setsockopt` 的拥塞算法。** 是 `tcp_available_congestion_control` 的子集，不要混。
+230. **`tcp_plb_idle_rehash_rounds` / `tcp_plb_rehash_rounds` / `tcp_plb_suspend_rto_sec` 与 `tcp_plb_enabled` 成对。** 分别是空闲再哈希轮数、拥塞再哈希轮数、RTO 后暂停秒数。
+231. **`accept_ra_rt_info_max_plen` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+232. **`nr_hugepages=0` 表示默认大小 hugepage 池没有静态预留页。** 不是采集失败；与 `nr_overcommit_hugepages` / `nr_hugepages_mempolicy` 不要混。
 
 ## 测试方案
 
