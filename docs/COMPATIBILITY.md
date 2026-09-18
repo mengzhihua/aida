@@ -214,6 +214,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 192. **`tcp_max_reordering` 是允许的乱序上限。** `tcp_reordering` 是初始/当前度量，两者不要混。
 193. **`udp_early_demux` 与 `tcp_early_demux` / `ip_early_demux` 成对。** `1` 表示开启 UDP 早分流。
 194. **不要 dump `vm.mmap_rnd_bits` / `mmap_rnd_compat_bits`。** 非 root 常为 `PermissionDenied`，属于 ASLR 熵配置而不是普通状态。
+195. **空的 vfio / mdev / vhost 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+196. **`keep_addr_on_down` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+197. **`percpu_pagelist_high_fraction=0` 表示使用内核默认高水位。** 不是把 per-cpu 列表清空。
+198. **`ping_group_range` 的 min>max（常见 `1 0`）表示无特权进程不能 ping。** 不是采集失败。
+199. **`numa_stat=1` 表示采集 NUMA VM 计数。** `0` 关闭以换性能。
+200. **不要 dump `net.core.netdev_rss_key` 或 IPv6 `stable_secret`。** 前者是 RSS 密钥，后者非 root 常无权限。
+201. **`tcp_min_rtt_wlen` 是 min RTT 滑动窗口（秒）。** 不是超时。
 
 ## 测试方案
 

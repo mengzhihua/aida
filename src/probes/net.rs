@@ -182,6 +182,18 @@ pub struct NetReport {
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_mtu_dev: Vec<String>,
     pub tcp_no_ssthresh_metrics_save: Sample<String>,
+    pub tcp_min_rtt_wlen: Sample<u64>,
+    pub tcp_mtu_probe_floor: Sample<u64>,
+    pub tcp_tso_rtt_log: Sample<u64>,
+    pub udp_rmem_min: Sample<u64>,
+    /// `min>max`（常见 `1 0`）表示无特权进程不能 ping。
+    pub ping_group_range: Sample<String>,
+    pub icmp_ratemask: Sample<u64>,
+    pub ipv6_idgen_delay: Sample<u64>,
+    pub ipv6_ip6frag_time: Sample<u64>,
+    pub ipv6_keep_addr_on_down: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_keep_addr_on_down_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -588,6 +600,22 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     );
     let tcp_no_ssthresh_metrics_save =
         access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_no_ssthresh_metrics_save"));
+    let tcp_min_rtt_wlen = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_min_rtt_wlen"));
+    let tcp_mtu_probe_floor = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_mtu_probe_floor"));
+    let tcp_tso_rtt_log = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_tso_rtt_log"));
+    let udp_rmem_min = access::read_u64(ctx.proc_path("sys/net/ipv4/udp_rmem_min"));
+    let ping_group_range = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ping_group_range"));
+    let icmp_ratemask = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_ratemask"));
+    let ipv6_idgen_delay = access::read_u64(ctx.proc_path("sys/net/ipv6/idgen_delay"));
+    let ipv6_ip6frag_time = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_time"));
+    let ipv6_keep_addr_on_down =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/keep_addr_on_down"));
+    let ipv6_keep_addr_on_down_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "keep_addr_on_down",
+        ipv6_keep_addr_on_down.value.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -754,6 +782,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_accept_ra_mtu,
                 ipv6_accept_ra_mtu_dev,
                 tcp_no_ssthresh_metrics_save,
+                tcp_min_rtt_wlen,
+                tcp_mtu_probe_floor,
+                tcp_tso_rtt_log,
+                udp_rmem_min,
+                ping_group_range,
+                icmp_ratemask,
+                ipv6_idgen_delay,
+                ipv6_ip6frag_time,
+                ipv6_keep_addr_on_down,
+                ipv6_keep_addr_on_down_dev,
                 notes,
             };
         }
@@ -1028,6 +1066,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_accept_ra_mtu,
         ipv6_accept_ra_mtu_dev,
         tcp_no_ssthresh_metrics_save,
+        tcp_min_rtt_wlen,
+        tcp_mtu_probe_floor,
+        tcp_tso_rtt_log,
+        udp_rmem_min,
+        ping_group_range,
+        icmp_ratemask,
+        ipv6_idgen_delay,
+        ipv6_ip6frag_time,
+        ipv6_keep_addr_on_down,
+        ipv6_keep_addr_on_down_dev,
         notes,
     }
 }
@@ -1922,6 +1970,19 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_min_rtt_wlen"), "300\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_mtu_probe_floor"), "48\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_tso_rtt_log"), "9\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/udp_rmem_min"), "4096\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ping_group_range"), "1\t0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_ratemask"), "6168\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/idgen_delay"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/ip6frag_time"), "60\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/keep_addr_on_down"),
+            "0\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -2061,6 +2122,15 @@ mod tests {
         assert_eq!(r.ipv6_idgen_retries.value, Some(3));
         assert_eq!(r.ipv6_accept_ra_mtu.value.as_deref(), Some("1"));
         assert_eq!(r.tcp_no_ssthresh_metrics_save.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_min_rtt_wlen.value, Some(300));
+        assert_eq!(r.tcp_mtu_probe_floor.value, Some(48));
+        assert_eq!(r.tcp_tso_rtt_log.value, Some(9));
+        assert_eq!(r.udp_rmem_min.value, Some(4096));
+        assert_eq!(r.ping_group_range.value.as_deref(), Some("1\t0"));
+        assert_eq!(r.icmp_ratemask.value, Some(6168));
+        assert_eq!(r.ipv6_idgen_delay.value, Some(1));
+        assert_eq!(r.ipv6_ip6frag_time.value, Some(60));
+        assert_eq!(r.ipv6_keep_addr_on_down.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2131,6 +2201,16 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv6/conf/lo/enhanced_dad"), "0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_ra_mtu"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/lo/accept_ra_mtu"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/keep_addr_on_down"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/keep_addr_on_down"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2209,6 +2289,12 @@ mod tests {
             r.ipv6_accept_ra_mtu_dev.iter().any(|s| s == "lo:0"),
             "lo accept_ra_mtu=0 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_mtu_dev
+        );
+        assert_eq!(r.ipv6_keep_addr_on_down.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_keep_addr_on_down_dev.iter().any(|s| s == "lo:1"),
+            "lo keep_addr_on_down=1 must differ from conf/all: {:?}",
+            r.ipv6_keep_addr_on_down_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

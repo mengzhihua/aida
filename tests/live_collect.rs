@@ -222,6 +222,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"tcp_max_reordering\""));
     assert!(json.contains("\"ipv6_accept_ra_mtu\""));
     assert!(json.contains("\"cec\""));
+    assert!(json.contains("\"perf_event_max_stack\""));
+    assert!(json.contains("\"tcp_min_rtt_wlen\""));
+    assert!(json.contains("\"ipv6_keep_addr_on_down\""));
+    assert!(json.contains("\"vfio\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -423,6 +427,18 @@ fn live_snapshot_json_and_html() {
         "accept_ra_mtu 不应是读取失败"
     );
     assert!(
+        snap.sysctl.perf_event_max_stack.access != aida::access::AccessKind::Error,
+        "perf_event_max_stack 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_min_rtt_wlen.access != aida::access::AccessKind::Error,
+        "tcp_min_rtt_wlen 不应是读取失败"
+    );
+    assert!(
+        snap.net.ipv6_keep_addr_on_down.access != aida::access::AccessKind::Error,
+        "keep_addr_on_down 不应是读取失败"
+    );
+    assert!(
         snap.sysctl.sched_deadline_period_max_us.access != aida::access::AccessKind::Error,
         "sched_deadline_period_max_us 不应是读取失败"
     );
@@ -578,6 +594,13 @@ fn live_snapshot_json_and_html() {
             || html.contains("cec")
             || html.contains("ra_mtu")
             || html.contains("hugetlb_vmemmap")
+    );
+    assert!(
+        html.contains("max_stack")
+            || html.contains("min_rtt_wlen")
+            || html.contains("vfio")
+            || html.contains("keep_addr")
+            || html.contains("numa_stat")
     );
     assert!(!html.contains("<script"));
 }

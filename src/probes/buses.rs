@@ -67,6 +67,9 @@ pub struct BusesReport {
     pub cec: Vec<String>,
     pub media: Vec<String>,
     pub nbd: Vec<String>,
+    pub vfio: Vec<String>,
+    pub mdev: Vec<String>,
+    pub vhost: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -510,6 +513,27 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let vfio = list_optional_names(
+        ctx.sys_path("class/vfio"),
+        8,
+        "vfio",
+        &mut notes,
+        &mut missing,
+    );
+    let mdev = list_optional_names(
+        ctx.sys_path("class/mdev"),
+        8,
+        "mdev",
+        &mut notes,
+        &mut missing,
+    );
+    let vhost = list_optional_names(
+        ctx.sys_path("class/vhost"),
+        8,
+        "vhost",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -574,6 +598,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         cec,
         media,
         nbd,
+        vfio,
+        mdev,
+        vhost,
         notes,
     }
 }
@@ -1245,6 +1272,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/cec/cec0")).unwrap();
         fs::create_dir_all(root.join("sys/class/media/media0")).unwrap();
         fs::create_dir_all(root.join("sys/class/nbd/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/vfio/vfio0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/mdev/mdev0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/vhost/vhost0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1307,6 +1337,9 @@ mod tests {
         assert_eq!(r.cec, vec!["cec0".to_string()]);
         assert_eq!(r.media, vec!["media0".to_string()]);
         assert_eq!(r.nbd, vec!["nbd0".to_string()]);
+        assert_eq!(r.vfio, vec!["vfio0".to_string()]);
+        assert_eq!(r.mdev, vec!["mdev0".to_string()]);
+        assert_eq!(r.vhost, vec!["vhost0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
