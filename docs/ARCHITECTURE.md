@@ -57,6 +57,7 @@
 | SCSI | `/sys/class/scsi_host` | `scsi_device` vendor/model/type |
 | iSCSI | `/sys/class/iscsi_{transport,host,session}` | 不调用 iscsiadm |
 | Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；MSR；vtconsole；不调用 i2cdetect |
+| Periph | `/proc/dma`；`/sys/class/dma` | PWM `pwmchipN/npwm`；IIO `name`；nvmem `type`（不读二进制）；regulator 电压；devlink `status`；`pci_bus` cpulist；不调用 `devlink` |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI / ttyS / misc / hidraw / gpio / mtd / IB | `/proc/tty/drivers`；不调用 setserial；ttyS `type=0` 跳过 |
 | Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC；mqueue；consoles |
 | Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current；第一层 `.slice`/`.scope` |

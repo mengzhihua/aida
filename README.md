@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十六轮** 补齐 SysV IPC / POSIX mqueue、kexec/oops、fs.protected 与 TCP rmem/syn 重试，并消化 #13 的 IGMP 计数、负数 panic 超时，以及 #14 的 rt6 第 6 列、per-iface `rp_filter`/`use_tempaddr` 与 MSR/VT/clockevents/IRQ/locks 读失败 note。
+**第十七轮** 补齐 DMA（`/proc/dma` + dmaengine）、PWM / IIO / nvmem / regulator、devlink 与 `pci_bus`。不写 pwm `export`、不转储 nvmem 二进制、不调用 `devlink`。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -22,6 +22,7 @@
 | PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
 | 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole |
+| DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
 | 传感器告警 | hwmon 阈值，越限写 JSONL |

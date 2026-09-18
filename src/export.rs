@@ -517,6 +517,77 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.platform.notes {
         html.push_str(&format!("<p class=\"muted\">{}</p>", esc(n)));
     }
+    if !snap.periph.dma_isa.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">/proc/dma {}</p>",
+            esc(&snap
+                .periph
+                .dma_isa
+                .iter()
+                .map(|c| format!("{}:{}", c.channel, c.name))
+                .collect::<Vec<_>>()
+                .join(" "))
+        ));
+    }
+    if !snap.periph.dmaengine.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">dmaengine {}</p>",
+            esc(&snap
+                .periph
+                .dmaengine
+                .iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" "))
+        ));
+    }
+    for p in &snap.periph.pwm_chips {
+        html.push_str(&format!(
+            "<p>pwm {} npwm {}</p>",
+            esc(&p.name),
+            esc(&p.npwm.display())
+        ));
+    }
+    for i in &snap.periph.iio {
+        html.push_str(&format!(
+            "<p>IIO {} {}</p>",
+            esc(&i.name),
+            esc(&i.iio_name.display())
+        ));
+    }
+    for n in &snap.periph.nvmem {
+        html.push_str(&format!(
+            "<p>nvmem {} {}</p>",
+            esc(&n.name),
+            esc(&n.typ.display())
+        ));
+    }
+    for r in &snap.periph.regulators {
+        html.push_str(&format!(
+            "<p>regulator {} {} {} {} uV</p>",
+            esc(&r.name),
+            esc(&r.regulator_name.display()),
+            esc(&r.state.display()),
+            esc(&r.microvolts.display())
+        ));
+    }
+    for d in &snap.periph.devlinks {
+        html.push_str(&format!(
+            "<p>devlink {} {}</p>",
+            esc(&d.name),
+            esc(&d.status.display())
+        ));
+    }
+    for b in &snap.periph.pci_buses {
+        html.push_str(&format!(
+            "<p>pci_bus {} {}</p>",
+            esc(&b.name),
+            esc(&b.cpulist.display())
+        ));
+    }
+    for n in &snap.periph.notes {
+        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+    }
     for r in &snap.buses.rfkill {
         html.push_str(&format!(
             "<p>rfkill {} {} state {}</p>",

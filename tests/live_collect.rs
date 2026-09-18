@@ -176,6 +176,14 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"protected_hardlinks\""));
     assert!(json.contains("\"kexec_loaded\""));
     assert!(json.contains("\"shmmax\""));
+    assert!(json.contains("\"dma_isa\""));
+    assert!(json.contains("\"pci_buses\""));
+    assert!(json.contains("\"pwm_chips\""));
+    assert!(
+        !snap.periph.pci_buses.is_empty()
+            || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
+        "x86 应有 pci_bus 或 /proc/dma cascade"
+    );
     assert!(
         snap.sysctl.panic.access != aida::access::AccessKind::Error,
         "kernel.panic 不应是读取失败（负数也是合法值）"
@@ -253,6 +261,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("syn/synack") || html.contains("retries2"));
     assert!(html.contains("maxkeys") || html.contains("watermark") || html.contains("vtcon"));
     assert!(html.contains("shmmax") || html.contains("kexec") || html.contains("protected"));
+    assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));
     assert!(!html.contains("<script"));
 }
 
