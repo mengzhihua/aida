@@ -43,6 +43,10 @@ pub struct BusesReport {
     pub i2c_dev: Vec<String>,
     pub nvme_subsystem: Vec<String>,
     pub w1: Vec<String>,
+    pub macvtap: Vec<String>,
+    pub tun: Vec<String>,
+    pub nvme_generic: Vec<String>,
+    pub nvme_fabrics: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -195,9 +199,27 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let typec = list_optional_names(ctx.sys_path("class/typec"), 8, "typec", &mut notes, &mut missing);
-    let udc = list_optional_names(ctx.sys_path("class/udc"), 8, "udc", &mut notes, &mut missing);
-    let dax = list_optional_names(ctx.sys_path("class/dax"), 8, "dax", &mut notes, &mut missing);
+    let typec = list_optional_names(
+        ctx.sys_path("class/typec"),
+        8,
+        "typec",
+        &mut notes,
+        &mut missing,
+    );
+    let udc = list_optional_names(
+        ctx.sys_path("class/udc"),
+        8,
+        "udc",
+        &mut notes,
+        &mut missing,
+    );
+    let dax = list_optional_names(
+        ctx.sys_path("class/dax"),
+        8,
+        "dax",
+        &mut notes,
+        &mut missing,
+    );
     let wmi = list_optional_names(
         ctx.sys_path("bus/wmi/devices"),
         8,
@@ -219,7 +241,13 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let ubi = list_optional_names(ctx.sys_path("class/ubi"), 8, "ubi", &mut notes, &mut missing);
+    let ubi = list_optional_names(
+        ctx.sys_path("class/ubi"),
+        8,
+        "ubi",
+        &mut notes,
+        &mut missing,
+    );
     let scsi_generic = list_optional_names(
         ctx.sys_path("class/scsi_generic"),
         8,
@@ -227,9 +255,27 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let wwan = list_optional_names(ctx.sys_path("class/wwan"), 8, "wwan", &mut notes, &mut missing);
-    let ppp = list_optional_names(ctx.sys_path("class/ppp"), 8, "ppp", &mut notes, &mut missing);
-    let phy = list_optional_names(ctx.sys_path("class/phy"), 8, "phy", &mut notes, &mut missing);
+    let wwan = list_optional_names(
+        ctx.sys_path("class/wwan"),
+        8,
+        "wwan",
+        &mut notes,
+        &mut missing,
+    );
+    let ppp = list_optional_names(
+        ctx.sys_path("class/ppp"),
+        8,
+        "ppp",
+        &mut notes,
+        &mut missing,
+    );
+    let phy = list_optional_names(
+        ctx.sys_path("class/phy"),
+        8,
+        "phy",
+        &mut notes,
+        &mut missing,
+    );
     let remoteproc = list_optional_names(
         ctx.sys_path("class/remoteproc"),
         8,
@@ -237,8 +283,20 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let extcon = list_optional_names(ctx.sys_path("class/extcon"), 8, "extcon", &mut notes, &mut missing);
-    let tee = list_optional_names(ctx.sys_path("class/tee"), 8, "tee", &mut notes, &mut missing);
+    let extcon = list_optional_names(
+        ctx.sys_path("class/extcon"),
+        8,
+        "extcon",
+        &mut notes,
+        &mut missing,
+    );
+    let tee = list_optional_names(
+        ctx.sys_path("class/tee"),
+        8,
+        "tee",
+        &mut notes,
+        &mut missing,
+    );
     let mdio_bus = list_optional_names(
         ctx.sys_path("class/mdio_bus"),
         8,
@@ -271,6 +329,34 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         ctx.sys_path("bus/w1/devices"),
         8,
         "w1",
+        &mut notes,
+        &mut missing,
+    );
+    let macvtap = list_optional_names(
+        ctx.sys_path("class/macvtap"),
+        8,
+        "macvtap",
+        &mut notes,
+        &mut missing,
+    );
+    let tun = list_optional_names(
+        ctx.sys_path("class/tun"),
+        8,
+        "tun",
+        &mut notes,
+        &mut missing,
+    );
+    let nvme_generic = list_optional_names(
+        ctx.sys_path("class/nvme-generic"),
+        8,
+        "nvme-generic",
+        &mut notes,
+        &mut missing,
+    );
+    let nvme_fabrics = list_optional_names(
+        ctx.sys_path("class/nvme-fabrics"),
+        8,
+        "nvme-fabrics",
         &mut notes,
         &mut missing,
     );
@@ -315,6 +401,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         i2c_dev,
         nvme_subsystem,
         w1,
+        macvtap,
+        tun,
+        nvme_generic,
+        nvme_fabrics,
         notes,
     }
 }
@@ -433,7 +523,10 @@ fn read_video(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<VideoDev> {
         }
     };
     let mut out = Vec::new();
-    for name in names.into_iter().filter(|n| n.starts_with("video") || n.starts_with("media")) {
+    for name in names
+        .into_iter()
+        .filter(|n| n.starts_with("video") || n.starts_with("media"))
+    {
         let dir = root.join(&name);
         out.push(VideoDev {
             dev_name: access::read_trimmed(dir.join("name")),
@@ -459,9 +552,9 @@ fn read_mmc(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<MmcHost> {
     for name in names.into_iter().filter(|n| n.starts_with("mmc")) {
         let dir = root.join(&name);
         let children = access::list_dir_names(&dir).value.unwrap_or_default();
-        let card = children
-            .into_iter()
-            .find(|c| c.starts_with(&format!("{name}:")) || (c.starts_with("mmc") && c.contains(':')));
+        let card = children.into_iter().find(|c| {
+            c.starts_with(&format!("{name}:")) || (c.starts_with("mmc") && c.contains(':'))
+        });
         let (cid, name_tag, serial, date, ty) = if let Some(ref card_name) = card {
             let cdir = dir.join(card_name);
             (
@@ -762,7 +855,11 @@ mod tests {
         fs::write(mei.join("fw_status"), "00\n").unwrap();
         let hid = root.join("sys/class/hidraw/hidraw0/device");
         fs::create_dir_all(&hid).unwrap();
-        fs::write(hid.join("uevent"), "HID_NAME=Test Keyboard\nHID_ID=0003:0000:0000\n").unwrap();
+        fs::write(
+            hid.join("uevent"),
+            "HID_NAME=Test Keyboard\nHID_ID=0003:0000:0000\n",
+        )
+        .unwrap();
         let gpio = root.join("sys/class/gpio/gpiochip0");
         fs::create_dir_all(&gpio).unwrap();
         fs::write(gpio.join("label"), "INTC0001\n").unwrap();
@@ -784,6 +881,8 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/extcon/extcon0")).unwrap();
         fs::create_dir_all(root.join("sys/class/spi_master/spi0")).unwrap();
         fs::create_dir_all(root.join("sys/class/i2c-dev/i2c-0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/macvtap/tap0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/nvme-generic/ng0n1")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -816,11 +915,15 @@ mod tests {
         assert_eq!(r.extcon, vec!["extcon0".to_string()]);
         assert_eq!(r.spi_master, vec!["spi0".to_string()]);
         assert_eq!(r.i2c_dev, vec!["i2c-0".to_string()]);
+        assert_eq!(r.macvtap, vec!["tap0".to_string()]);
+        assert_eq!(r.nvme_generic, vec!["ng0n1".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
-            r.notes.iter().any(|n| n.contains("typec")),
-            "missing typec/udc/dax/wmi/ubi should share one note: {:?}",
+            r.notes
+                .iter()
+                .any(|n| n.contains("typec") && n.contains("tun")),
+            "missing typec/udc/dax/wmi/ubi/tun should share one note: {:?}",
             r.notes
         );
         let tty = root.join("sys/class/tty/ttyS0");
@@ -865,7 +968,9 @@ mod tests {
         let _ = fs::set_permissions(&rf, fs::Permissions::from_mode(0o755));
         let _ = fs::remove_dir_all(&root);
         assert!(
-            r.notes.iter().any(|n| n.contains("权限") || n.contains("失败")),
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
             "{:?}",
             r.notes
         );

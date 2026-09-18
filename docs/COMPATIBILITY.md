@@ -174,6 +174,12 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 152. **不要 dump `cpu/hotplug/states`。** 那是内部 CPUHP 回调表。
 153. **不要 dump seccomp `actions_logged`。** 只读 `actions_avail`。
 154. **`fib_multipath_hash_policy` 在未开多路径时可能不存在。** `NotFound` 不是采集失败。
+155. **不要 dump `/proc/sys/kernel/random/uuid`。** 每次读取都会变；boot_id 才是稳定的。
+156. **`router_solicitations` 是有符号 i64。** `-1` 表示使用 RFC 默认次数，不要当读取失败。
+157. **`memfd_noexec`：`0` 不限制，`1` 仅 dumpable，`2` 一律禁止。** 旧内核可能不存在。
+158. **空的 macvtap / tun / nvme-generic / nvme-fabrics 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+159. **`cpu/modalias` 可能很长。** JSON 保留全文，界面与 HTML 截断前缀。
+160. **`message_cost=0` 表示关闭内核网络 printk 限速。** 不是采集失败。
 
 ## 测试方案
 
