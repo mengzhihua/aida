@@ -61,6 +61,9 @@ pub struct BusesReport {
     pub rpmsg: Vec<String>,
     /// 设备崩溃转储是瞬时节点；GUI `refresh_live` 会单独更新这一项。
     pub devcoredump: Vec<String>,
+    pub scsi_disk: Vec<String>,
+    pub scsi_tape: Vec<String>,
+    pub graphics: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -462,6 +465,27 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let scsi_disk = list_optional_names(
+        ctx.sys_path("class/scsi_disk"),
+        8,
+        "scsi_disk",
+        &mut notes,
+        &mut missing,
+    );
+    let scsi_tape = list_optional_names(
+        ctx.sys_path("class/scsi_tape"),
+        8,
+        "scsi_tape",
+        &mut notes,
+        &mut missing,
+    );
+    let graphics = list_optional_names(
+        ctx.sys_path("class/graphics"),
+        8,
+        "graphics",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -520,6 +544,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         gnss,
         rpmsg,
         devcoredump,
+        scsi_disk,
+        scsi_tape,
+        graphics,
         notes,
     }
 }
@@ -1185,6 +1212,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/gnss/gnss0")).unwrap();
         fs::create_dir_all(root.join("sys/class/rpmsg/rpmsg0")).unwrap();
         fs::create_dir_all(root.join("sys/class/devcoredump/devcd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/scsi_disk/0:0:0:0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/scsi_tape/st0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/graphics/fb0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1241,6 +1271,9 @@ mod tests {
         assert_eq!(r.gnss, vec!["gnss0".to_string()]);
         assert_eq!(r.rpmsg, vec!["rpmsg0".to_string()]);
         assert_eq!(r.devcoredump, vec!["devcd0".to_string()]);
+        assert_eq!(r.scsi_disk, vec!["0:0:0:0".to_string()]);
+        assert_eq!(r.scsi_tape, vec!["st0".to_string()]);
+        assert_eq!(r.graphics, vec!["fb0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
