@@ -210,6 +210,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"ipv6_accept_dad_dev\""));
     assert!(json.contains("\"remoteproc\""));
     assert!(json.contains("\"wakeup_sources\""));
+    assert!(json.contains("\"core_pipe_limit\""));
+    assert!(json.contains("\"ipfrag_high_thresh\""));
+    assert!(json.contains("\"spi_master\""));
+    assert!(json.contains("\"seccomp_actions_avail\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -287,6 +291,22 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.net.tcp_mem.access != aida::access::AccessKind::Error,
         "tcp_mem 不应是读取失败（三个页数 token）"
+    );
+    assert!(
+        snap.sysctl.core_pipe_limit.access != aida::access::AccessKind::Error,
+        "core_pipe_limit 不应是读取失败（0 表示不限制）"
+    );
+    assert!(
+        snap.net.ipfrag_high_thresh.access != aida::access::AccessKind::Error,
+        "ipfrag_high_thresh 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp.retries1.access != aida::access::AccessKind::Error,
+        "tcp_retries1 不应是读取失败"
+    );
+    assert!(
+        snap.cpu.nohz_full.access != aida::access::AccessKind::Error,
+        "nohz_full 不应是读取失败（缺失或空表示无 nohz_full CPU）"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -367,6 +387,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("byteorder") || html.contains("dentry") || html.contains("key-users") || html.contains("connector"));
     assert!(html.contains("pty") || html.contains("io_uring") || html.contains("accept_ra") || html.contains("ostype"));
     assert!(html.contains("tcp_mem") || html.contains("dirty_bytes") || html.contains("addr_gen") || html.contains("remoteproc") || html.contains("wakeup_sources"));
+    assert!(html.contains("core_pipe") || html.contains("ipfrag") || html.contains("seccomp") || html.contains("spi_master"));
     assert!(!html.contains("<script"));
 }
 

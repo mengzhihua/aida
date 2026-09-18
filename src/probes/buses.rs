@@ -39,6 +39,10 @@ pub struct BusesReport {
     pub extcon: Vec<String>,
     pub tee: Vec<String>,
     pub mdio_bus: Vec<String>,
+    pub spi_master: Vec<String>,
+    pub i2c_dev: Vec<String>,
+    pub nvme_subsystem: Vec<String>,
+    pub w1: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -242,6 +246,34 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let spi_master = list_optional_names(
+        ctx.sys_path("class/spi_master"),
+        8,
+        "spi_master",
+        &mut notes,
+        &mut missing,
+    );
+    let i2c_dev = list_optional_names(
+        ctx.sys_path("class/i2c-dev"),
+        8,
+        "i2c-dev",
+        &mut notes,
+        &mut missing,
+    );
+    let nvme_subsystem = list_optional_names(
+        ctx.sys_path("class/nvme-subsystem"),
+        8,
+        "nvme-subsystem",
+        &mut notes,
+        &mut missing,
+    );
+    let w1 = list_optional_names(
+        ctx.sys_path("bus/w1/devices"),
+        8,
+        "w1",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -279,6 +311,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         extcon,
         tee,
         mdio_bus,
+        spi_master,
+        i2c_dev,
+        nvme_subsystem,
+        w1,
         notes,
     }
 }
@@ -746,6 +782,8 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/phy/eth0-phy")).unwrap();
         fs::create_dir_all(root.join("sys/class/remoteproc/remoteproc0")).unwrap();
         fs::create_dir_all(root.join("sys/class/extcon/extcon0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/spi_master/spi0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/i2c-dev/i2c-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -776,6 +814,8 @@ mod tests {
         assert_eq!(r.phy, vec!["eth0-phy".to_string()]);
         assert_eq!(r.remoteproc, vec!["remoteproc0".to_string()]);
         assert_eq!(r.extcon, vec!["extcon0".to_string()]);
+        assert_eq!(r.spi_master, vec!["spi0".to_string()]);
+        assert_eq!(r.i2c_dev, vec!["i2c-0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

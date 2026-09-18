@@ -68,6 +68,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("possible", snap.cpu.possible.display()),
             ("present", snap.cpu.present.display()),
             ("kernel_max", snap.cpu.kernel_max.display()),
+            ("enabled", snap.cpu.enabled.display()),
+            (
+                "nohz_full",
+                match (
+                    snap.cpu.nohz_full.access,
+                    snap.cpu.nohz_full.value.as_deref(),
+                ) {
+                    (crate::access::AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
+                    (crate::access::AccessKind::Ok, _) => "—".into(),
+                    _ => snap.cpu.nohz_full.access_label(),
+                },
+            ),
             ("KVM", snap.kvm.device.display()),
             ("nested", snap.kvm.nested.display()),
             ("microcode", snap.cpu.microcode.display()),
@@ -711,6 +723,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("extcon", &snap.buses.extcon),
         ("tee", &snap.buses.tee),
         ("mdio_bus", &snap.buses.mdio_bus),
+        ("spi_master", &snap.buses.spi_master),
+        ("i2c-dev", &snap.buses.i2c_dev),
+        ("nvme-subsystem", &snap.buses.nvme_subsystem),
+        ("w1", &snap.buses.w1),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1064,16 +1080,21 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp.notsent_lowat.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">tcp_mem {} udp_mem {} orphans {} dsack {} autocorking {} rps {}</p>",
+        "<p class=\"muted\">tcp_mem {} udp_mem {} orphans {} dsack {} autocorking {} rps {} ipfrag {}/{} early_retrans {} no_pmtu {} fib_mp {}</p>",
         snap.net.tcp_mem.display(),
         snap.net.udp_mem.display(),
         snap.net.tcp_max_orphans.display(),
         snap.net.tcp_dsack.display(),
         snap.net.tcp_autocorking.display(),
-        snap.net.rps_sock_flow_entries.display()
+        snap.net.rps_sock_flow_entries.display(),
+        snap.net.ipfrag_high_thresh.display(),
+        snap.net.ipfrag_low_thresh.display(),
+        snap.net.tcp_early_retrans.display(),
+        snap.net.ip_no_pmtu_disc.display(),
+        snap.net.fib_multipath_hash_policy.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {} max_addrs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1081,6 +1102,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.ipv6_accept_dad.display(),
         snap.net.ipv6_addr_gen_mode.display(),
         snap.net.ip6frag_high_thresh.display(),
+        snap.net.ipv6_max_addresses.display(),
         snap.net.conntrack_tcp_established.display(),
         snap.net.conntrack_buckets.display(),
         snap.net.tcp_max_tw_buckets.display(),
@@ -1588,11 +1610,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "fs.protected",
                 format!(
-                    "hardlinks {} symlinks {} fifos {} regular {}",
+                    "hardlinks {} symlinks {} fifos {} regular {} seccomp {}",
                     snap.security.protected_hardlinks.display(),
                     snap.security.protected_symlinks.display(),
                     snap.security.protected_fifos.display(),
-                    snap.security.protected_regular.display()
+                    snap.security.protected_regular.display(),
+                    snap.security.seccomp_actions_avail.display()
                 ),
             ),
             (
@@ -1651,7 +1674,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {}",
+                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {} core_pipe {} printk_devkmsg {} delayacct {} acct {} mount_max {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
                     snap.sysctl.watchdog_thresh.display(),
@@ -1659,7 +1682,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.panic.display(),
                     snap.sysctl.sysrq.display(),
                     snap.sysctl.min_free_kbytes.display(),
-                    snap.sysctl.hung_task_timeout_secs.display()
+                    snap.sysctl.hung_task_timeout_secs.display(),
+                    snap.sysctl.core_pipe_limit.display(),
+                    snap.sysctl.printk_devkmsg.display(),
+                    snap.sysctl.task_delayacct.display(),
+                    snap.sysctl.acct.display(),
+                    snap.sysctl.mount_max.display()
                 ),
             ),
             (
@@ -1770,7 +1798,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "vm",
                 format!(
-                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} dirty_expire {}",
+                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} zone_reclaim {} dirty_expire {}",
                     snap.sysctl.swappiness.display(),
                     snap.sysctl.overcommit_memory.display(),
                     snap.sysctl.overcommit_kbytes.display(),
@@ -1781,6 +1809,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.pipe_user_pages_soft.display(),
                     snap.sysctl.pipe_user_pages_hard.display(),
                     snap.sysctl.compact_unevictable_allowed.display(),
+                    snap.sysctl.zone_reclaim_mode.display(),
                     snap.sysctl.dirty_expire_centisecs.display()
                 ),
             ),

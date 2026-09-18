@@ -101,6 +101,12 @@ pub struct NetReport {
     pub ipv6_addr_gen_mode_dev: Vec<String>,
     pub ip6frag_high_thresh: Sample<u64>,
     pub rps_sock_flow_entries: Sample<u64>,
+    pub ipfrag_high_thresh: Sample<u64>,
+    pub ipfrag_low_thresh: Sample<u64>,
+    pub tcp_early_retrans: Sample<u64>,
+    pub ip_no_pmtu_disc: Sample<String>,
+    pub fib_multipath_hash_policy: Sample<u64>,
+    pub ipv6_max_addresses: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -115,6 +121,7 @@ pub struct TcpTune {
     pub ecn: Sample<String>,
     pub tw_reuse: Sample<String>,
     pub retries2: Sample<u64>,
+    pub retries1: Sample<u64>,
     pub slow_start_after_idle: Sample<String>,
     pub syn_retries: Sample<u64>,
     pub synack_retries: Sample<u64>,
@@ -280,6 +287,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ecn: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_ecn")),
         tw_reuse: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_tw_reuse")),
         retries2: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_retries2")),
+        retries1: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_retries1")),
         slow_start_after_idle: access::read_trimmed(
             ctx.proc_path("sys/net/ipv4/tcp_slow_start_after_idle"),
         ),
@@ -385,6 +393,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let ip6frag_high_thresh = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_high_thresh"));
     let rps_sock_flow_entries =
         access::read_u64(ctx.proc_path("sys/net/core/rps_sock_flow_entries"));
+    let ipfrag_high_thresh = access::read_u64(ctx.proc_path("sys/net/ipv4/ipfrag_high_thresh"));
+    let ipfrag_low_thresh = access::read_u64(ctx.proc_path("sys/net/ipv4/ipfrag_low_thresh"));
+    let tcp_early_retrans = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_early_retrans"));
+    let ip_no_pmtu_disc = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_no_pmtu_disc"));
+    let fib_multipath_hash_policy =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/fib_multipath_hash_policy"));
+    let ipv6_max_addresses =
+        access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/max_addresses"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -480,6 +496,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_addr_gen_mode_dev,
                 ip6frag_high_thresh,
                 rps_sock_flow_entries,
+                ipfrag_high_thresh,
+                ipfrag_low_thresh,
+                tcp_early_retrans,
+                ip_no_pmtu_disc,
+                fib_multipath_hash_policy,
+                ipv6_max_addresses,
                 notes,
             };
         }
@@ -683,6 +705,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_addr_gen_mode_dev,
         ip6frag_high_thresh,
         rps_sock_flow_entries,
+        ipfrag_high_thresh,
+        ipfrag_low_thresh,
+        tcp_early_retrans,
+        ip_no_pmtu_disc,
+        fib_multipath_hash_policy,
+        ipv6_max_addresses,
         notes,
     }
 }
@@ -1424,6 +1452,13 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv6/conf/all/addr_gen_mode"), "0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/ip6frag_high_thresh"), "4194304\n").unwrap();
         fs::write(root.join("proc/sys/net/core/rps_sock_flow_entries"), "32768\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ipfrag_high_thresh"), "4194304\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ipfrag_low_thresh"), "3145728\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_retries1"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_early_retrans"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_no_pmtu_disc"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/fib_multipath_hash_policy"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/max_addresses"), "16\n").unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -1495,6 +1530,13 @@ mod tests {
         assert_eq!(r.ipv6_addr_gen_mode.value.as_deref(), Some("0"));
         assert_eq!(r.ip6frag_high_thresh.value, Some(4_194_304));
         assert_eq!(r.rps_sock_flow_entries.value, Some(32768));
+        assert_eq!(r.ipfrag_high_thresh.value, Some(4_194_304));
+        assert_eq!(r.ipfrag_low_thresh.value, Some(3_145_728));
+        assert_eq!(r.tcp.retries1.value, Some(3));
+        assert_eq!(r.tcp_early_retrans.value, Some(3));
+        assert_eq!(r.ip_no_pmtu_disc.value.as_deref(), Some("0"));
+        assert_eq!(r.fib_multipath_hash_policy.value, Some(0));
+        assert_eq!(r.ipv6_max_addresses.value, Some(16));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
