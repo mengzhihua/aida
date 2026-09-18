@@ -201,6 +201,8 @@ pub struct SysctlReport {
     pub nr_hugepages_mempolicy: Sample<u64>,
     /// `0` 表示默认大小 hugepage 池没有静态预留页。
     pub nr_hugepages: Sample<u64>,
+    /// `0` 表示不启用 ACPI video 特殊标志。
+    pub acpi_video_flags: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -472,6 +474,7 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         nr_overcommit_hugepages: access::read_u64(ctx.proc_path("sys/vm/nr_overcommit_hugepages")),
         nr_hugepages_mempolicy: access::read_u64(ctx.proc_path("sys/vm/nr_hugepages_mempolicy")),
         nr_hugepages: access::read_u64(ctx.proc_path("sys/vm/nr_hugepages")),
+        acpi_video_flags: access::read_u64(ctx.proc_path("sys/kernel/acpi_video_flags")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -834,6 +837,7 @@ mod tests {
         fs::write(root.join("proc/sys/vm/nr_overcommit_hugepages"), "0\n").unwrap();
         fs::write(root.join("proc/sys/vm/nr_hugepages_mempolicy"), "0\n").unwrap();
         fs::write(root.join("proc/sys/vm/nr_hugepages"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/acpi_video_flags"), "0\n").unwrap();
         fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
@@ -981,6 +985,7 @@ mod tests {
         assert_eq!(r.nr_overcommit_hugepages.value, Some(0));
         assert_eq!(r.nr_hugepages_mempolicy.value, Some(0));
         assert_eq!(r.nr_hugepages.value, Some(0));
+        assert_eq!(r.acpi_video_flags.value, Some(0));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
