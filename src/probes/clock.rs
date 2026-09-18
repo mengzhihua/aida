@@ -11,6 +11,7 @@ pub struct ClockReport {
     pub rtcs: Vec<Rtc>,
     pub ptps: Vec<PtpClock>,
     pub pps: Vec<PpsDev>,
+    pub clockevents: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -119,12 +120,25 @@ pub fn collect(ctx: &ProbeCtx) -> ClockReport {
             }
         }
     }
+    let clockevents = match access::list_dir_names(ctx.sys_path("devices/system/clockevents")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(mut n),
+            ..
+        } => {
+            n.sort();
+            n.truncate(16);
+            n
+        }
+        _ => Vec::new(),
+    };
     ClockReport {
         current,
         available,
         rtcs,
         ptps,
         pps,
+        clockevents,
         notes,
     }
 }
@@ -153,6 +167,8 @@ mod tests {
         fs::create_dir_all(&pps).unwrap();
         fs::write(pps.join("path"), "/dev/pps0\n").unwrap();
         fs::write(pps.join("mode"), "1\n").unwrap();
+        fs::create_dir_all(root.join("sys/devices/system/clockevents/broadcast")).unwrap();
+        fs::create_dir_all(root.join("sys/devices/system/clockevents/clockevent0")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -166,6 +182,8 @@ mod tests {
         assert_eq!(r.ptps.len(), 1);
         assert_eq!(r.ptps[0].clock_name.value.as_deref(), Some("KVM virtual PTP"));
         assert_eq!(r.pps[0].path.value.as_deref(), Some("/dev/pps0"));
+        assert!(r.clockevents.contains(&"broadcast".to_string()));
+        assert!(r.clockevents.contains(&"clockevent0".to_string()));
         let _ = fs::remove_dir_all(&root);
     }
 }

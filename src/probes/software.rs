@@ -2,8 +2,6 @@
 
 use serde::Serialize;
 
-use std::fs;
-
 use crate::access::{self, AccessKind, ProbeCtx, Sample};
 
 #[derive(Clone, Debug, Serialize)]
@@ -34,6 +32,8 @@ pub struct SoftwareInfo {
     pub domainname: Sample<String>,
     pub config_gz: Sample<String>,
     pub bpf_fs_entries: usize,
+    /// `/proc/locks` 行数。空文件表示当前无锁，不是读取失败。
+    pub file_locks: usize,
     pub notes: Vec<String>,
 }
 
@@ -105,28 +105,42 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
             } => n.len(),
             _ => 0,
         },
+        file_locks: count_lock_lines(&access::read_trimmed(ctx.proc_path("locks"))),
         notes: Vec::new(),
     }
 }
 
+/// procfs 上 `config.gz` 的 inode size 经常是 0，必须读字节才能知道压缩包长度。
+/// 不解码 gzip，避免引入 flate2。
 fn config_gz_sample(ctx: &ProbeCtx) -> Sample<String> {
     let path = ctx.proc_path("config.gz");
-    match fs::metadata(&path) {
-        Ok(m) => Sample::ok(format!("{} bytes", m.len()), path.display().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Sample::missing(path.display().to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Sample {
+    match access::read_bytes(&path) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(buf),
+            source,
+            ..
+        } => Sample::ok(format!("{} bytes", buf.len()), source),
+        Sample {
+            access: AccessKind::Ok,
             value: None,
-            access: AccessKind::PermissionDenied,
-            source: path.display().to_string(),
-            hint: Some(e.to_string()),
-        },
-        Err(e) => Sample {
+            source,
+            ..
+        } => Sample::ok("present".into(), source),
+        s => Sample {
             value: None,
-            access: AccessKind::Error,
-            source: path.display().to_string(),
-            hint: Some(e.to_string()),
+            access: s.access,
+            source: s.source,
+            hint: s.hint,
         },
     }
+}
+
+pub fn count_lock_lines(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines().filter(|l| !l.trim().is_empty()).count()
 }
 
 fn parse_loadavg(sample: &Sample<String>) -> Load {
@@ -383,5 +397,32 @@ mod tests {
         let (s, flags) = parse_taint(&Sample::ok("4096".into(), "tainted"));
         assert_eq!(s.value, Some(4096));
         assert_eq!(flags, f);
+    }
+
+    #[test]
+    fn config_gz_uses_byte_length_not_inode_size() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("aida-cfggz-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc")).unwrap();
+        fs::write(root.join("proc/config.gz"), [0x1f, 0x8b, 0x08, 0x00]).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let s = config_gz_sample(&ctx);
+        assert_eq!(s.value.as_deref(), Some("4 bytes"));
+        fs::write(root.join("proc/config.gz"), b"").unwrap();
+        let empty = config_gz_sample(&ctx);
+        assert_eq!(empty.value.as_deref(), Some("present"));
+        assert_eq!(empty.access, AccessKind::Ok);
+        fs::remove_file(root.join("proc/config.gz")).unwrap();
+        let missing = config_gz_sample(&ctx);
+        assert_eq!(missing.access, AccessKind::NotFound);
+        assert_eq!(count_lock_lines(&Sample::ok("1: POSIX ADVISORY WRITE 1\n2: FLOCK\n".into(), "locks")), 2);
+        assert_eq!(count_lock_lines(&Sample::missing("locks")), 0);
+        let _ = fs::remove_dir_all(&root);
     }
 }

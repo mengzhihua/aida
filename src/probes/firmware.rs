@@ -15,6 +15,7 @@ pub struct FirmwareReport {
     pub rng_available: Sample<String>,
     pub acpi_pm_profile: Sample<String>,
     pub pstore_files: usize,
+    pub firmware_timeout: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -74,6 +75,7 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
         rng_available: access::read_trimmed(rng_dir.join("rng_available")),
         acpi_pm_profile: access::read_trimmed(ctx.sys_path("firmware/acpi/pm_profile")),
         pstore_files,
+        firmware_timeout: access::read_u64(ctx.sys_path("class/firmware/timeout")),
         notes,
     }
 }
@@ -196,6 +198,10 @@ mod tests {
         assert!(r2.acpi_tables.contains(&"FACP".into()));
         assert_eq!(r2.tpms[0].version_major.value.as_deref(), Some("2"));
         assert_eq!(r2.rng_current.value.as_deref(), Some("virtio_rng.0"));
+        fs::create_dir_all(root.join("sys/class/firmware")).unwrap();
+        fs::write(root.join("sys/class/firmware/timeout"), "60\n").unwrap();
+        let r3 = collect(&ctx);
+        assert_eq!(r3.firmware_timeout.value, Some(60));
         let _ = fs::remove_dir_all(&root);
     }
 }

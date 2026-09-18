@@ -2,13 +2,15 @@
 
 use serde::Serialize;
 
-use crate::access::{self, ProbeCtx, Sample};
+use crate::access::{self, AccessKind, ProbeCtx, Sample};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct IrqReport {
     pub cpu_count: usize,
     pub lines: Vec<IrqLine>,
     pub softirqs: Vec<IrqLine>,
+    /// `/sys/kernel/irq` 目录项数，与 `/proc/interrupts` 行数不必相等（后者含 NMI/ERR）。
+    pub sysfs_irqs: usize,
     pub notes: Vec<String>,
 }
 
@@ -49,10 +51,19 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
             Vec::new()
         }
     };
+    let sysfs_irqs = match access::list_dir_names(ctx.sys_path("kernel/irq")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.len(),
+        _ => 0,
+    };
     IrqReport {
         cpu_count,
         lines,
         softirqs,
+        sysfs_irqs,
         notes,
     }
 }
@@ -154,8 +165,11 @@ ERR:          0
         assert_eq!(r.softirqs[0].total, 15);
         std::fs::create_dir_all(root.join("proc/irq/24")).unwrap();
         std::fs::write(root.join("proc/irq/24/smp_affinity_list"), "0-1\n").unwrap();
+        std::fs::create_dir_all(root.join("sys/kernel/irq/24")).unwrap();
+        std::fs::create_dir_all(root.join("sys/kernel/irq/28")).unwrap();
         let r2 = collect(&ctx);
         assert_eq!(r2.lines[0].affinity.value.as_deref(), Some("0-1"));
+        assert_eq!(r2.sysfs_irqs, 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 

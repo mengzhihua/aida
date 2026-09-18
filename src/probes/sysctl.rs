@@ -37,6 +37,15 @@ pub struct SysctlReport {
     pub sysrq: Sample<String>,
     pub min_free_kbytes: Sample<u64>,
     pub vfs_cache_pressure: Sample<u64>,
+    pub watermark_scale_factor: Sample<u64>,
+    pub dirty_expire_centisecs: Sample<u64>,
+    pub ctrl_alt_del: Sample<String>,
+    pub random_poolsize: Sample<u64>,
+    pub sched_autogroup: Sample<String>,
+    pub leases_enable: Sample<String>,
+    pub suid_dumpable: Sample<String>,
+    pub cap_last_cap: Sample<u64>,
+    pub keys_maxkeys: Sample<u64>,
     pub consoles: Vec<Console>,
     pub notes: Vec<String>,
 }
@@ -105,6 +114,15 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         sysrq: access::read_trimmed(ctx.proc_path("sys/kernel/sysrq")),
         min_free_kbytes: access::read_u64(ctx.proc_path("sys/vm/min_free_kbytes")),
         vfs_cache_pressure: access::read_u64(ctx.proc_path("sys/vm/vfs_cache_pressure")),
+        watermark_scale_factor: access::read_u64(ctx.proc_path("sys/vm/watermark_scale_factor")),
+        dirty_expire_centisecs: access::read_u64(ctx.proc_path("sys/vm/dirty_expire_centisecs")),
+        ctrl_alt_del: access::read_trimmed(ctx.proc_path("sys/kernel/ctrl-alt-del")),
+        random_poolsize: access::read_u64(ctx.proc_path("sys/kernel/random/poolsize")),
+        sched_autogroup: access::read_trimmed(ctx.proc_path("sys/kernel/sched_autogroup_enabled")),
+        leases_enable: access::read_trimmed(ctx.proc_path("sys/fs/leases-enable")),
+        suid_dumpable: access::read_trimmed(ctx.proc_path("sys/fs/suid_dumpable")),
+        cap_last_cap: access::read_u64(ctx.proc_path("sys/kernel/cap_last_cap")),
+        keys_maxkeys: access::read_u64(ctx.proc_path("sys/kernel/keys/maxkeys")),
         consoles,
         notes,
     }
@@ -199,6 +217,12 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/sysrq"), "1\n").unwrap();
         fs::write(root.join("proc/sys/vm/min_free_kbytes"), "67584\n").unwrap();
         fs::write(root.join("proc/sys/fs/file-max"), "100000\n").unwrap();
+        fs::write(root.join("proc/sys/vm/watermark_scale_factor"), "10\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/ctrl-alt-del"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/random/poolsize"), "256\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/kernel/keys")).unwrap();
+        fs::write(root.join("proc/sys/kernel/keys/maxkeys"), "200\n").unwrap();
+        fs::write(root.join("proc/sys/fs/suid_dumpable"), "0\n").unwrap();
         fs::write(root.join("proc/consoles"), "tty0                 -WU (E    )    4:1\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
@@ -218,6 +242,10 @@ mod tests {
         assert_eq!(r.panic.value, Some(1));
         assert_eq!(r.sysrq.value.as_deref(), Some("1"));
         assert_eq!(r.file_max.value, Some(100000));
+        assert_eq!(r.watermark_scale_factor.value, Some(10));
+        assert_eq!(r.random_poolsize.value, Some(256));
+        assert_eq!(r.keys_maxkeys.value, Some(200));
+        assert_eq!(r.suid_dumpable.value.as_deref(), Some("0"));
         let _ = fs::remove_dir_all(&root);
     }
 }

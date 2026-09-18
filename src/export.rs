@@ -143,6 +143,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
             ("ACPI pm_profile", snap.firmware.acpi_pm_profile.display()),
             ("pstore", snap.firmware.pstore_files.to_string()),
+            ("firmware timeout", snap.firmware.firmware_timeout.display()),
             ("hwrng", snap.firmware.rng_current.display()),
         ],
     );
@@ -469,12 +470,21 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
 
     section(&mut html, "平台");
     html.push_str(&format!(
-        "<p class=\"muted\">ACPI {} PnP {} workqueue {} events {}</p>",
+        "<p class=\"muted\">ACPI {} PnP {} MSR {} workqueue {} events {}</p>",
         snap.platform.acpi_devices,
         snap.platform.pnp_devices,
+        snap.platform.msr_devices,
         esc(&snap.platform.workqueues.join(" ")),
         esc(&snap.platform.event_sources.join(" "))
     ));
+    for v in &snap.platform.vtconsoles {
+        html.push_str(&format!(
+            "<p>vt {} {} bind {}</p>",
+            esc(&v.name),
+            esc(&v.device.display()),
+            esc(&v.bind.display())
+        ));
+    }
     if !snap.platform.watchdogs.is_empty() {
         html.push_str("<table><tr><th>watchdog</th><th>identity</th><th>timeout</th></tr>");
         for w in &snap.platform.watchdogs {
@@ -872,7 +882,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} ka {} sack {} qdisc {}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} qdisc {} budget {} rp_filter {}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -902,9 +912,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.inet6_addrs,
         snap.net.ipv6_routes,
         snap.net.tcp_fastopen.display(),
+        snap.net.somaxconn.display(),
         snap.net.tcp.keepalive_time.display(),
         snap.net.tcp.sack.display(),
-        snap.net.default_qdisc.display()
+        snap.net.default_qdisc.display(),
+        snap.net.netdev_budget.display(),
+        snap.net.rp_filter.display()
     ));
     if !snap.net.protocols.is_empty() {
         html.push_str(&format!(
@@ -1279,6 +1292,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("clocksource", snap.clock.current.display()),
             ("available_clocksource", snap.clock.available.display()),
             (
+                "clockevents",
+                if snap.clock.clockevents.is_empty() {
+                    "—".into()
+                } else {
+                    snap.clock.clockevents.join(" ")
+                },
+            ),
+            (
                 "PPS",
                 if snap.clock.pps.is_empty() {
                     "—".into()
@@ -1355,6 +1376,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("boot_id", snap.sysctl.boot_id.display()),
             ("machine-id", snap.software.machine_id.display()),
             ("config.gz", snap.software.config_gz.display()),
+            ("file locks", snap.software.file_locks.to_string()),
             (
                 "nmi/watchdog",
                 format!(
@@ -1365,6 +1387,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.panic.display(),
                     snap.sysctl.sysrq.display(),
                     snap.sysctl.min_free_kbytes.display()
+                ),
+            ),
+            (
+                "keys / dumpable",
+                format!(
+                    "maxkeys {} cap_last {} dumpable {} autogroup {} cad {}",
+                    snap.sysctl.keys_maxkeys.display(),
+                    snap.sysctl.cap_last_cap.display(),
+                    snap.sysctl.suid_dumpable.display(),
+                    snap.sysctl.sched_autogroup.display(),
+                    snap.sysctl.ctrl_alt_del.display()
                 ),
             ),
             (
@@ -1396,9 +1429,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "vm",
                 format!(
-                    "swappiness {} overcommit {}",
+                    "swappiness {} overcommit {} watermark {} dirty_expire {}",
                     snap.sysctl.swappiness.display(),
-                    snap.sysctl.overcommit_memory.display()
+                    snap.sysctl.overcommit_memory.display(),
+                    snap.sysctl.watermark_scale_factor.display(),
+                    snap.sysctl.dirty_expire_centisecs.display()
                 ),
             ),
             ("cgroup", snap.cgroup.controllers.display()),
@@ -1431,6 +1466,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 .as_ref()
                 .map(|m| format!("{:.2}", m.some.avg10))
                 .unwrap_or_else(|| "n/a".into()),
+        ));
+    }
+    if snap.irq.sysfs_irqs > 0 {
+        html.push_str(&format!(
+            "<p class=\"muted\">sysfs irq {}</p>",
+            snap.irq.sysfs_irqs
         ));
     }
     if !snap.irq.lines.is_empty() {
