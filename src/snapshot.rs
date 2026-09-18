@@ -172,11 +172,12 @@ impl HardwareSnapshot {
         prev_rapl: &mut Option<Vec<RaplSnap>>,
         dt_sec: f64,
     ) {
+        // 整份 CPU 报告都替换：cpuidle governor 等可在运行期切换，不能只更新 logical。
         let now = cpu::read_proc_stat(ctx);
-        self.cpu.utilization_pct = cpu::utilization(prev_stat, &now);
-        let mut logical = cpu::collect_with_util(ctx, None).logical;
-        cpu::apply_per_cpu(&mut logical, prev_stat, &now);
-        self.cpu.logical = logical;
+        let mut cpu = cpu::collect_with_util(ctx, None);
+        cpu.utilization_pct = cpu::utilization(prev_stat, &now);
+        cpu::apply_per_cpu(&mut cpu.logical, prev_stat, &now);
+        self.cpu = cpu;
         *prev_stat = now;
         self.sensors = hwmon::collect(ctx);
         self.alerts = alerts::evaluate(&self.sensors);
@@ -210,4 +211,70 @@ pub fn unix_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::access::ProbeCtx;
+
+    #[test]
+    fn refresh_live_updates_cpuidle_governor() {
+        let root = std::env::temp_dir().join(format!("aida-snap-cpuidle-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("sys/devices/system/cpu/cpuidle")).unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/current_driver"),
+            "none\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/current_governor"),
+            "menu\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/available_governors"),
+            "menu teo\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/stat"),
+            "cpu  1 0 0 1 0 0 0 0 0 0\ncpu0 1 0 0 1 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/cpuinfo"),
+            "processor\t: 0\nmodel name\t: Test\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut snap = HardwareSnapshot::collect_cpu_sample(&ctx, false);
+        assert_eq!(snap.cpu.cpuidle_governor.value.as_deref(), Some("menu"));
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/current_governor"),
+            "teo\n",
+        )
+        .unwrap();
+        let mut prev_stat = None;
+        let mut prev_net = None;
+        let mut prev_disk = None;
+        let mut prev_rapl = None;
+        snap.refresh_live(
+            &ctx,
+            &mut prev_stat,
+            &mut prev_net,
+            &mut prev_disk,
+            &mut prev_rapl,
+            0.8,
+        );
+        assert_eq!(snap.cpu.cpuidle_governor.value.as_deref(), Some("teo"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
