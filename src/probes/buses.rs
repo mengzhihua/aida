@@ -393,8 +393,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let iscsi_flashnode = list_optional_names(
-        ctx.sys_path("bus/iscsi_flashnode/devices"),
+    let iscsi_flashnode = list_class_or_bus(
+        ctx,
+        "class/iscsi_flashnode",
+        "bus/iscsi_flashnode/devices",
         8,
         "iscsi_flashnode",
         &mut notes,
@@ -515,6 +517,46 @@ fn list_optional_names(
         }
         DirList::Failed(l) => {
             notes.push(l);
+            Vec::new()
+        }
+    }
+}
+
+/// iSCSI flashnode 在较新内核从 bus 改成 class。先看 `class/`，没有再看 `bus/.../devices`。
+/// 两边都缺失才记 leftover；权限不足写 note，不要当成缺失。
+fn list_class_or_bus(
+    ctx: &ProbeCtx,
+    class_rel: &str,
+    bus_rel: &str,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    match dir_list(ctx.sys_path(class_rel)) {
+        DirList::Names(mut n) => {
+            n.sort();
+            n.truncate(cap);
+            return n;
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+        DirList::Missing => {}
+    }
+    match dir_list(ctx.sys_path(bus_rel)) {
+        DirList::Names(mut n) => {
+            n.sort();
+            n.truncate(cap);
+            n
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            Vec::new()
+        }
+        DirList::Missing => {
+            missing.push(label);
             Vec::new()
         }
     }
@@ -1185,5 +1227,27 @@ mod tests {
             "denied misc/tun must not look like missing: {:?}",
             r.notes
         );
+    }
+
+    #[test]
+    fn flashnode_from_class_without_bus() {
+        let root =
+            std::env::temp_dir().join(format!("aida-flashnode-class-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/iscsi_flashnode/flashnode_sess-0:0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.iscsi_flashnode, vec!["flashnode_sess-0:0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| !n.contains("iscsi_flashnode")),
+            "class flashnode must not be reported missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

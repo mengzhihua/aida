@@ -55,7 +55,7 @@
 | Block | `/sys/block`（跳过 ram/zram/分区） | diskstats 差分；`queue/*`；有 backing 的 loop；`dm-*` name/uuid；bdi；bsg |
 | MD | `/proc/mdstat` | `/sys/block/mdN/md/{degraded,sync_action}` |
 | SCSI | `/sys/class/scsi_host` | `scsi_device` vendor/model/type |
-| iSCSI | `/sys/class/iscsi_{transport,host,session,endpoint,iface,connection}`；`bus/iscsi_flashnode` | 不调用 iscsiadm |
+| iSCSI | `/sys/class/iscsi_{transport,host,session,endpoint,iface,connection,flashnode}`；旧内核回退 `bus/iscsi_flashnode/devices` | 不调用 iscsiadm |
 | Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；MSR；vtconsole；`bus/platform/devices` 名（最多 16）；`class/wakeup` 只计数不展开 wakeupN；不调用 i2cdetect |
 | Periph | `/proc/dma`；`/sys/class/dma` | PWM `pwmchipN/npwm`；IIO `name`；nvmem `type`（不读二进制）；regulator 电压；devlink `status`；`pci_bus` cpulist；不调用 `devlink` |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI / ttyS / misc / hidraw / gpio / mtd / IB | ieee80211 / typec / udc / dax / wmi / spi / serio / ubi / scsi_generic / wwan / ppp / phy / remoteproc / extcon / tee / mdio_bus / spi_master / i2c-dev / nvme-subsystem / w1 / macvtap / nvme-generic / iscsi_endpoint / iscsi_iface / iscsi_connection / container / iscsi_flashnode / nd / dma_heap / cxl / devfreq / fpga / gnss 名（缺类合并一条 note）；`tun` / `nvme-fabrics` 看 `class/misc` 与 `/dev` 节点；`/proc/tty/drivers`；不调用 setserial/`iw`；ttyS `type=0` 跳过；不 dump `serial-base` |
