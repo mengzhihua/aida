@@ -16,6 +16,7 @@ use crate::probes::cpu::CpuStatSnap;
 use crate::probes::hwmon;
 use crate::probes::net::NetSnap;
 use crate::probes::rapl::RaplSnap;
+use crate::record::StatusMeters;
 use crate::snapshot::HardwareSnapshot;
 
 const HISTORY: usize = 120;
@@ -68,6 +69,12 @@ struct AidaApp {
     alert_log: AlertLogger,
     alert_log_path: PathBuf,
     alert_log_err: Option<String>,
+    recording: bool,
+    record_path: PathBuf,
+    record_err: Option<String>,
+    record_samples: u64,
+    compact_bar: bool,
+    compact_bar_shown: bool,
     nav: Nav,
     cjk: bool,
     last_poll: Instant,
@@ -104,6 +111,12 @@ impl AidaApp {
             alert_log: AlertLogger::default(),
             alert_log_path: crate::alerts::default_log_path(),
             alert_log_err: None,
+            recording: false,
+            record_path: crate::record::default_log_path(),
+            record_err: None,
+            record_samples: 0,
+            compact_bar: false,
+            compact_bar_shown: false,
             nav: Nav::Summary,
             cjk,
             last_poll: Instant::now(),
@@ -142,6 +155,17 @@ impl AidaApp {
             .ingest(self.snap.collected_at_unix_ms, &self.snap.alerts);
         if let Err(e) = crate::alerts::append_jsonl(&self.alert_log_path, &events) {
             self.alert_log_err = Some(e);
+        }
+        if self.recording {
+            let sample =
+                StatusMeters::from_snapshot(&self.snap).to_sample(self.snap.collected_at_unix_ms);
+            match crate::record::append_jsonl(&self.record_path, &[sample]) {
+                Ok(()) => {
+                    self.record_samples = self.record_samples.saturating_add(1);
+                    self.record_err = None;
+                }
+                Err(e) => self.record_err = Some(e),
+            }
         }
         let t = self.t0.elapsed().as_secs_f64();
         if let Some(u) = self.snap.cpu.utilization_pct {
@@ -189,6 +213,148 @@ impl AidaApp {
             }
         }
     }
+
+    fn ui_status_strip(&mut self, ui: &mut egui::Ui) {
+        let meters = StatusMeters::from_snapshot(&self.snap);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(self.t("状态", "Status")).strong());
+            sparkline(
+                ui,
+                "istat_cpu_spark",
+                &self.cpu_hist,
+                Color32::from_rgb(120, 200, 140),
+            );
+            status_value(
+                ui,
+                meters
+                    .cpu_pct
+                    .map(|v| format!("CPU {v:.1}%"))
+                    .unwrap_or_else(|| "CPU —".into()),
+                meter_color(meters.cpu_pct),
+            );
+            status_value(
+                ui,
+                meters
+                    .mem_used_pct
+                    .map(|v| format!("MEM {v:.0}%"))
+                    .unwrap_or_else(|| "MEM —".into()),
+                meter_color(meters.mem_used_pct),
+            );
+            let net = match (meters.net_rx_bps, meters.net_tx_bps) {
+                (Some(rx), Some(tx)) => format!(
+                    "↓{} ↑{}",
+                    crate::record::format_rate(rx),
+                    crate::record::format_rate(tx)
+                ),
+                _ => "NET —".into(),
+            };
+            ui.monospace(net);
+            let disk = match (meters.disk_rd_bps, meters.disk_wr_bps) {
+                (Some(rd), Some(wr)) => format!(
+                    "R{} W{}",
+                    crate::record::format_rate(rd),
+                    crate::record::format_rate(wr)
+                ),
+                _ => "DISK —".into(),
+            };
+            ui.monospace(disk);
+            status_value(
+                ui,
+                meters
+                    .temp_c
+                    .map(|v| format!("{v:.1}°C"))
+                    .unwrap_or_else(|| "TEMP —".into()),
+                temp_color(meters.temp_c),
+            );
+            ui.separator();
+            let rec_label = if self.recording {
+                self.t("停止记录", "Stop record")
+            } else {
+                self.t("开始记录", "Record")
+            };
+            if ui
+                .add(egui::Button::new(if self.recording {
+                    RichText::new(rec_label).color(Color32::from_rgb(255, 90, 90))
+                } else {
+                    RichText::new(rec_label)
+                }))
+                .clicked()
+            {
+                self.recording = !self.recording;
+                if self.recording {
+                    self.record_err = None;
+                }
+            }
+            if self.recording {
+                ui.colored_label(
+                    Color32::from_rgb(255, 90, 90),
+                    format!("REC {}", self.record_samples),
+                );
+            }
+            let bar_label = self.t("置顶状态栏", "Always-on-top bar");
+            ui.checkbox(&mut self.compact_bar, bar_label);
+        });
+        if let Some(e) = &self.record_err {
+            ui.colored_label(Color32::from_rgb(255, 100, 100), e);
+        }
+    }
+
+    fn show_compact_bar(&mut self, ctx: &egui::Context) {
+        let bar_id = egui::ViewportId::from_hash_of("istat-bar");
+        if !self.compact_bar {
+            if self.compact_bar_shown {
+                ctx.send_viewport_cmd_to(bar_id, egui::ViewportCommand::Close);
+                self.compact_bar_shown = false;
+            }
+            return;
+        }
+        self.compact_bar_shown = true;
+        let meters = StatusMeters::from_snapshot(&self.snap);
+        let line = meters.compact_line();
+        let recording = self.recording;
+        let rec_n = self.record_samples;
+        let cjk = self.cjk;
+        let mut keep_open = true;
+        ctx.show_viewport_immediate(
+            bar_id,
+            egui::ViewportBuilder::default()
+                .with_title("AIDA")
+                .with_inner_size([720.0, 40.0])
+                .with_min_inner_size([420.0, 32.0])
+                .with_decorations(true)
+                .with_always_on_top()
+                .with_resizable(true),
+            |ctx, class| {
+                let mut draw = |ui: &mut egui::Ui| {
+                    ui.horizontal(|ui| {
+                        ui.monospace(&line);
+                        if recording {
+                            ui.colored_label(
+                                Color32::from_rgb(255, 90, 90),
+                                format!("REC {rec_n}"),
+                            );
+                        }
+                        if ui.small_button("×").clicked() {
+                            keep_open = false;
+                        }
+                    });
+                };
+                if class == egui::ViewportClass::Embedded {
+                    egui::Window::new(tr(cjk, "状态栏", "Status bar"))
+                        .id(egui::Id::new("istat-embed"))
+                        .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
+                        .collapsible(false)
+                        .resizable(false)
+                        .show(ctx, |ui| draw(ui));
+                } else {
+                    egui::CentralPanel::default().show(ctx, |ui| draw(ui));
+                }
+            },
+        );
+        if !keep_open {
+            self.compact_bar = false;
+        }
+    }
 }
 
 impl eframe::App for AidaApp {
@@ -231,6 +397,11 @@ impl eframe::App for AidaApp {
             }
             ui.weak(crate::elevate::plan().summary);
         });
+
+        egui::TopBottomPanel::top("istat").show(ctx, |ui| {
+            self.ui_status_strip(ui);
+        });
+        self.show_compact_bar(ctx);
 
         egui::SidePanel::left("tree")
             .resizable(true)
@@ -1245,6 +1416,16 @@ impl AidaApp {
             self.t("告警日志", "Alert log"),
             self.alert_log_path.display()
         ));
+        ui.weak(format!(
+            "{}: {}{}",
+            self.t("记录", "Record"),
+            self.record_path.display(),
+            if self.recording {
+                format!("  REC {}", self.record_samples)
+            } else {
+                String::new()
+            }
+        ));
         if let Some(e) = &self.alert_log_err {
             ui.colored_label(Color32::from_rgb(255, 100, 100), e);
         }
@@ -2122,10 +2303,7 @@ impl AidaApp {
                 self.snap.net.icmp_ignore_bogus.display(),
                 self.snap.net.icmp_msgs_per_sec.display(),
                 self.snap.net.icmp_msgs_burst.display(),
-                match self.snap.net.ping_group_range.value.as_deref() {
-                    Some("1\t0") | Some("1 0") => "1 0 无特权ping".into(),
-                    _ => self.snap.net.ping_group_range.display(),
-                },
+                crate::probes::net::ping_group_range_display(&self.snap.net.ping_group_range),
                 self.snap.net.icmp_ratemask.display()
             ),
         );
@@ -3584,6 +3762,33 @@ impl AidaApp {
         if let Some(m) = &self.export_msg {
             ui.label(m);
         }
+        ui.separator();
+        ui.label(self.t(
+            "指标记录（CPU/内存/网络/磁盘/温度 JSONL，对标 iStat Menus）",
+            "Metric recording (CPU/mem/net/disk/temp JSONL, iStat Menus-style)",
+        ));
+        ui.weak(self.record_path.display().to_string());
+        ui.horizontal(|ui| {
+            let rec_label = if self.recording {
+                self.t("停止记录", "Stop record")
+            } else {
+                self.t("开始记录", "Start record")
+            };
+            if ui.button(rec_label).clicked() {
+                self.recording = !self.recording;
+            }
+            if self.recording {
+                ui.colored_label(
+                    Color32::from_rgb(255, 90, 90),
+                    format!("REC {}", self.record_samples),
+                );
+            }
+            let bar_label = self.t("置顶状态栏", "Always-on-top bar");
+            ui.checkbox(&mut self.compact_bar, bar_label);
+        });
+        if let Some(e) = &self.record_err {
+            ui.colored_label(Color32::from_rgb(255, 100, 100), e);
+        }
         ui.label(self.t(
             "也可在终端: aida collect --html report.html",
             "CLI: aida collect --html report.html",
@@ -3597,6 +3802,50 @@ fn tr<'a>(cjk: bool, zh: &'a str, en: &'a str) -> &'a str {
     } else {
         en
     }
+}
+
+fn meter_color(pct: Option<f32>) -> Color32 {
+    match pct {
+        Some(v) if v >= 90.0 => Color32::from_rgb(255, 90, 90),
+        Some(v) if v >= 70.0 => Color32::from_rgb(255, 179, 71),
+        Some(_) => Color32::from_rgb(120, 200, 140),
+        None => Color32::GRAY,
+    }
+}
+
+fn temp_color(c: Option<f64>) -> Color32 {
+    match c {
+        Some(v) if v >= 85.0 => Color32::from_rgb(255, 90, 90),
+        Some(v) if v >= 70.0 => Color32::from_rgb(255, 179, 71),
+        Some(_) => Color32::from_rgb(120, 200, 140),
+        None => Color32::GRAY,
+    }
+}
+
+fn status_value(ui: &mut egui::Ui, text: String, color: Color32) {
+    ui.colored_label(color, RichText::new(text).monospace().strong());
+}
+
+fn sparkline(ui: &mut egui::Ui, id: &str, hist: &VecDeque<[f64; 2]>, color: Color32) {
+    if hist.len() < 2 {
+        return;
+    }
+    Plot::new(id)
+        .width(72.0)
+        .height(22.0)
+        .allow_zoom(false)
+        .allow_scroll(false)
+        .allow_drag(false)
+        .allow_boxed_zoom(false)
+        .show_axes(false)
+        .show_grid(false)
+        .show_background(false)
+        .include_y(0.0)
+        .include_y(100.0)
+        .show(ui, |plot| {
+            let pts: PlotPoints = hist.iter().copied().map(|p| [p[0], p[1]]).collect();
+            plot.line(Line::new(pts).color(color).width(1.2_f32));
+        });
 }
 
 fn push_hist(q: &mut VecDeque<[f64; 2]>, t: f64, v: f64) {

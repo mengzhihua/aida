@@ -7,6 +7,7 @@
 //! - [`bench`] CPU / 内存 / 磁盘（buffered + O_DIRECT）
 //! - [`elevate`] pkexec/sudo 提权重启
 //! - [`alerts`] hwmon 阈值告警与 JSONL 日志
+//! - [`record`] CPU/内存/网络/磁盘/温度 JSONL 历史（对标 iStat Menus）
 
 pub mod access;
 pub mod alerts;
@@ -14,6 +15,7 @@ pub mod bench;
 pub mod elevate;
 pub mod export;
 pub mod probes;
+pub mod record;
 pub mod snapshot;
 
 #[cfg(feature = "gui")]

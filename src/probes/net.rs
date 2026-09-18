@@ -186,7 +186,7 @@ pub struct NetReport {
     pub tcp_mtu_probe_floor: Sample<u64>,
     pub tcp_tso_rtt_log: Sample<u64>,
     pub udp_rmem_min: Sample<u64>,
-    /// `min>max`（常见 `1 0`）表示无特权进程不能 ping。
+    /// `min>max`（任意倒序，常见 `1 0`）表示无特权进程不能 ping。
     pub ping_group_range: Sample<String>,
     pub icmp_ratemask: Sample<u64>,
     pub ipv6_idgen_delay: Sample<u64>,
@@ -195,6 +195,22 @@ pub struct NetReport {
     /// 与 `conf/all` 不同的接口。
     pub ipv6_keep_addr_on_down_dev: Vec<String>,
     pub notes: Vec<String>,
+}
+
+/// 解析 `ping_group_range` 两端 gid。任意 min>max（不只是 `1 0`）都标成无特权 ping。
+pub fn ping_group_range_display(sample: &Sample<String>) -> String {
+    if let Some(raw) = sample.value.as_deref() {
+        let mut it = raw.split_ascii_whitespace();
+        if let (Some(Ok(min)), Some(Ok(max))) = (
+            it.next().map(str::parse::<u64>),
+            it.next().map(str::parse::<u64>),
+        ) {
+            if min > max {
+                return format!("{min} {max} 无特权ping");
+            }
+        }
+    }
+    sample.display()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2363,5 +2379,17 @@ mod tests {
             parse_name_lines(&Sample::ok("filter\nnat\n".into(), "ip_tables_names")),
             vec!["filter".to_string(), "nat".to_string()]
         );
+    }
+
+    #[test]
+    fn ping_group_range_flags_any_inverted_gid_span() {
+        let inverted_tab = Sample::ok("2\t1".into(), "ping_group_range");
+        assert_eq!(ping_group_range_display(&inverted_tab), "2 1 无特权ping");
+        let classic = Sample::ok("1 0".into(), "ping_group_range");
+        assert_eq!(ping_group_range_display(&classic), "1 0 无特权ping");
+        let open = Sample::ok("0 2147483647".into(), "ping_group_range");
+        assert_eq!(ping_group_range_display(&open), "0 2147483647");
+        let missing = Sample::<String>::missing("ping_group_range");
+        assert!(ping_group_range_display(&missing).contains("不存在"));
     }
 }
