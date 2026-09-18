@@ -546,6 +546,18 @@ impl AidaApp {
             ),
         );
         kv(ui, "online", &self.snap.cpu.online.display());
+        kv(
+            ui,
+            "offline",
+            &match (
+                self.snap.cpu.offline.access,
+                self.snap.cpu.offline.value.as_deref(),
+            ) {
+                (AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
+                (AccessKind::Ok, _) => "—".into(),
+                _ => self.snap.cpu.offline.access_label(),
+            },
+        );
         if self.snap.cpu.isolated.access == AccessKind::Ok {
             kv(
                 ui,
@@ -1775,11 +1787,14 @@ impl AidaApp {
             ui,
             "conntrack",
             &format!(
-                "{} / {}  cong {} ({})",
+                "{} / {}  cong {} ({})  est {}s  buckets {}  tw {}",
                 self.snap.net.conntrack_count.display(),
                 self.snap.net.conntrack_max.display(),
                 self.snap.net.tcp_congestion.display(),
-                self.snap.net.tcp_available_congestion.display()
+                self.snap.net.tcp_available_congestion.display(),
+                self.snap.net.conntrack_tcp_established.display(),
+                self.snap.net.conntrack_buckets.display(),
+                self.snap.net.tcp_max_tw_buckets.display()
             ),
         );
         let te = &self.snap.net.tcpext;
@@ -1836,7 +1851,7 @@ impl AidaApp {
             ui,
             "net.core",
             &format!(
-                "somaxconn {}  backlog {}  budget {}/{}us  r/wmem {}/{}  busy_poll {}  weight {}",
+                "somaxconn {}  backlog {}  budget {}/{}us  r/wmem {}/{}  busy_poll {}  busy_read {}  weight {}",
                 self.snap.net.somaxconn.display(),
                 self.snap.net.netdev_max_backlog.display(),
                 self.snap.net.netdev_budget.display(),
@@ -1844,6 +1859,7 @@ impl AidaApp {
                 self.snap.net.rmem_max.display(),
                 self.snap.net.wmem_max.display(),
                 self.snap.net.busy_poll.display(),
+                self.snap.net.busy_read.display(),
                 self.snap.net.dev_weight.display()
             ),
         );
@@ -1897,24 +1913,30 @@ impl AidaApp {
             ui,
             "tcp mem",
             &format!(
-                "rmem {}  wmem {}  mtu_probing {}  optmem {}  notsent {}  unix_dgram {}",
+                "rmem {}  wmem {}  mtu_probing {}  optmem {}  notsent {}  unix_dgram {}  adv_win {}  moderate_rcvbuf {}",
                 self.snap.net.tcp.rmem.display(),
                 self.snap.net.tcp.wmem.display(),
                 self.snap.net.tcp.mtu_probing.display(),
                 self.snap.net.optmem_max.display(),
                 self.snap.net.tcp.notsent_lowat.display(),
-                self.snap.net.unix_max_dgram_qlen.display()
+                self.snap.net.unix_max_dgram_qlen.display(),
+                self.snap.net.tcp.adv_win_scale.display(),
+                self.snap.net.tcp.moderate_rcvbuf.display()
             ),
         );
         kv(
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  igmp {}  igmp6 {}  rt6 {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  igmp {}  igmp6 {}  rt6 {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
                 self.snap.net.ipv6_use_tempaddr.display(),
+                self.snap.net.ipv6_accept_ra.display(),
+                self.snap.net.ipv6_autoconf.display(),
+                self.snap.net.ipv6_hop_limit.display(),
+                self.snap.net.ip_default_ttl.display(),
                 self.snap.net.igmp_ifaces,
                 self.snap.net.igmp6_ifaces,
                 self.snap.net.rt6_entries.display()
@@ -1924,9 +1946,10 @@ impl AidaApp {
             ui,
             "netsec",
             &format!(
-                "rp_filter {}  icmp_echo_ignore_broadcasts {}  redirects {}  srcrt {}  martians {}  bogus {}",
+                "rp_filter {}  icmp_echo_ignore_broadcasts {}  icmp_ratelimit {}  redirects {}  srcrt {}  martians {}  bogus {}",
                 self.snap.net.rp_filter.display(),
                 self.snap.net.icmp_echo_ignore_broadcasts.display(),
+                self.snap.net.icmp_ratelimit.display(),
                 self.snap.net.accept_redirects.display(),
                 self.snap.net.accept_source_route.display(),
                 self.snap.net.log_martians.display(),
@@ -1969,11 +1992,22 @@ impl AidaApp {
         if !self.snap.net.protocols.is_empty() {
             kv(ui, "protocols", &self.snap.net.protocols.join("  "));
         }
-        if !self.snap.net.iptables.is_empty() {
-            kv(ui, "iptables", &self.snap.net.iptables.join(" "));
-        }
-        if !self.snap.net.ip6tables.is_empty() {
-            kv(ui, "ip6tables", &self.snap.net.ip6tables.join(" "));
+        kv_name_list(
+            ui,
+            "iptables",
+            &self.snap.net.iptables,
+            &self.snap.net.notes,
+            "ip_tables_names",
+        );
+        kv_name_list(
+            ui,
+            "ip6tables",
+            &self.snap.net.ip6tables,
+            &self.snap.net.notes,
+            "ip6_tables_names",
+        );
+        if !self.snap.net.connectors.is_empty() {
+            kv(ui, "connector", &self.snap.net.connectors.join(" "));
         }
         for b in &self.snap.net.bridges {
             kv(
@@ -2475,6 +2509,10 @@ impl AidaApp {
             ("spi", &self.snap.buses.spi),
             ("serio", &self.snap.buses.serio),
             ("ubi", &self.snap.buses.ubi),
+            ("scsi_generic", &self.snap.buses.scsi_generic),
+            ("wwan", &self.snap.buses.wwan),
+            ("ppp", &self.snap.buses.ppp),
+            ("phy", &self.snap.buses.phy),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -2493,6 +2531,17 @@ impl AidaApp {
             ui,
             self.t("内核", "Kernel"),
             &self.snap.software.kernel_release.display(),
+        );
+        kv(ui, "ostype", &self.snap.software.ostype.display());
+        kv(
+            ui,
+            "arch",
+            &format!(
+                "{}  {}-bit  profiling {}",
+                self.snap.software.cpu_byteorder.display(),
+                self.snap.software.address_bits.display(),
+                self.snap.software.profiling.display()
+            ),
         );
         kv(ui, "hostname", &self.snap.software.hostname.display());
         kv(
@@ -2703,9 +2752,11 @@ impl AidaApp {
             ui,
             "keys / dumpable",
             &format!(
-                "maxkeys {}  maxbytes {}  cap_last {}  dumpable {}  autogroup {}  cad {}  leases {}  poolsize {}",
+                "maxkeys {}  maxbytes {}  gc {}  key-users {}  cap_last {}  dumpable {}  autogroup {}  cad {}  leases {}  poolsize {}",
                 self.snap.sysctl.keys_maxkeys.display(),
                 self.snap.sysctl.keys_maxbytes.display(),
+                self.snap.sysctl.keys_gc_delay.display(),
+                self.snap.sysctl.key_users,
                 self.snap.sysctl.cap_last_cap.display(),
                 self.snap.sysctl.suid_dumpable.display(),
                 self.snap.sysctl.sched_autogroup.display(),
@@ -2718,23 +2769,41 @@ impl AidaApp {
             ui,
             "aio/inotify",
             &format!(
-                "aio {} / {}  watches {}  inst {}  queued {}  epoll {}",
+                "aio {} / {}  watches {}  inst {}  queued {}  epoll {}  dentry {}/{}  inode {}/{}  pty {}/{}  overflowuid {}  overflowgid {}  dir_notify {}  lease_break {}  writes_strict {}  vsyscall32 {}  ldisc {}  io_uring {}/{}",
                 self.snap.sysctl.aio_nr.display(),
                 self.snap.sysctl.aio_max_nr.display(),
                 self.snap.sysctl.inotify_max_user_watches.display(),
                 self.snap.sysctl.inotify_max_user_instances.display(),
                 self.snap.sysctl.inotify_max_queued_events.display(),
-                self.snap.sysctl.epoll_max_user_watches.display()
+                self.snap.sysctl.epoll_max_user_watches.display(),
+                self.snap.sysctl.dentry_nr.display(),
+                self.snap.sysctl.dentry_unused.display(),
+                self.snap.sysctl.inode_inuse.display(),
+                self.snap.sysctl.inode_free.display(),
+                self.snap.sysctl.pty_max.display(),
+                self.snap.sysctl.pty_nr.display(),
+                self.snap.sysctl.overflowuid.display(),
+                self.snap.sysctl.overflowgid.display(),
+                self.snap.sysctl.dir_notify_enable.display(),
+                self.snap.sysctl.lease_break_time.display(),
+                self.snap.sysctl.sysctl_writes_strict.display(),
+                self.snap.sysctl.vsyscall32.display(),
+                self.snap.sysctl.ldisc_autoload.display(),
+                self.snap.sysctl.io_uring_disabled.display(),
+                self.snap.sysctl.io_uring_group.display()
             ),
         );
         kv(
             ui,
             "ipc",
             &format!(
-                "shmmax {}  shmmni {}  msgmax {}  sem {}  mqueue {}  sysvipc shm/sem/msg {}/{}/{}",
+                "shmmax {}  shmall {}  shmmni {}  msgmax {}  msgmnb {}  msgmni {}  sem {}  mqueue {}  sysvipc shm/sem/msg {}/{}/{}",
                 self.snap.sysctl.shmmax.display(),
+                self.snap.sysctl.shmall.display(),
                 self.snap.sysctl.shmmni.display(),
                 self.snap.sysctl.msgmax.display(),
+                self.snap.sysctl.msgmnb.display(),
+                self.snap.sysctl.msgmni.display(),
                 self.snap.sysctl.sem.display(),
                 self.snap.sysctl.mqueue_queues_max.display(),
                 self.snap.sysctl.sysvipc_shm,
@@ -2746,13 +2815,15 @@ impl AidaApp {
             ui,
             "bpf/modules/perf",
             &format!(
-                "unpriv_bpf {}  jit {}/{}  binfmt {}  modules_disabled {}  perf {}",
+                "unpriv_bpf {}  jit {}/{}  binfmt {}  modules_disabled {}  perf {}  sample_rate {}  cpu% {}",
                 self.snap.security.unprivileged_bpf_disabled.display(),
                 self.snap.security.bpf_jit_enable.display(),
                 self.snap.security.bpf_jit_harden.display(),
                 self.snap.security.binfmt_misc_status.display(),
                 self.snap.security.modules_disabled.display(),
-                self.snap.security.perf_event_paranoid.display()
+                self.snap.security.perf_event_paranoid.display(),
+                self.snap.sysctl.perf_event_max_sample_rate.display(),
+                self.snap.sysctl.perf_cpu_time_max_percent.display()
             ),
         );
         kv(
@@ -2769,7 +2840,7 @@ impl AidaApp {
             ui,
             "vm",
             &format!(
-                "swappiness {}  overcommit {}  dirty {}/{}  watermark {}  dirty_expire {}  writeback {}  page-cluster {}",
+                "swappiness {}  overcommit {}  dirty {}/{}  watermark {}  dirty_expire {}  writeback {}  page-cluster {}  admin_reserve {}",
                 self.snap.sysctl.swappiness.display(),
                 self.snap.sysctl.overcommit_memory.display(),
                 self.snap.sysctl.dirty_ratio.display(),
@@ -2777,7 +2848,8 @@ impl AidaApp {
                 self.snap.sysctl.watermark_scale_factor.display(),
                 self.snap.sysctl.dirty_expire_centisecs.display(),
                 self.snap.sysctl.dirty_writeback_centisecs.display(),
-                self.snap.sysctl.page_cluster.display()
+                self.snap.sysctl.page_cluster.display(),
+                self.snap.sysctl.admin_reserve_kbytes.display()
             ),
         );
         kv(ui, "ASLR", &self.snap.sysctl.aslr.display());
@@ -2787,7 +2859,7 @@ impl AidaApp {
             ui,
             "cgroup",
             &format!(
-                "{}  mem {}  cpu {} us",
+                "{}  mem {}  cpu {} us  v1 {}",
                 self.snap.cgroup.controllers.display(),
                 self.snap
                     .cgroup
@@ -2795,7 +2867,12 @@ impl AidaApp {
                     .value
                     .map(crate::export::format_bytes)
                     .unwrap_or_else(|| self.snap.cgroup.memory_current.access_label()),
-                self.snap.cgroup.cpu_usage_usec.display()
+                self.snap.cgroup.cpu_usage_usec.display(),
+                if self.snap.cgroup.v1_enabled.is_empty() {
+                    "—".into()
+                } else {
+                    self.snap.cgroup.v1_enabled.join(" ")
+                }
             ),
         );
         if !self.snap.cgroup.groups.is_empty() {
@@ -2989,6 +3066,9 @@ impl AidaApp {
         kv(ui, "pstore", &self.snap.firmware.pstore_files.to_string());
         kv(ui, "firmware timeout", &self.snap.firmware.firmware_timeout.display());
         kv(ui, "memmap", &self.snap.firmware.memmap_entries.to_string());
+        if self.snap.firmware.dt_model.access == AccessKind::Ok {
+            kv(ui, "device-tree", &self.snap.firmware.dt_model.display());
+        }
         kv(ui, "hwrng", &self.snap.firmware.rng_current.display());
         for t in &self.snap.firmware.tpms {
             kv(
@@ -3187,6 +3267,20 @@ fn kb_pair(total: &crate::Sample<u64>, avail: &crate::Sample<u64>) -> String {
 fn nav_btn(ui: &mut egui::Ui, current: &mut Nav, id: Nav, label: &str) {
     if ui.selectable_label(*current == id, label).clicked() {
         *current = id;
+    }
+}
+
+fn kv_name_list(
+    ui: &mut egui::Ui,
+    label: &str,
+    names: &[String],
+    notes: &[String],
+    path_frag: &str,
+) {
+    if !names.is_empty() {
+        kv(ui, label, &names.join(" "));
+    } else if let Some(n) = notes.iter().find(|s| s.contains(path_frag)) {
+        kv(ui, label, n);
     }
 }
 

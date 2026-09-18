@@ -2,26 +2,26 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十九轮** 补齐剩余总线 class（ieee80211 / Type-C / UDC / DAX / WMI / SPI / serio / UBI）、bpf_jit / binfmt_misc、以及本机常见的 printk/cfs/oops、igmp6、busy_poll。不写 binfmt `register`，不读 `drop_caches`/`fib_trie`。
+**第二十一轮** 补齐 pty / inode-state / SysV shmall、io_uring、IPv6 RA/autoconf、conntrack 超时、CPU offline、device-tree model，以及 scsi_generic/wwan/ppp/phy 总线名。不写 io_uring sysctl。
 
 | 模块 | 状态 |
 | --- | --- |
-| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs |
+| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs；CPU `offline`；`ostype`；firmware device-tree `model` |
 | CPU 拓扑 / cpuidle / 漏洞 / 每核利用率 / 缓存 / SMT | siblings + `cpuidle` + `smt/{active,control}` + `isolated` + cpufreq policy |
 | GPU / 显示器 | DRM + 连接器 EDID（不调用 `edid-decode`/`xrandr`） |
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/dev_weight；protocols；conntrack；net.core；rp_filter per-iface |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/busy_read/dev_weight；IPv6 accept_ra/autoconf/hop；conntrack 超时/buckets；tcp_max_tw_buckets；icmp_ratelimit；ip_default_ttl；protocols；conntrack；net.core；rp_filter per-iface |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap + memory_tier |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
 | EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
 | 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout / memmap |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc、dentry-state、inode-state、pty、io_uring、key-users、cgroup v1 enabled |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi；scsi_generic/wwan/ppp/phy |
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |

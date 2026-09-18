@@ -31,6 +31,10 @@ pub struct BusesReport {
     pub spi: Vec<String>,
     pub serio: Vec<String>,
     pub ubi: Vec<String>,
+    pub scsi_generic: Vec<String>,
+    pub wwan: Vec<String>,
+    pub ppp: Vec<String>,
+    pub phy: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -208,6 +212,16 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut missing,
     );
     let ubi = list_optional_names(ctx.sys_path("class/ubi"), 8, "ubi", &mut notes, &mut missing);
+    let scsi_generic = list_optional_names(
+        ctx.sys_path("class/scsi_generic"),
+        8,
+        "scsi_generic",
+        &mut notes,
+        &mut missing,
+    );
+    let wwan = list_optional_names(ctx.sys_path("class/wwan"), 8, "wwan", &mut notes, &mut missing);
+    let ppp = list_optional_names(ctx.sys_path("class/ppp"), 8, "ppp", &mut notes, &mut missing);
+    let phy = list_optional_names(ctx.sys_path("class/phy"), 8, "phy", &mut notes, &mut missing);
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -237,6 +251,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         spi,
         serio,
         ubi,
+        scsi_generic,
+        wwan,
+        ppp,
+        phy,
         notes,
     }
 }
@@ -700,6 +718,8 @@ mod tests {
         let ib = root.join("sys/class/infiniband/mlx5_0/ports/1");
         fs::create_dir_all(&ib).unwrap();
         fs::create_dir_all(root.join("sys/class/ieee80211/phy0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/scsi_generic/sg0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/phy/eth0-phy")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -726,6 +746,8 @@ mod tests {
         assert_eq!(r.mtd.len(), 1);
         assert_eq!(r.infiniband[0].ports, 1);
         assert_eq!(r.ieee80211, vec!["phy0".to_string()]);
+        assert_eq!(r.scsi_generic, vec!["sg0".to_string()]);
+        assert_eq!(r.phy, vec!["eth0-phy".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

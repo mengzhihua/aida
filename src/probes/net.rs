@@ -77,6 +77,16 @@ pub struct NetReport {
     pub udplite6_socks: usize,
     pub iptables: Vec<String>,
     pub ip6tables: Vec<String>,
+    pub connectors: Vec<String>,
+    pub ipv6_accept_ra: Sample<String>,
+    pub ipv6_autoconf: Sample<String>,
+    pub ipv6_hop_limit: Sample<u64>,
+    pub conntrack_tcp_established: Sample<u64>,
+    pub conntrack_buckets: Sample<u64>,
+    pub tcp_max_tw_buckets: Sample<u64>,
+    pub busy_read: Sample<u64>,
+    pub icmp_ratelimit: Sample<u64>,
+    pub ip_default_ttl: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -101,6 +111,8 @@ pub struct TcpTune {
     pub mtu_probing: Sample<String>,
     /// `u32::MAX`（4294967295）表示未限制。
     pub notsent_lowat: Sample<u64>,
+    pub adv_win_scale: Sample<i64>,
+    pub moderate_rcvbuf: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -265,6 +277,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         wmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_wmem")),
         mtu_probing: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_mtu_probing")),
         notsent_lowat: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_notsent_lowat")),
+        adv_win_scale: access::read_i64(ctx.proc_path("sys/net/ipv4/tcp_adv_win_scale")),
+        moderate_rcvbuf: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_moderate_rcvbuf")),
     };
     let default_qdisc = access::read_trimmed(ctx.proc_path("sys/net/core/default_qdisc"));
     let ipv6_disable = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_ipv6"));
@@ -311,8 +325,28 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let igmp6_ifaces = count_igmp6_ifaces(&access::read_trimmed(ctx.proc_path("net/igmp6")));
     let raw6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/raw6")));
     let udplite6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udplite6")));
-    let iptables = parse_name_lines(&access::read_trimmed(ctx.proc_path("net/ip_tables_names")));
-    let ip6tables = parse_name_lines(&access::read_trimmed(ctx.proc_path("net/ip6_tables_names")));
+    let iptables = tables_from(
+        &access::read_trimmed(ctx.proc_path("net/ip_tables_names")),
+        &mut notes,
+    );
+    let ip6tables = tables_from(
+        &access::read_trimmed(ctx.proc_path("net/ip6_tables_names")),
+        &mut notes,
+    );
+    let connectors = parse_connector(&access::read_trimmed(ctx.proc_path("net/connector")));
+    let ipv6_accept_ra =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra"));
+    let ipv6_autoconf = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/autoconf"));
+    let ipv6_hop_limit = access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/hop_limit"));
+    let conntrack_tcp_established = access::read_u64(
+        ctx.proc_path("sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
+    );
+    let conntrack_buckets =
+        access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_buckets"));
+    let tcp_max_tw_buckets = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_tw_buckets"));
+    let busy_read = access::read_u64(ctx.proc_path("sys/net/core/busy_read"));
+    let icmp_ratelimit = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_ratelimit"));
+    let ip_default_ttl = access::read_u64(ctx.proc_path("sys/net/ipv4/ip_default_ttl"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -387,6 +421,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 udplite6_socks,
                 iptables,
                 ip6tables,
+                connectors,
+                ipv6_accept_ra,
+                ipv6_autoconf,
+                ipv6_hop_limit,
+                conntrack_tcp_established,
+                conntrack_buckets,
+                tcp_max_tw_buckets,
+                busy_read,
+                icmp_ratelimit,
+                ip_default_ttl,
                 notes,
             };
         }
@@ -569,6 +613,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         udplite6_socks,
         iptables,
         ip6tables,
+        connectors,
+        ipv6_accept_ra,
+        ipv6_autoconf,
+        ipv6_hop_limit,
+        conntrack_tcp_established,
+        conntrack_buckets,
+        tcp_max_tw_buckets,
+        busy_read,
+        icmp_ratelimit,
+        ip_default_ttl,
         notes,
     }
 }
@@ -853,6 +907,40 @@ pub fn parse_name_lines(sample: &Sample<String>) -> Vec<String> {
         .take(8)
         .map(|s| s.to_string())
         .collect()
+}
+
+/// `PermissionDenied`/`Error` 记入 notes，不要当成「未加载的空表」。
+fn tables_from(sample: &Sample<String>, notes: &mut Vec<String>) -> Vec<String> {
+    if matches!(
+        sample.access,
+        AccessKind::PermissionDenied | AccessKind::Error
+    ) {
+        notes.push(sample.access_label());
+        Vec::new()
+    } else {
+        parse_name_lines(sample)
+    }
+}
+
+/// `/proc/net/connector`：跳过表头，取 Name 列，最多 8 条。
+pub fn parse_connector(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines().skip(1) {
+        let Some(name) = line.split_whitespace().next() else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        out.push(name.to_string());
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
 }
 
 /// `/proc/net/rt6_stats` 十六进制 7 列：fib_nodes … dst cache … discarded。
@@ -1235,6 +1323,31 @@ mod tests {
         fs::write(root.join("proc/net/raw6"), "sl local rem\n").unwrap();
         fs::write(root.join("proc/net/ip_tables_names"), "filter\nnat\n").unwrap();
         fs::write(
+            root.join("proc/net/connector"),
+            "Name            ID\ncn_proc         1:1\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_adv_win_scale"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_moderate_rcvbuf"), "1\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/all")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_ra"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/autoconf"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/hop_limit"), "64\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
+            "432000\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_buckets"),
+            "65536\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_max_tw_buckets"), "65536\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/busy_read"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_ratelimit"), "1000\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_default_ttl"), "64\n").unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1284,6 +1397,18 @@ mod tests {
         assert_eq!(r.igmp6_ifaces, 2);
         assert_eq!(r.raw6_socks, 0);
         assert_eq!(r.iptables, vec!["filter".to_string(), "nat".to_string()]);
+        assert_eq!(r.connectors, vec!["cn_proc".to_string()]);
+        assert_eq!(r.tcp.adv_win_scale.value, Some(1));
+        assert_eq!(r.tcp.moderate_rcvbuf.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_accept_ra.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_autoconf.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_hop_limit.value, Some(64));
+        assert_eq!(r.conntrack_tcp_established.value, Some(432000));
+        assert_eq!(r.conntrack_buckets.value, Some(65536));
+        assert_eq!(r.tcp_max_tw_buckets.value, Some(65536));
+        assert_eq!(r.busy_read.value, Some(0));
+        assert_eq!(r.icmp_ratelimit.value, Some(1000));
+        assert_eq!(r.ip_default_ttl.value, Some(64));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -1377,5 +1502,27 @@ mod tests {
             "rt6_stats",
         ));
         assert_eq!(rt6.value, Some(7));
+    }
+
+    #[test]
+    fn iptables_denied_is_not_unloaded() {
+        let mut notes = Vec::new();
+        let denied = tables_from(&Sample::denied("/proc/net/ip_tables_names"), &mut notes);
+        assert!(denied.is_empty());
+        assert!(
+            notes.iter().any(|n| n.contains("权限不足")),
+            "PermissionDenied must be noted, not look unloaded: {notes:?}"
+        );
+        let mut ok_notes = Vec::new();
+        let empty = tables_from(&Sample::ok(String::new(), "ip_tables_names"), &mut ok_notes);
+        assert!(empty.is_empty());
+        assert!(
+            ok_notes.is_empty(),
+            "empty Ok file is unloaded, not a read failure: {ok_notes:?}"
+        );
+        assert_eq!(
+            parse_name_lines(&Sample::ok("filter\nnat\n".into(), "ip_tables_names")),
+            vec!["filter".to_string(), "nat".to_string()]
+        );
     }
 }

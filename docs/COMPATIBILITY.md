@@ -140,10 +140,23 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 118. **不要写 `binfmt_misc` 的 `register`。** 只读 `status`；目录在但无 status 就是未挂载。
 119. **`bpf_jit_enable` 经常不存在。** 未开 JIT 时 `NotFound`，不是采集失败。
 120. **`/proc/net/igmp6` 按接口名去重。** 不要把组播组行数当接口数。
-121. **空的 `/proc/net/ip_tables_names` 表示未加载 iptables。** 不是读失败，也不要跑 `iptables-save`。
+121. **空的 `/proc/net/ip_tables_names` 表示未加载 iptables。** 不是读失败，也不要跑 `iptables-save`。`PermissionDenied` 必须写 note，不要当成空表。
 122. **`tcp_notsent_lowat=4294967295` 表示不限制。** 用 u64 解析。
 123. **不要读 `/proc/sys/vm/drop_caches` 或 `compact_memory`。** 它们是只写触发器。
 124. **不要转储 `/sys/kernel/notes` 二进制。**
+125. **不要 dump `/proc/keys`。** 只计 `/proc/key-users` 行数。
+126. **`/proc/cgroups` 最后一列才是 enabled。** `0` 表示该 v1 子系统未启用，不要列进去。
+127. **`dentry-state` 第一列是 nr_dentry，第二列 nr_unused。** 不要把整行当单个整数。
+128. **不要读 `/sys/kernel/vmcoreinfo` 当文本。** 那是二进制地址范围。
+129. **`/proc/net/connector` 跳过表头。** 只取 Name 列。
+130. **`sched_cfs_bandwidth_slice_us` 在未开 `CONFIG_CFS_BANDWIDTH` 时不存在。** `NotFound` 不是采集失败。
+131. **空的 `/sys/devices/system/cpu/offline` 表示没有离线 CPU。** 不是读失败。
+132. **`inode-state` 第一列是 nr_inodes（已分配），第二列 nr_unused。** `inode_inuse` 是两者之差，不要把第一列当正在使用。空闲大于已分配记为读取失败。
+133. **`io_uring_disabled`：`0` 允许，`1` 仅特权，`2` 全关。** `io_uring_group=-1` 表示未绑定组，用有符号解析。不要写这些 sysctl。
+134. **`shmall` 与 shmmax 一样在 64 位上常接近 `u64::MAX`。** 用字符串保留。
+135. **空的 scsi_generic/wwan/ppp/phy 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+136. **无 device-tree `model` 在 x86/云主机上常见。** 先读 sysfs 再读 `/proc/device-tree`，不要当采集失败。字符串属性以 NUL 结尾，导出前要去掉。
+137. **`nf_conntrack_tcp_timeout_established` 单位是秒。** 未加载 conntrack 时 `NotFound`。
 
 ## 测试方案
 

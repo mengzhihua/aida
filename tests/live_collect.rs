@@ -192,6 +192,17 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"bpf_jit_enable\""));
     assert!(json.contains("\"binfmt_misc_status\""));
     assert!(json.contains("\"busy_poll\""));
+    assert!(json.contains("\"cpu_byteorder\""));
+    assert!(json.contains("\"v1_enabled\""));
+    assert!(json.contains("\"key_users\""));
+    assert!(json.contains("\"dentry_nr\""));
+    assert!(json.contains("\"connectors\""));
+    assert!(json.contains("\"pty_max\""));
+    assert!(json.contains("\"io_uring_disabled\""));
+    assert!(json.contains("\"ipv6_accept_ra\""));
+    assert!(json.contains("\"scsi_generic\""));
+    assert!(json.contains("\"dt_model\""));
+    assert!(json.contains("\"ostype\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -214,12 +225,41 @@ fn live_snapshot_json_and_html() {
         "printk_ratelimit 不应是读取失败"
     );
     assert!(
-        snap.sysctl.sched_cfs_bandwidth_slice_us.value.is_some(),
-        "sched_cfs_bandwidth_slice_us 应可读"
+        snap.sysctl.sched_cfs_bandwidth_slice_us.access != aida::access::AccessKind::Error,
+        "sched_cfs_bandwidth_slice_us 不应是读取失败（无 CONFIG_CFS_BANDWIDTH 时为 NotFound）"
     );
     assert!(
         snap.net.igmp6_ifaces >= 1 || snap.net.igmp_ifaces >= 1,
         "igmp 或 igmp6 应至少看到一个接口（IPv4-only 主机用 igmp）"
+    );
+    assert!(
+        snap.software.cpu_byteorder.access != aida::access::AccessKind::Error,
+        "cpu_byteorder 不应是读取失败"
+    );
+    assert!(
+        !snap.cgroup.v1_enabled.is_empty() || snap.cgroup.controllers.value.is_some(),
+        "cgroup v1 enabled 或 v2 controllers 应至少有一个"
+    );
+    assert!(
+        snap.sysctl.dentry_nr.value.is_some(),
+        "dentry-state 应可读"
+    );
+    assert!(
+        snap.sysctl.pty_max.value.is_some(),
+        "pty/max 应可读"
+    );
+    assert!(
+        snap.sysctl.io_uring_disabled.access != aida::access::AccessKind::Error,
+        "io_uring_disabled 不应是读取失败"
+    );
+    assert!(
+        snap.cpu.offline.access != aida::access::AccessKind::Error,
+        "cpu offline 不应是读取失败（空文件表示无离线 CPU）"
+    );
+    assert!(
+        snap.software.ostype.value.as_deref() == Some("Linux")
+            || snap.software.ostype.access != aida::access::AccessKind::Error,
+        "ostype 应为 Linux 或至少不是读取失败"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -297,6 +337,8 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));
     assert!(html.contains("sched_rt") || html.contains("tcp6") || html.contains("xfrm"));
     assert!(html.contains("igmp6") || html.contains("printk") || html.contains("binfmt") || html.contains("ieee80211"));
+    assert!(html.contains("byteorder") || html.contains("dentry") || html.contains("key-users") || html.contains("connector"));
+    assert!(html.contains("pty") || html.contains("io_uring") || html.contains("accept_ra") || html.contains("ostype"));
     assert!(!html.contains("<script"));
 }
 
