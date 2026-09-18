@@ -153,9 +153,23 @@ fn live_snapshot_json_and_html() {
         "/proc/self/ns 应至少有一个命名空间"
     );
     assert!(
-        snap.net.tcp_fastopen.value.is_some() || snap.net.inet6_addrs > 0,
-        "tcp_fastopen 或 if_inet6 应可读"
+        snap.net.tcp_fastopen.access != aida::access::AccessKind::Error,
+        "tcp_fastopen 不应是读取失败（IPv4-only 主机也必须通过）"
     );
+    assert!(
+        snap.sysctl.keys_maxkeys.access != aida::access::AccessKind::Error,
+        "keys/maxkeys 不应是读取失败"
+    );
+    assert!(
+        snap.sysctl.cap_last_cap.value.is_some(),
+        "cap_last_cap 应可读"
+    );
+    assert!(json.contains("\"keys_maxkeys\""));
+    assert!(json.contains("\"netdev_budget\""));
+    assert!(json.contains("\"firmware_timeout\""));
+    assert!(json.contains("\"clockevents\""));
+    assert!(json.contains("\"sysfs_irqs\""));
+    assert!(json.contains("\"file_locks\""));
     assert!(
         snap.sysctl.boot_id.value.is_some(),
         "boot_id 应可读"
@@ -221,6 +235,8 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("IPv6") || html.contains("sleep") || html.contains("DirectMap"));
     assert!(html.contains("fastopen") || html.contains("gpio") || html.contains("nmi"));
     assert!(html.contains("protocols") || html.contains("nfsd") || html.contains("qdisc"));
+    assert!(html.contains("somaxconn"));
+    assert!(html.contains("maxkeys") || html.contains("watermark") || html.contains("vtcon"));
     assert!(!html.contains("<script"));
 }
 

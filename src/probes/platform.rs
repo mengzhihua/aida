@@ -14,6 +14,8 @@ pub struct PlatformReport {
     pub pnp_devices: usize,
     pub workqueues: Vec<String>,
     pub event_sources: Vec<String>,
+    pub msr_devices: usize,
+    pub vtconsoles: Vec<VtConsole>,
     pub notes: Vec<String>,
 }
 
@@ -47,6 +49,13 @@ pub struct I2cAdapter {
     pub name: String,
     pub adapter_name: Sample<String>,
     pub clients: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VtConsole {
+    pub name: String,
+    pub device: Sample<String>,
+    pub bind: Sample<String>,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
@@ -94,6 +103,15 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         }
         _ => Vec::new(),
     };
+    let msr_devices = match access::list_dir_names(ctx.sys_path("class/msr")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.iter().filter(|x| x.starts_with("msr")).count(),
+        _ => 0,
+    };
+    let vtconsoles = read_vtconsoles(ctx);
     PlatformReport {
         watchdogs,
         backlights,
@@ -103,6 +121,8 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         pnp_devices,
         workqueues,
         event_sources,
+        msr_devices,
+        vtconsoles,
         notes,
     }
 }
@@ -247,6 +267,25 @@ fn read_i2c(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<I2cAdapter> {
     adapters
 }
 
+fn read_vtconsoles(ctx: &ProbeCtx) -> Vec<VtConsole> {
+    let root = ctx.sys_path("class/vtconsole");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing | DirList::Failed(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names.into_iter().filter(|n| n.starts_with("vtcon")) {
+        let dir = root.join(&name);
+        out.push(VtConsole {
+            device: access::read_trimmed(dir.join("name")),
+            bind: access::read_trimmed(dir.join("bind")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +315,12 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/pnp/devices/00:00")).unwrap();
         fs::create_dir_all(root.join("sys/bus/workqueue/devices/writeback")).unwrap();
         fs::create_dir_all(root.join("sys/bus/event_source/devices/software")).unwrap();
+        fs::create_dir_all(root.join("sys/class/msr/msr0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/msr/msr1")).unwrap();
+        let vt = root.join("sys/class/vtconsole/vtcon0");
+        fs::create_dir_all(&vt).unwrap();
+        fs::write(vt.join("name"), "(S) dummy device\n").unwrap();
+        fs::write(vt.join("bind"), "1\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -292,6 +337,10 @@ mod tests {
         assert_eq!(r.pnp_devices, 1);
         assert_eq!(r.workqueues, vec!["writeback".to_string()]);
         assert_eq!(r.event_sources, vec!["software".to_string()]);
+        assert_eq!(r.msr_devices, 2);
+        assert_eq!(r.vtconsoles.len(), 1);
+        assert_eq!(r.vtconsoles[0].device.value.as_deref(), Some("(S) dummy device"));
+        assert_eq!(r.vtconsoles[0].bind.value.as_deref(), Some("1"));
         let _ = fs::remove_dir_all(&root);
     }
 

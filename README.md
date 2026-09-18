@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十四轮** 补齐 TCP 栈开关、IPv6 disable/forward、协议表、BDI/BSG、NFS/FUSE、panic/sysrq 与 perf event source。
+**第十五轮** 补齐 keyring/vtconsole/MSR、clockevents、TCP 重试与 rp_filter、firmware timeout、文件锁，并修正 config.gz 长度与 IPv4-only live 断言。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -12,16 +12,16 @@
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由；TCP knobs；protocols；conntrack；net.core |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats；TCP knobs；protocols；conntrack；net.core；rp_filter |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
 | EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
-| 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng |
-| 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq |
+| 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout |
+| 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys/maxkeys |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
 | 传感器告警 | hwmon 阈值，越限写 JSONL |

@@ -100,12 +100,18 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 78. **loop 读 `backing_file` 权限不足时不要算空闲。** 只把 NotFound / 空内容当未使用。
 79. **GPIO / MTD / InfiniBand 在云 VM 上经常没有 class。** 写 note，不要当采集崩溃。
 80. **空的 `/sys/devices/system/cpu/cpufreq` 不是读失败。** 虚拟机常无 policyN。
-81. **无 `/proc/config.gz` 很常见。** 需要 `CONFIG_IKCONFIG_PROC`；不要解压 gzip 加依赖。
+81. **无 `/proc/config.gz` 很常见。** 需要 `CONFIG_IKCONFIG_PROC`；不要解压 gzip 加依赖。procfs inode size 常为 0，必须读字节长度。
 82. **`nmi_watchdog=0` 在虚拟机上正常。** 不是采集失败。
 83. **`/proc/net/if_inet6` 和 `ipv6_route` 没有表头。** 不要像 unix/packet 那样 skip 第一行。
 84. **`/proc/net/protocols` 第三列才是 sockets。** 不要把 size 当连接数。
 85. **nfsd `threads` 不存在表示未加载 nfsd。** 空 `/proc/fs/nfsd` 目录不是失败。
 86. **BDI 名字是主:次设备号。** 不要调用 `dmsetup`/`lsblk` 去解析。
+87. **`/proc/locks` 为空表示当前无文件锁。** 不是采集失败。
+88. **`class/vtconsole` 的 dummy device 在无真实 VT 的云 VM 上常见。** `bind=1` 仍可能是 dummy。
+89. **`class/msr` 每个逻辑 CPU 一个 `msrN`。** 只计数，不要 ioctl 读 MSR。
+90. **`rt6_stats` 是十六进制。** 第一列 dst entries；IPv4-only 主机仍可能有该文件。
+91. **`tcp_fastopen` 可读即可。** 不要把 IPv6/unix 表当 live 测试前置条件。
+92. **`/sys/kernel/irq` 计数与 `/proc/interrupts` 行数不必相等。** 后者含 NMI/ERR。
 
 ## 测试方案
 
