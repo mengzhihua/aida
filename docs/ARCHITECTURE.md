@@ -87,3 +87,13 @@
 ## 刻意未做
 
 - GPU 计算基准（OpenCL/Vulkan）：会引入额外运行时依赖，与「尽量少依赖、可静态/AppImage 打包」冲突。需要时再单独一轮。
+
+## 打包
+
+`./scripts/package.sh` 产出：
+
+- `dist/aida-cli-<ver>-<arch>-{musl|gnu}`：`--no-default-features`，有 musl 工具链则静态
+- `dist/AIDA_Linux-<ver>-<arch>.AppImage`：glibc + linuxdeploy 收集 OpenGL/xkb `.so`
+- `dist/SHA256SUMS`
+
+版本号只写在 `Cargo.toml`。本机菜单：`./scripts/install.sh`（默认 `~/.local`）。细节见 [PACKAGING.md](PACKAGING.md)。

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.aida.linux</id>
+  <name>AIDA Linux</name>
+  <summary>Hardware inspection and monitoring from sysfs/procfs</summary>
+  <summary xml:lang="zh_CN">从 sysfs/procfs 采集的硬件检测与监控</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      Linux hardware information, sensor charts, microbenchmarks and JSON/HTML
+      reports. Reads kernel files only; does not spawn dmidecode, lspci or smartctl.
+    </p>
+    <p xml:lang="zh_CN">
+      Linux 硬件信息、传感器折线、微基准与 JSON/HTML 报告。只读内核文件，不调用
+      dmidecode / lspci / smartctl。
+    </p>
+  </description>
+  <launchable type="desktop-id">aida.desktop</launchable>
+  <url type="homepage">https://github.com/mengzhihua/aida</url>
+  <provides>
+    <binary>aida</binary>
+  </provides>
+  <categories>
+    <category>System</category>
+    <category>Monitor</category>
+  </categories>
+  <releases>
+    <release version="@VERSION@" />
+  </releases>
+</component>

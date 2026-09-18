@@ -8,6 +8,7 @@ aida-disk-bench-*.bin
 /AppDir
 /packaging/appdir
 /dist
+/.cache
 .idea/
 .vscode/
 *.swp

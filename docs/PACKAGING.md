@@ -1,17 +1,33 @@
 # 打包与提权
 
+一次打出可带走的 CLI 和桌面 AppImage：
+
+```bash
+./scripts/package.sh
+ls -lh dist/
+```
+
+| 产物 | 脚本 | 说明 |
+| --- | --- | --- |
+| `dist/aida-cli-<ver>-<arch>-musl` 或 `-gnu` | `scripts/build-cli.sh` | 无 GUI。有 musl 工具链则静态，否则 glibc `--no-default-features` |
+| `dist/AIDA_Linux-<ver>-<arch>.AppImage` | `scripts/build-appimage.sh` | GUI + CLI。版本取自 `Cargo.toml` |
+| `dist/SHA256SUMS` | `scripts/package.sh` | 上述产物的 sha256 |
+| `~/.local/bin/aida`（可选） | `scripts/install.sh` | 本机安装桌面文件与图标；菜单 `Exec` 写成绝对路径 |
+
+GitHub Actions：`.github/workflows/package.yml` 在 PR / tag 上传上述产物。tag `v*` 时再挂到 GitHub Release。工作流 `ci` 跑单元测试与 `live_collect`。
+
 ## AppImage（GUI，glibc）
 
 不要把 egui/glow 链到 musl 静态。发行桌面版用 linuxdeploy 收集 `.so`：
 
 ```bash
-chmod +x scripts/build-appimage.sh
 ./scripts/build-appimage.sh
-# 产物在 dist/*.AppImage
 APPIMAGE_EXTRACT_AND_RUN=1 ./dist/AIDA_Linux-*.AppImage gui
 ```
 
-脚本会下载 [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy) continuous 构建。容器无 FUSE 时靠 `APPIMAGE_EXTRACT_AND_RUN=1`。
+`VERSION` / `LINUXDEPLOY_OUTPUT_VERSION` 默认等于 `Cargo.toml` 的 `version`。linuxdeploy 下到 `.cache/`，不进 `dist/`。
+
+容器无 FUSE 时必须 `APPIMAGE_EXTRACT_AND_RUN=1`。
 
 GUI 在运行时 `dlopen` `libxkbcommon-x11`。打包机请安装：
 
@@ -20,24 +36,28 @@ GUI 在运行时 `dlopen` `libxkbcommon-x11`。打包机请安装：
 sudo apt install libxkbcommon-x11-0 libegl1 libgl1
 ```
 
-脚本会把能找到的这些 `.so` 打进 AppImage。本 CI 镜像可能缺 `libxkbcommon-x11`，那时 AppImage 的 `collect`/`bench` 仍可用，GUI 需目标桌面自带该库。
+脚本会把能找到的这些 `.so` 打进 AppImage。构建机缺库时，`collect`/`bench` 仍可用，GUI 需目标桌面自带该库。
 
-安装系统图标/策略（可选，deb/rpm 包装时）：
+安装系统图标/策略（deb/rpm 或 `PREFIX=/usr`）：
 
 ```bash
+sudo PREFIX=/usr ./scripts/install.sh
+# 或手工：
 sudo install -m 0644 packaging/polkit/com.aida.linux.policy \
   /usr/share/polkit-1/actions/
 sudo install -m 0755 target/release/aida /usr/bin/aida
 ```
 
-## 采集 CLI 静态链接（可选）
+## 采集 CLI 静态链接
 
 ```bash
+./scripts/build-cli.sh
+# 等价于：
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --no-default-features --target x86_64-unknown-linux-musl
 ```
 
-无 GUI、体积小，适合装进救援盘。
+无 GUI、体积小，适合装进救援盘。没有 `musl-gcc` 时脚本会退回本机 glibc CLI，并在文件名里标 `gnu`。
 
 ## 提权
 

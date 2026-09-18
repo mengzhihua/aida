@@ -1,36 +1,139 @@
 # AIDA Linux
 
-开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
+开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 和 macOS iStat Menus 的常用能力：硬件信息、传感器监控、状态栏、微基准、JSON/HTML 报告。
 
-**第三十四轮** 补齐 `auto_msgmni` / NUMA zonelist / lowmem_reserve / overcommit hugepage；TCP PLB、UDP l3mdev、backlog ACK defer、fwmark_reflect；IPv6 RA min lft 接口差；uio / auxiliary / usbmon leftover。不 dump `stat_refresh` / `netdev_rss_key` / `stable_secret` / `mmap_rnd_bits` / `tcp_fastopen_key` / `cad_pid`。
+采集只走内核文件（`/proc` `/sys` `/dev`）和少量 ioctl，**不调用** `dmidecode`、`lspci`、`smartctl`、`nvme-cli`、`lshw` 等外部命令。GUI 与 CLI 共用同一套快照。
 
-| 模块 | 状态 |
+| 你想做的事 | 命令 |
 | --- | --- |
-| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs；CPU `offline`/`possible`/`present`/`kernel_max`/`enabled`/`nohz_full`/`modalias`/`cpuidle` 全局驱动与 available governors；`ostype`；firmware device-tree `model` |
-| CPU 拓扑 / cpuidle / 漏洞 / 每核利用率 / 缓存 / SMT | siblings + `cpuidle` + `smt/{active,control}` + `isolated` + cpufreq policy |
-| GPU / 显示器 | DRM + 连接器 EDID（不调用 `edid-decode`/`xrandr`） |
-| virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
-| PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
-| IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent/tcp_mem/udp_mem/orphans/dsack/autocorking/retries1/early_retrans/frto/min_tso/pacing_ss/pacing_ca/orphan_retries/rfc1337/ecn_fallback/abort_overflow/no_metrics/challenge_ack/thin_linear/limit_output/comp_sack/fwmark/early_demux/app_win/base_mss/min_snd_mss/reordering/recovery/tfo_blackhole/max_reordering/tso_win_divisor/udp_early_demux/syn_linear/fwd_pmtu/no_ssthresh/min_rtt_wlen/mtu_probe_floor/tso_rtt_log/shrink_window/l3mdev_accept/migrate_req/reflect_tos/rto_min_us/plb_enabled/backlog_ack_defer；udp_rmem_min/udp_wmem_min；udp_l3mdev_accept；fwmark_reflect；ping_group_range；icmp_ratemask；icmp_errors_use_inbound_ifaddr；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/busy_read/dev_weight/rps_sock_flow_entries；IPv6 accept_ra/autoconf/hop/accept_dad/addr_gen_mode/max_addresses/accept_ra_defrtr/router_solicitations/dad_transmits/ndisc_notify/force_mld_version/accept_ra_pinfo/enhanced_dad/auto_flowlabels/flowlabel_consistency/idgen_retries/idgen_delay/accept_ra_mtu/keep_addr_on_down/accept_ra_min_hop_limit/accept_ra_min_lft/ip6frag_time；ip6frag/ipfrag/ipfrag_time/ipfrag_max_dist；conntrack 超时/buckets；tcp_max_tw_buckets；icmp_ratelimit；icmp_echo_ignore_all/enable_probe；icmp_msgs_per_sec/burst；ip_default_ttl；ip_no_pmtu_disc；ip_nonlocal_bind；ip_dynaddr；ip_forward_update_priority；fib_notify_on_flag_change；fib_multipath_hash_policy；netdev_tstamp_prequeue；message_cost/burst；ip_unprivileged_port_start；bindv6only；protocols；conntrack；net.core；rp_filter/use_tempaddr/accept_dad/addr_gen_mode/accept_ra_defrtr/router_solicitations/dad_transmits/ndisc_notify/accept_ra_pinfo/enhanced_dad/accept_ra_mtu/keep_addr_on_down/accept_ra_min_hop_limit/accept_ra_min_lft per-iface |
-| USB / 输入 / NUMA | sysfs / proc / nodeN |
-| 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap + memory_tier |
-| zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
-| EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
-| 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout / memmap |
-| 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM/deadline、printk/cfs/uffd、bpf_jit/binfmt_misc、dentry-state、inode-state、pty、io_uring、dirty_bytes/overcommit_kbytes、pipe-user-pages、core_pipe_limit/printk_devkmsg/delayacct/acct、zone_reclaim/mount-max、RNG write_wakeup/urandom_reseed、memfd_noexec、soft_watchdog、watchdog_cpumask、warn_limit、kexec_load_limit_panic/reboot、hung_task_warnings/check_count/interval/all_cpu_backtrace、max_rcu_stall_to_panic、panic_print、panic_on_io_nmi/unrecovered_nmi、oops_all_cpu_backtrace、hardlockup/softlockup_all_cpu_backtrace、print-fatal-signals、bpf_stats_enabled、core_sort_vma、compaction_proactiveness、page_lock_unfairness、min_slab_ratio/min_unmapped_ratio、extfrag_threshold、stat_interval、io_delay_type、printk_delay、max_lock_depth、perf_event_mlock_kb/max_stack/max_contexts、hugetlb_optimize_vmemmap、percpu_pagelist_high_fraction、numa_stat、numa_balancing_promote_rate_limit_MBps、legacy_va_layout、hugetlb_shm_group、core_file_note_size_limit、auto_msgmni、numa_zonelist_order、lowmem_reserve_ratio、nr_overcommit_hugepages、split_lock_mitigate、key-users、seccomp actions_avail、cgroup v1 enabled |
-| ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi；scsi_generic/wwan/ppp/phy；remoteproc/extcon/tee/mdio_bus；spi_master/i2c-dev/nvme-subsystem/w1；macvtap/tun/nvme-generic/nvme-fabrics；iscsi_endpoint/iface/connection/flashnode；bus/container；nd/dma_heap；cxl（bus/devices）/devfreq/fpga_manager/bridge/region/gnss；rpmsg/devcoredump；scsi_disk/scsi_tape/graphics；cec/media；nbd（`class/block`）；vfio（`class/vfio`+`vfio-dev`）/mdev（`bus/mdev`）/vhost（misc+`/dev`）；fc_host/fc_remote_ports/fc_vports；accel；vdpa（bus）；uio；auxiliary（bus）；usbmon；wakeup 源计数 |
-| DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
-| 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
-| crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
-| 传感器告警 / 记录 / 状态栏 | hwmon 阈值 JSONL；指标历史 `$AIDA_RECORD_LOG` / `history.jsonl`；窗口内状态条（含 load 与内存用量）+ 可选置顶条（对标 iStat Menus，不引入托盘 crate）；有底层盘时跳过 Device Mapper，只有 `dm-*` 时保留 mapper 速率 |
-| 权限 / 提权 / GUI / 基准 / 导出 / AppImage | 同前几轮 |
+| 桌面界面 | `aida gui` |
+| 采集 JSON | `aida collect` |
+| HTML 报告 | `aida collect --html aida-report.html` |
+| 微基准 | `aida bench --quick` |
+| 以管理员重开 GUI | `aida elevate gui` |
 
-技术选型：**Rust + egui**，采集路径优先内核文件，不调用 `dmidecode`、`lspci`、`nvme-cli`、`smartctl`、`lscpu`。
+## 能做什么
 
-## 思路（采集架构）
+- **硬件与拓扑**：CPU（拓扑 / cpuidle / 漏洞 / 利用率）、DMI、PCI/PCIe、NVMe、GPU/DRM、USB、输入设备、NUMA、virtio / KVM / IOMMU
+- **传感器**：hwmon + thermal，阈值告警写 JSONL；RAPL 瓦特、PSI、EDAC
+- **状态栏**：窗口内常驻 CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg；可选置顶窄条（对标 iStat Menus，不引入托盘库）
+- **记录**：GUI 开始/停止，把每次采样追加到 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`
+- **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、串口、HID、GPIO 等 leftover class（空 = 无硬件，不是失败）
+- **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
+- **导出**：JSON（含每个字段的 `access` / `source` / `hint`）和单文件 HTML
+- **基准**：CPU / 内存 / 磁盘相对分（`--quick` 约 200ms）
+
+刻意未做：GPU OpenCL/Vulkan 计算基准（会引入额外运行时，和可打包目标冲突）。
+
+## 安装
+
+需要 **Rust 1.88+**。无显示器的机器请编 CLI（`--no-default-features`）。
+
+### 从源码（开发机 / 桌面）
+
+```bash
+cargo build --release
+./target/release/aida --help
+./target/release/aida gui          # 需要 X11 或 Wayland
+```
+
+装到用户目录（桌面文件 + 图标）：
+
+```bash
+./scripts/install.sh
+# 或：PREFIX=/usr/local sudo ./scripts/install.sh
+```
+
+### 打好的包（给以后用）
+
+```bash
+./scripts/package.sh
+ls dist/
+```
+
+产物：
+
+| 文件 | 用途 |
+| --- | --- |
+| `aida-cli-<ver>-<arch>-musl` 或 `-gnu` | 无 GUI 采集/基准。优先 musl 静态，没有 musl 工具链则退回 glibc |
+| `AIDA_Linux-<ver>-<arch>.AppImage` | 桌面 GUI + CLI。容器无 FUSE 时加 `APPIMAGE_EXTRACT_AND_RUN=1` |
+| `SHA256SUMS` | 上述产物的 sha256，拷走后可 `sha256sum -c` |
+
+```bash
+# 服务器 / CI
+./dist/aida-cli collect --html report.html
+
+# 桌面
+APPIMAGE_EXTRACT_AND_RUN=1 ./dist/AIDA_Linux-*.AppImage gui
+```
+
+现成包：
+
+- [GitHub Releases](https://github.com/mengzhihua/aida/releases)（打 `v*` tag 后自动挂上）
+- 任意 PR：Actions 工作流 `package` 的 Artifacts
+
+GitHub Actions 工作流 [`.github/workflows/package.yml`](.github/workflows/package.yml) 会在 PR 和 tag 时上传同样的产物。
+
+### 只要采集 CLI
+
+```bash
+cargo build --release --no-default-features
+# 或静态：
+./scripts/build-cli.sh
+```
+
+## 使用
+
+```bash
+aida                         # 有图形会话则 GUI，否则打印 JSON
+aida collect                 # JSON 到 stdout
+aida collect --json out.json --html out.html
+aida bench --quick
+aida bench --disk --no-direct
+aida gui
+aida elevate gui             # pkexec；没有则 sudo -E
+aida version
+```
+
+无 `DISPLAY` / `WAYLAND_DISPLAY` 时，裸跑 `aida` 会退化为 `collect`。
+
+GUI 运行时需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。采集 CLI 无此依赖。
+
+环境变量：
+
+| 变量 | 默认 | 含义 |
+| --- | --- | --- |
+| `AIDA_ALERT_LOG` | `$XDG_STATE_HOME/aida/alerts.jsonl` | 传感器越限 JSONL |
+| `AIDA_RECORD_LOG` | `$XDG_STATE_HOME/aida/history.jsonl` | 状态栏历史 JSONL |
+
+## 权限
+
+缺权限时字段标记为 `permission_denied` 并给出路径，**不会伪造数据**。界面顶部有权限条。
+
+| 数据 | 普通用户 | 通常需要 root / disk 组 |
+| --- | --- | --- |
+| cpuinfo、meminfo、os-release、PCI、块设备容量、网卡、USB sysfs | 可读 | — |
+| DMI serial / UUID、SMBIOS 表 | 多数发行版 `0400` | root |
+| NVMe SMART（ioctl） | `/dev/nvmeN` 常为 `0660` | `disk` 组或 root |
+| `/proc/iomem` 地址 | 常被清零 | root |
+
+```bash
+aida elevate gui
+# 无 pkexec：sudo -E ./target/release/aida gui
+```
+
+PolicyKit 策略：`packaging/polkit/com.aida.linux.policy`。安装说明见 [docs/PACKAGING.md](docs/PACKAGING.md)。
+
+## 打包细节
+
+见 [docs/PACKAGING.md](docs/PACKAGING.md)。要点：
+
+- **桌面版用 glibc AppImage**，不要把 egui/glow 链到 musl
+- **CLI 可 musl 静态**，适合救援盘和容器
+- AppImage 版本号从 `Cargo.toml` 读取，不再写死
+- 本机构建：`./scripts/package.sh`；CI：workflow `package`
+
+## 采集架构
 
 ```
                   ┌──────────── GUI (egui) ────────────┐
@@ -48,127 +151,29 @@
       CPU           DMI        hwmon        NVMe        GPU/PCI     Net/USB
    /proc/cpuinfo  /sys/class   /sys/class  sysfs +     DRM + pci   sysfs +
    topology/idle  /dmi/id      /hwmon      ioctl       class 03    queues
-                                  │
-                                  ├── virtio / KVM / RAPL / PTP / buddyinfo / zoneinfo / vmstat / KSM / zswap
-                                  ├── input / audio / power / firmware / EDAC / TPM / sysctl / cgroup / security / crypto / ns / pm
-                                  ├── memory + iomem + modules + clocksource + PSI/IRQ / zram
-                                  ├── gpio / mtd / infiniband / hidraw / virtio-ports / device-mapper
-                                  └── fs: mountinfo / swaps / statvfs / ext4
 ```
 
-约定：
+约定：探测只读文件或 ioctl，结果进 `Sample<T>`；`ProbeCtx` 可替换 `/proc` `/sys` `/dev` 做夹具；GUI 约 0.8s 热刷新传感器与速率，不全量重扫 PCI/USB。
 
-1. **所有探测函数只读文件或发 ioctl**，把结果放进 `Sample<T>`，失败原因跟着字段走。
-2. **`ProbeCtx` 把 `/proc` `/sys` `/dev` 做成可替换根**，单元测试用临时目录夹具，不 mock 整个操作系统。
-3. **GUI 与 CLI 共用同一套 snapshot**，GUI 每 ~0.8s 刷新传感器、告警、网卡/磁盘速率、RAPL 瓦特、内存、zram/zswap、loadavg、clocksource/PTP、EDAC、PSI、IRQ/softirq、挂载用量、平台亮度、sysctl/cgroup/security/pm 和 `/proc/stat`，不全量重扫 PCI/USB/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
-
-## 运行
-
-需要 **Rust 1.88+**（GUI 依赖树含 edition 2024 与较新的 `icu`/`image`）。无显示器时请用 `--no-default-features` 只编采集 CLI。
-
-```bash
-# 采集 JSON（无显示器的服务器/CI 可直接用）
-cargo run --release -- collect
-
-# HTML 报告
-cargo run --release -- collect --html aida-report.html
-
-# 微基准（--quick 约 200ms，适合测试）
-cargo run --release -- bench --quick
-
-# 磁盘只跑 buffered
-cargo run --release -- bench --disk --no-direct
-
-# 桌面界面（需要 X11/Wayland）
-cargo run --release -- gui
-
-# 提权后重开 GUI（pkexec / sudo -E）
-cargo run --release -- elevate gui
-```
-
-无 `DISPLAY`/`WAYLAND_DISPLAY` 时，裸跑 `aida` 会退化为 `collect`。
-
-GUI 运行时依赖：X11 或 Wayland、OpenGL/EGL、`libxkbcommon`（X11 还要 `libxkbcommon-x11`）。采集 CLI 无此依赖。
-
-无 GUI 的精简构建：
-
-```bash
-cargo build --release --no-default-features
-```
-
-## 权限
-
-| 数据 | 普通用户 | root / 额外组 |
-| --- | --- | --- |
-| `/proc/cpuinfo`、`/proc/meminfo`、os-release | 通常可读 | — |
-| `/sys/bus/pci/devices` | 通常可读 | 设备名依赖 `pci.ids` 包 |
-| `/sys/block/*/size` | 通常可读 | — |
-| `/sys/class/dmi/id/product_serial`、`product_uuid` | 多数发行版 `0400` | root |
-| `/sys/firmware/dmi/tables/DMI` | 通常 `0400` | root |
-| NVMe SMART（`NVME_IOCTL_ADMIN_CMD`） | `/dev/nvmeN` 常为 `0660 root:disk` | `disk` 组或 root |
-| 部分 hwmon | 视 udev 规则 | 有时需 `lm_sensors` 相关规则 |
-
-界面顶部有权限条：非 root 会明确提示哪些信息会缺。**缺权限时显示“权限不足”和路径，不填假数据。**
-
-完整检测建议：
-
-```bash
-aida elevate gui
-# 或：pkexec env DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY $(command -v aida) gui
-# 无 pkexec 时：sudo -E ./target/release/aida gui
-```
-
-策略文件：`packaging/polkit/com.aida.linux.policy`，安装方法见 [docs/PACKAGING.md](docs/PACKAGING.md)。
-
-## 基准测试思路
-
-| 项目 | 做法 | 坑 |
-| --- | --- | --- |
-| CPU | 多线程整数 LCG + 浮点 `mul_add`/`sin`，按墙钟时间计 Mops/MFLOPS | Turbo、CPU 亲和性、同机后台负载 |
-| 内存 | STREAM 风格 copy / scale / triad | 编译器优化（已 `black_box`）、缓存大小、NUMA |
-| 磁盘 | 先 buffered 顺序写+fsync+读，再 `O_DIRECT` 对齐 4KiB | tmpfs / 部分 overlay 会 EINVAL，代码回退并写明原因 |
-
-这些是相对分，不是 SPEC、也不是 `fio`。
-
-## 报告导出
-
-- JSON：完整 `HardwareSnapshot`（含每个字段的 `access` / `source` / `hint`，以及 `net` / `usb` / `input` / `numa` / `fs` / `modules` / `clock` / `edac` / `iomem` / `psi` / `irq` / `ata` / `virtio` / `rapl` / `alerts`）。
-- HTML：单文件内嵌 CSS，表格展示摘要；字段值做了 `<>&` 转义。
-- 告警日志：GUI 热刷新时把阈值状态变化追加到 `$AIDA_ALERT_LOG`，未设置则 `$XDG_STATE_HOME/aida/alerts.jsonl`（常见为 `~/.local/state/aida/alerts.jsonl`）。只在进入/离开越限时写一行，避免刷盘。
-
-```bash
-aida collect --json out.json --html out.html
-```
-
-## 跨发行版
-
-见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。要点：不要假设 `/sys/class/dmi` 存在（容器/部分云主机没有）；不要假设有 `pci.ids`；ARM/RISC-V 上 CPU 字段名与 x86 不同，解析按键名而不是位置。
-
-## 打包
-
-见 [docs/PACKAGING.md](docs/PACKAGING.md)。GUI 走 glibc AppImage；CLI 可另编 musl。
-
-```bash
-./scripts/build-appimage.sh
-```
+内核 ABI 差异与「空 class 不是失败」见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。模块分层见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 开发
 
 ```bash
+cargo test --offline --lib
+cargo test --offline --test live_collect
 cargo test --no-default-features
-cargo test --features gui   # 不启动窗口，只编进 ui 模块
 ```
 
-模块入口：
+| 路径 | 职责 |
+| --- | --- |
+| `src/access.rs` | 读文件 → `Sample` / `AccessKind` |
+| `src/probes/` | 一类内核 ABI 一个文件 |
+| `src/snapshot.rs` | 拼装快照与 `refresh_live` |
+| `src/export.rs` / `src/bench.rs` | JSON/HTML、微基准 |
+| `src/ui/app.rs` | egui |
+| `src/record.rs` / `src/alerts.rs` | 状态栏历史、阈值告警 |
+| `src/elevate.rs` | pkexec / sudo |
+| `scripts/` `packaging/` | AppImage、CLI、桌面文件、polkit |
 
-- 权限原语：`src/access.rs`
-- 探测：`src/probes/`（含 `virtio` / `rapl` / `iommu` / `md` / `scsi` / `platform` / `fs` / `modules` / `clock` / `edac` / `iomem` / `psi` / `irq` / `ata` / `net` / `usb` / `input` / `numa` / `memory` / `power` / `audio` / `firmware`）
-- 快照：`src/snapshot.rs`
-- 导出：`src/export.rs`
-- 基准：`src/bench.rs`
-- 界面：`src/ui/app.rs`
-- 提权：`src/elevate.rs`
-- 告警：`src/alerts.rs`
-- 打包：`scripts/build-appimage.sh`、`packaging/`
-
-架构说明：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+许可证：MIT。
