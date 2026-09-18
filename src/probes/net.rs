@@ -69,6 +69,14 @@ pub struct NetReport {
     pub xfrm_out_no_states: Option<u64>,
     pub ptypes: Vec<String>,
     pub fib_trie_leaves: Option<u64>,
+    pub busy_poll: Sample<u64>,
+    pub dev_weight: Sample<u64>,
+    pub unix_max_dgram_qlen: Sample<u64>,
+    pub igmp6_ifaces: usize,
+    pub raw6_socks: usize,
+    pub udplite6_socks: usize,
+    pub iptables: Vec<String>,
+    pub ip6tables: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -91,6 +99,8 @@ pub struct TcpTune {
     pub rmem: Sample<String>,
     pub wmem: Sample<String>,
     pub mtu_probing: Sample<String>,
+    /// `u32::MAX`（4294967295）表示未限制。
+    pub notsent_lowat: Sample<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -254,6 +264,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         rmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_rmem")),
         wmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_wmem")),
         mtu_probing: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_mtu_probing")),
+        notsent_lowat: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_notsent_lowat")),
     };
     let default_qdisc = access::read_trimmed(ctx.proc_path("sys/net/core/default_qdisc"));
     let ipv6_disable = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_ipv6"));
@@ -294,6 +305,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         parse_xfrm_stat(&access::read_trimmed(ctx.proc_path("net/xfrm_stat")));
     let ptypes = parse_ptype(&access::read_trimmed(ctx.proc_path("net/ptype")));
     let fib_trie_leaves = parse_fib_leaves(&access::read_trimmed(ctx.proc_path("net/fib_triestat")));
+    let busy_poll = access::read_u64(ctx.proc_path("sys/net/core/busy_poll"));
+    let dev_weight = access::read_u64(ctx.proc_path("sys/net/core/dev_weight"));
+    let unix_max_dgram_qlen = access::read_u64(ctx.proc_path("sys/net/unix/max_dgram_qlen"));
+    let igmp6_ifaces = count_igmp6_ifaces(&access::read_trimmed(ctx.proc_path("net/igmp6")));
+    let raw6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/raw6")));
+    let udplite6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udplite6")));
+    let iptables = parse_name_lines(&access::read_trimmed(ctx.proc_path("net/ip_tables_names")));
+    let ip6tables = parse_name_lines(&access::read_trimmed(ctx.proc_path("net/ip6_tables_names")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -360,6 +379,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 xfrm_out_no_states,
                 ptypes,
                 fib_trie_leaves,
+                busy_poll,
+                dev_weight,
+                unix_max_dgram_qlen,
+                igmp6_ifaces,
+                raw6_socks,
+                udplite6_socks,
+                iptables,
+                ip6tables,
                 notes,
             };
         }
@@ -534,6 +561,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         xfrm_out_no_states,
         ptypes,
         fib_trie_leaves,
+        busy_poll,
+        dev_weight,
+        unix_max_dgram_qlen,
+        igmp6_ifaces,
+        raw6_socks,
+        udplite6_socks,
+        iptables,
+        ip6tables,
         notes,
     }
 }
@@ -785,6 +820,39 @@ pub fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
             idx.parse::<u32>().is_ok() && it.next().is_some() && l.contains(':')
         })
         .count()
+}
+
+/// `/proc/net/igmp6`：每行 `ifindex iface group …`，按接口名去重，不要把组地址当接口。
+pub fn count_igmp6_ifaces(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        let Some(idx) = it.next() else { continue };
+        if idx.parse::<u32>().is_err() {
+            continue;
+        }
+        let Some(name) = it.next() else { continue };
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
+    }
+    names.len()
+}
+
+/// `/proc/net/ip_tables_names`：一行一个表名。空文件表示未加载 iptables，不是失败。
+pub fn parse_name_lines(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(8)
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// `/proc/net/rt6_stats` 十六进制 7 列：fib_nodes … dst cache … discarded。
@@ -1150,6 +1218,22 @@ mod tests {
             "Basic info:\nMain:\n\tLeaves:         3\nLocal:\n\tLeaves:         7\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/core/busy_poll"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/dev_weight"), "64\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/unix")).unwrap();
+        fs::write(root.join("proc/sys/net/unix/max_dgram_qlen"), "512\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_notsent_lowat"),
+            "4294967295\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/igmp6"),
+            "1    lo              ff020000000000000000000000000001     1 0000000C 0\n1    lo              ff010000000000000000000000000001     1 00000008 0\n2    eth0            ff020000000000000000000000000001     1 0000000C 0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/net/raw6"), "sl local rem\n").unwrap();
+        fs::write(root.join("proc/net/ip_tables_names"), "filter\nnat\n").unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -1193,6 +1277,13 @@ mod tests {
         assert_eq!(r.xfrm_out_no_states, Some(1));
         assert_eq!(r.ptypes, vec!["0800:ip_rcv".to_string(), "0806:arp_rcv".to_string()]);
         assert_eq!(r.fib_trie_leaves, Some(3));
+        assert_eq!(r.busy_poll.value, Some(0));
+        assert_eq!(r.dev_weight.value, Some(64));
+        assert_eq!(r.unix_max_dgram_qlen.value, Some(512));
+        assert_eq!(r.tcp.notsent_lowat.value, Some(4_294_967_295));
+        assert_eq!(r.igmp6_ifaces, 2);
+        assert_eq!(r.raw6_socks, 0);
+        assert_eq!(r.iptables, vec!["filter".to_string(), "nat".to_string()]);
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));

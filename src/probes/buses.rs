@@ -1,5 +1,5 @@
-//! 额外总线外设：rfkill / Bluetooth / Thunderbolt / V4L / MMC / MEI。
-//! 不调用 `rfkill`/`bluetoothctl`/`boltctl`/`v4l2-ctl`/`mmc`/`mei-amt-version`。
+//! 额外总线外设：rfkill / Bluetooth / Thunderbolt / V4L / MMC / MEI / IEEE802.11 / Type-C / SPI。
+//! 不调用 `rfkill`/`bluetoothctl`/`boltctl`/`v4l2-ctl`/`mmc`/`iw`/`lsusb`/`spi-tools`。
 
 use serde::Serialize;
 
@@ -21,6 +21,16 @@ pub struct BusesReport {
     pub gpio: Vec<GpioChip>,
     pub mtd: Vec<MtdDev>,
     pub infiniband: Vec<IbDev>,
+    /// `phyN` 名；空表示无 mac80211（云 VM 常见）。
+    pub ieee80211: Vec<String>,
+    pub typec: Vec<String>,
+    /// USB gadget UDC。
+    pub udc: Vec<String>,
+    pub dax: Vec<String>,
+    pub wmi: Vec<String>,
+    pub spi: Vec<String>,
+    pub serio: Vec<String>,
+    pub ubi: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -165,6 +175,45 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
     let gpio = read_gpio(ctx, &mut notes);
     let mtd = read_mtd(ctx, &mut notes);
     let infiniband = read_infiniband(ctx, &mut notes);
+    let mut missing = Vec::new();
+    let ieee80211 = list_optional_names(
+        ctx.sys_path("class/ieee80211"),
+        8,
+        "ieee80211",
+        &mut notes,
+        &mut missing,
+    );
+    let typec = list_optional_names(ctx.sys_path("class/typec"), 8, "typec", &mut notes, &mut missing);
+    let udc = list_optional_names(ctx.sys_path("class/udc"), 8, "udc", &mut notes, &mut missing);
+    let dax = list_optional_names(ctx.sys_path("class/dax"), 8, "dax", &mut notes, &mut missing);
+    let wmi = list_optional_names(
+        ctx.sys_path("bus/wmi/devices"),
+        8,
+        "wmi",
+        &mut notes,
+        &mut missing,
+    );
+    let spi = list_optional_names(
+        ctx.sys_path("bus/spi/devices"),
+        8,
+        "spi",
+        &mut notes,
+        &mut missing,
+    );
+    let serio = list_optional_names(
+        ctx.sys_path("bus/serio/devices"),
+        8,
+        "serio",
+        &mut notes,
+        &mut missing,
+    );
+    let ubi = list_optional_names(ctx.sys_path("class/ubi"), 8, "ubi", &mut notes, &mut missing);
+    if !missing.is_empty() {
+        notes.push(format!(
+            "无 {}（云主机/无对应硬件时常见）。",
+            missing.join("/")
+        ));
+    }
     BusesReport {
         rfkill,
         bluetooth,
@@ -180,7 +229,39 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         gpio,
         mtd,
         infiniband,
+        ieee80211,
+        typec,
+        udc,
+        dax,
+        wmi,
+        spi,
+        serio,
+        ubi,
         notes,
+    }
+}
+
+fn list_optional_names(
+    path: impl AsRef<std::path::Path>,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    match dir_list(path) {
+        DirList::Names(mut n) => {
+            n.sort();
+            n.truncate(cap);
+            n
+        }
+        DirList::Missing => {
+            missing.push(label);
+            Vec::new()
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            Vec::new()
+        }
     }
 }
 
@@ -618,6 +699,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/mtd/mtd0ro")).unwrap();
         let ib = root.join("sys/class/infiniband/mlx5_0/ports/1");
         fs::create_dir_all(&ib).unwrap();
+        fs::create_dir_all(root.join("sys/class/ieee80211/phy0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
             root.join("sys/class/infiniband/mlx5_0/node_guid"),
             "0000:0000:0000:0001\n",
@@ -641,6 +725,14 @@ mod tests {
         assert_eq!(r.mtd[0].mtd_name.value.as_deref(), Some("spi-flash"));
         assert_eq!(r.mtd.len(), 1);
         assert_eq!(r.infiniband[0].ports, 1);
+        assert_eq!(r.ieee80211, vec!["phy0".to_string()]);
+        assert_eq!(r.spi, vec!["spi0.0".to_string()]);
+        assert_eq!(r.serio, vec!["serio0".to_string()]);
+        assert!(
+            r.notes.iter().any(|n| n.contains("typec")),
+            "missing typec/udc/dax/wmi/ubi should share one note: {:?}",
+            r.notes
+        );
         let tty = root.join("sys/class/tty/ttyS0");
         fs::create_dir_all(&tty).unwrap();
         fs::write(tty.join("uartclk"), "1843200\n").unwrap();

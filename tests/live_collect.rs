@@ -186,6 +186,12 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"xfrm_in_no_states\""));
     assert!(json.contains("\"ptypes\""));
     assert!(json.contains("\"fib_trie_leaves\""));
+    assert!(json.contains("\"ieee80211\""));
+    assert!(json.contains("\"printk_ratelimit\""));
+    assert!(json.contains("\"igmp6_ifaces\""));
+    assert!(json.contains("\"bpf_jit_enable\""));
+    assert!(json.contains("\"binfmt_misc_status\""));
+    assert!(json.contains("\"busy_poll\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -202,6 +208,18 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.sysctl.panic_on_oom.access != aida::access::AccessKind::Error,
         "panic_on_oom 不应是读取失败"
+    );
+    assert!(
+        snap.sysctl.printk_ratelimit.access != aida::access::AccessKind::Error,
+        "printk_ratelimit 不应是读取失败"
+    );
+    assert!(
+        snap.sysctl.sched_cfs_bandwidth_slice_us.value.is_some(),
+        "sched_cfs_bandwidth_slice_us 应可读"
+    );
+    assert!(
+        snap.net.igmp6_ifaces >= 1 || snap.net.igmp_ifaces >= 1,
+        "igmp 或 igmp6 应至少看到一个接口（IPv4-only 主机用 igmp）"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -278,6 +296,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("shmmax") || html.contains("kexec") || html.contains("protected"));
     assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));
     assert!(html.contains("sched_rt") || html.contains("tcp6") || html.contains("xfrm"));
+    assert!(html.contains("igmp6") || html.contains("printk") || html.contains("binfmt") || html.contains("ieee80211"));
     assert!(!html.contains("<script"));
 }
 

@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十八轮** 补齐调度/OOM sysctl、IPv6/raw/udplite 套接字表、xfrm/ptype/fib_triestat、platform 设备名与 memory_tier。不读巨大的 `/proc/net/fib_trie`，不调用 `sysctl`/`ip`/`devlink`。
+**第十九轮** 补齐剩余总线 class（ieee80211 / Type-C / UDC / DAX / WMI / SPI / serio / UBI）、bpf_jit / binfmt_misc、以及本机常见的 printk/cfs/oops、igmp6、busy_poll。不写 binfmt `register`，不读 `drop_caches`/`fib_trie`。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -12,16 +12,16 @@
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem；tcp6/udp6/raw/udplite；xfrm_stat；ptype；fib_triestat Leaves；protocols；conntrack；net.core；rp_filter per-iface |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/dev_weight；protocols；conntrack；net.core；rp_filter per-iface |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap + memory_tier |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
 | EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
 | 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout / memmap |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices` |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi |
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
