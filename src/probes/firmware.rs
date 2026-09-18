@@ -14,6 +14,7 @@ pub struct FirmwareReport {
     pub rng_current: Sample<String>,
     pub rng_available: Sample<String>,
     pub acpi_pm_profile: Sample<String>,
+    pub pstore_files: usize,
     pub notes: Vec<String>,
 }
 
@@ -55,6 +56,14 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
         notes.push("无 TPM sysfs（虚拟机未转发 TPM 时常见）。".into());
     }
     let rng_dir = ctx.sys_path("class/misc/hw_random");
+    let pstore_files = match access::list_dir_names(ctx.sys_path("fs/pstore")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.len(),
+        _ => 0,
+    };
     FirmwareReport {
         interface,
         secure_boot,
@@ -64,6 +73,7 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
         rng_current: access::read_trimmed(rng_dir.join("rng_current")),
         rng_available: access::read_trimmed(rng_dir.join("rng_available")),
         acpi_pm_profile: access::read_trimmed(ctx.sys_path("firmware/acpi/pm_profile")),
+        pstore_files,
         notes,
     }
 }

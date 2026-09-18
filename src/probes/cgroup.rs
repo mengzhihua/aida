@@ -69,7 +69,8 @@ fn list_groups(root: &std::path::Path) -> Vec<CgroupNode> {
     };
     let mut out = Vec::new();
     for name in names {
-        if name.contains('.') && !(name.ends_with(".slice") || name.ends_with(".scope")) {
+        // 根组已在 CgroupReport 顶栏；这里只列第一层 systemd slice/scope。
+        if !(name.ends_with(".slice") || name.ends_with(".scope")) {
             continue;
         }
         let dir = root.join(&name);
@@ -84,11 +85,9 @@ fn list_groups(root: &std::path::Path) -> Vec<CgroupNode> {
             procs: count_procs(&access::read_trimmed(dir.join("cgroup.procs"))),
             name,
         });
-        if out.len() >= 24 {
-            break;
-        }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.truncate(24);
     out
 }
 
@@ -166,6 +165,10 @@ mod tests {
         fs::write(cg.join("system.slice/memory.current"), "2048\n").unwrap();
         fs::create_dir_all(cg.join("dev-hugepages.mount")).unwrap();
         fs::write(cg.join("dev-hugepages.mount/cgroup.procs"), "").unwrap();
+        fs::create_dir_all(cg.join("docker")).unwrap();
+        fs::write(cg.join("docker/cgroup.procs"), "99\n").unwrap();
+        fs::create_dir_all(cg.join("user.slice")).unwrap();
+        fs::write(cg.join("user.slice/cgroup.procs"), "7\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -178,9 +181,11 @@ mod tests {
         assert_eq!(r.cpu_usage_usec.value, Some(12345));
         assert_eq!(r.nr_descendants.value, Some(3));
         assert!(r.controllers.value.as_deref().unwrap().contains("memory"));
-        assert_eq!(r.groups.len(), 1);
+        assert_eq!(r.groups.len(), 2);
         assert_eq!(r.groups[0].name, "system.slice");
         assert_eq!(r.groups[0].procs.value, Some(2));
+        assert_eq!(r.groups[1].name, "user.slice");
+        assert!(r.groups.iter().all(|g| g.name.ends_with(".slice") || g.name.ends_with(".scope")));
         let _ = fs::remove_dir_all(&root);
     }
 }

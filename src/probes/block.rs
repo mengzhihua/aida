@@ -8,7 +8,16 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 pub struct BlockReport {
     pub devices: Vec<BlockDevice>,
     pub loops: Vec<LoopDevice>,
+    pub mapper: Vec<DmDevice>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DmDevice {
+    pub name: String,
+    pub mapper_name: Sample<String>,
+    pub uuid: Sample<String>,
+    pub suspended: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -77,6 +86,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             return BlockReport {
                 devices: Vec::new(),
                 loops: Vec::new(),
+                mapper: Vec::new(),
                 notes,
             };
         }
@@ -85,18 +95,31 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
     let stats = parse_diskstats(ctx);
     let mut devices = Vec::new();
     let mut loops = Vec::new();
+    let mut mapper = Vec::new();
     let mut unused_loops = 0usize;
     for name in names {
         if name.starts_with("loop") {
-            if let Some(lp) = read_loop(&root.join(&name), &name) {
-                loops.push(lp);
-            } else {
-                unused_loops += 1;
+            match read_loop(&root.join(&name), &name) {
+                LoopRead::Used(lp) => loops.push(lp),
+                LoopRead::Idle => unused_loops += 1,
+                LoopRead::Failed(lp) => {
+                    notes.push(lp.backing_file.access_label());
+                    loops.push(lp);
+                }
             }
             continue;
         }
         if name.starts_with("ram") || name.starts_with("zram") {
             continue;
+        }
+        if name.starts_with("dm-") {
+            let dir = root.join(&name);
+            mapper.push(DmDevice {
+                mapper_name: access::read_trimmed(dir.join("dm/name")),
+                uuid: access::read_trimmed(dir.join("dm/uuid")),
+                suspended: access::read_trimmed(dir.join("dm/suspended")),
+                name: name.clone(),
+            });
         }
         // 跳过分区：sda1 / nvme0n1p1 / vda1。保留 nvme0n1 / vda / sda。
         if is_partition(&name) {
@@ -184,24 +207,47 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
         });
     }
     loops.sort_by(|a, b| a.name.cmp(&b.name));
+    mapper.sort_by(|a, b| a.name.cmp(&b.name));
     if unused_loops > 0 {
         notes.push(format!(
             "{unused_loops} 个 loop 空闲（无 backing_file）。不要调用 losetup。"
         ));
     }
+    if mapper.is_empty() {
+        notes.push("无 device-mapper 设备（无 LVM/crypt 时常见）。".into());
+    }
     BlockReport {
         devices,
         loops,
+        mapper,
         notes,
     }
 }
 
-fn read_loop(dir: &std::path::Path, name: &str) -> Option<LoopDevice> {
-    let backing = access::read_trimmed(dir.join("loop/backing_file"));
-    let has_backing = backing.access == AccessKind::Ok && backing.value.is_some();
-    if !has_backing {
-        return None;
+enum LoopRead {
+    Used(LoopDevice),
+    Idle,
+    Failed(LoopDevice),
+}
+
+fn backing_is_idle(backing: &Sample<String>) -> bool {
+    match backing.access {
+        AccessKind::NotFound => true,
+        AccessKind::Ok => backing
+            .value
+            .as_deref()
+            .map(|s| s.is_empty())
+            .unwrap_or(true),
+        _ => false,
     }
+}
+
+fn read_loop(dir: &std::path::Path, name: &str) -> LoopRead {
+    let backing = access::read_trimmed(dir.join("loop/backing_file"));
+    if backing_is_idle(&backing) {
+        return LoopRead::Idle;
+    }
+    let failed = backing.access != AccessKind::Ok;
     let size = match access::read_trimmed(dir.join("size")) {
         Sample {
             access: AccessKind::Ok,
@@ -219,12 +265,17 @@ fn read_loop(dir: &std::path::Path, name: &str) -> Option<LoopDevice> {
             hint: s.hint,
         },
     };
-    Some(LoopDevice {
+    let lp = LoopDevice {
         size_bytes: size,
         backing_file: backing,
         autoclear: access::read_trimmed(dir.join("loop/autoclear")),
         name: name.to_string(),
-    })
+    };
+    if failed {
+        LoopRead::Failed(lp)
+    } else {
+        LoopRead::Used(lp)
+    }
 }
 
 pub fn counters(report: &BlockReport) -> Vec<DiskSnap> {
@@ -477,6 +528,46 @@ mod tests {
         assert_eq!(r.loops[0].backing_file.value.as_deref(), Some("/tmp/disk.img"));
         assert_eq!(r.loops[0].size_bytes.value, Some(2048 * 512));
         assert!(r.notes.iter().any(|n| n.contains("loop")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn denied_backing_is_not_idle() {
+        let denied = Sample {
+            value: None,
+            access: AccessKind::PermissionDenied,
+            source: "loop0/backing_file".into(),
+            hint: Some("权限不足".into()),
+        };
+        assert!(!backing_is_idle(&denied));
+        assert!(backing_is_idle(&Sample::missing("loop1/backing_file")));
+        assert!(backing_is_idle(&Sample::ok(String::new(), "empty")));
+    }
+
+    #[test]
+    fn device_mapper_sysfs() {
+        let root = std::env::temp_dir().join(format!("aida-dm-{}", std::process::id()));
+        let dm = root.join("sys/block/dm-0");
+        std::fs::create_dir_all(dm.join("dm")).unwrap();
+        std::fs::create_dir_all(dm.join("queue")).unwrap();
+        std::fs::write(dm.join("size"), "2048\n").unwrap();
+        std::fs::write(dm.join("queue/rotational"), "0\n").unwrap();
+        std::fs::write(dm.join("dm/name"), "vg-root\n").unwrap();
+        std::fs::write(dm.join("dm/uuid"), "LVM-abc\n").unwrap();
+        std::fs::write(dm.join("dm/suspended"), "0\n").unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(root.join("proc/diskstats"), "").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.mapper.len(), 1);
+        assert_eq!(r.mapper[0].mapper_name.value.as_deref(), Some("vg-root"));
+        assert_eq!(r.devices[0].r#type, "Device Mapper");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

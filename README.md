@@ -2,17 +2,17 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十二轮** 补齐睡眠/PM、IPv6 snmp6、net.core、aio/inotify、boot_id/machine-id、DirectMap/THP 细节、ioports 和 misc。
+**第十三轮** 补齐 cpufreq 策略、HID/GPIO/MTD/InfiniBand、IPv6 路由、device-mapper、PPS、pstore/config.gz，并修正串口占位、cgroup 过滤和 loop 权限误判。
 
 | 模块 | 状态 |
 | --- | --- |
 | CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs |
-| CPU 拓扑 / cpuidle / 漏洞 / 每核利用率 / 缓存 / SMT | siblings + `cpuidle` + `smt/{active,control}` + `isolated` |
+| CPU 拓扑 / cpuidle / 漏洞 / 每核利用率 / 缓存 / SMT | siblings + `cpuidle` + `smt/{active,control}` + `isolated` + cpufreq policy |
 | GPU / 显示器 | DRM + 连接器 EDID（不调用 `edid-decode`/`xrandr`） |
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6；conntrack；net.core |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由；conntrack；net.core |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
@@ -20,8 +20,8 @@
 | 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；modules；clocksource + RTC + PTP |
 | PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、lockdown/kptr、file-nr、aio/inotify、boot_id |
-| ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm） |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc |
+| ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
 | 传感器告警 | hwmon 阈值，越限写 JSONL |
@@ -51,6 +51,7 @@
                                   ├── virtio / KVM / RAPL / PTP / buddyinfo / zoneinfo / vmstat / KSM / zswap
                                   ├── input / audio / power / firmware / EDAC / TPM / sysctl / cgroup / security / crypto / ns / pm
                                   ├── memory + iomem + modules + clocksource + PSI/IRQ / zram
+                                  ├── gpio / mtd / infiniband / hidraw / virtio-ports / device-mapper
                                   └── fs: mountinfo / swaps / statvfs / ext4
 ```
 

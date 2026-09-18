@@ -16,7 +16,51 @@ pub struct BusesReport {
     pub serial: Vec<SerialPort>,
     pub tty_drivers: Vec<TtyDriver>,
     pub misc: Vec<String>,
+    pub hidraw: Vec<HidrawDev>,
+    pub virtio_ports: Vec<VirtioPort>,
+    pub gpio: Vec<GpioChip>,
+    pub mtd: Vec<MtdDev>,
+    pub infiniband: Vec<IbDev>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HidrawDev {
+    pub name: String,
+    pub hid_name: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VirtioPort {
+    pub name: String,
+    pub port_name: Sample<String>,
+    pub guest_connected: Sample<String>,
+    pub host_connected: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GpioChip {
+    pub name: String,
+    pub label: Sample<String>,
+    pub ngpio: Sample<u64>,
+    pub base: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MtdDev {
+    pub name: String,
+    pub mtd_name: Sample<String>,
+    pub size: Sample<u64>,
+    pub erasesize: Sample<u64>,
+    pub typ: Sample<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct IbDev {
+    pub name: String,
+    pub node_guid: Sample<String>,
+    pub node_type: Sample<String>,
+    pub ports: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -116,6 +160,11 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
     let serial = read_serial(ctx, &mut notes);
     let tty_drivers = parse_tty_drivers(&access::read_trimmed(ctx.proc_path("tty/drivers")));
     let misc = read_misc(ctx, &mut notes);
+    let hidraw = read_hidraw(ctx);
+    let virtio_ports = read_virtio_ports(ctx);
+    let gpio = read_gpio(ctx, &mut notes);
+    let mtd = read_mtd(ctx, &mut notes);
+    let infiniband = read_infiniband(ctx, &mut notes);
     BusesReport {
         rfkill,
         bluetooth,
@@ -126,6 +175,11 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         serial,
         tty_drivers,
         misc,
+        hidraw,
+        virtio_ports,
+        gpio,
+        mtd,
+        infiniband,
         notes,
     }
 }
@@ -310,7 +364,6 @@ fn is_serial_tty(name: &str) -> bool {
         || name.starts_with("ttyACM")
         || name.starts_with("ttyAMA")
         || name.starts_with("ttyO")
-        || name.starts_with("hvc")
 }
 
 fn read_serial(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<SerialPort> {
@@ -326,10 +379,15 @@ fn read_serial(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<SerialPort> {
     let mut out = Vec::new();
     for name in names.into_iter().filter(|n| is_serial_tty(n)) {
         let dir = root.join(&name);
+        let typ = access::read_trimmed(dir.join("type"));
+        // 8250 预留槽 type=0 表示没探到 UART；USB/ACM 通常没有 type 节点。
+        if name.starts_with("ttyS") && typ.value.as_deref() == Some("0") {
+            continue;
+        }
         out.push(SerialPort {
             uartclk: access::read_u64(dir.join("uartclk")),
             irq: access::read_trimmed(dir.join("irq")),
-            typ: access::read_trimmed(dir.join("type")),
+            typ,
             port: access::read_trimmed(dir.join("port")),
             name,
         });
@@ -357,6 +415,147 @@ pub fn parse_tty_drivers(sample: &Sample<String>) -> Vec<TtyDriver> {
             kind: cols[4].to_string(),
         });
     }
+    out
+}
+
+fn read_hidraw(ctx: &ProbeCtx) -> Vec<HidrawDev> {
+    let root = ctx.sys_path("class/hidraw");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names.into_iter().filter(|n| n.starts_with("hidraw")) {
+        let dir = root.join(&name);
+        let hid_name = match access::read_trimmed(dir.join("device/uevent")) {
+            Sample {
+                access: AccessKind::Ok,
+                value: Some(text),
+                source,
+                ..
+            } => text
+                .lines()
+                .find_map(|l| l.strip_prefix("HID_NAME="))
+                .map(|v| Sample::ok(v.to_string(), source.clone()))
+                .unwrap_or_else(|| Sample::ok(text, source)),
+            s => s,
+        };
+        out.push(HidrawDev { hid_name, name });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn read_virtio_ports(ctx: &ProbeCtx) -> Vec<VirtioPort> {
+    let root = ctx.sys_path("class/virtio-ports");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        let dir = root.join(&name);
+        out.push(VirtioPort {
+            port_name: access::read_trimmed(dir.join("name")),
+            guest_connected: access::read_trimmed(dir.join("guest_connected")),
+            host_connected: access::read_trimmed(dir.join("host_connected")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn read_gpio(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<GpioChip> {
+    let root = ctx.sys_path("class/gpio");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => {
+            notes.push("无 GPIO class（服务器/虚拟机常见）。".into());
+            return Vec::new();
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for name in names.into_iter().filter(|n| n.starts_with("gpiochip")) {
+        let dir = root.join(&name);
+        out.push(GpioChip {
+            label: access::read_trimmed(dir.join("label")),
+            ngpio: access::read_u64(dir.join("ngpio")),
+            base: access::read_trimmed(dir.join("base")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn read_mtd(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<MtdDev> {
+    let root = ctx.sys_path("class/mtd");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => {
+            notes.push("无 MTD class（无 NOR/NAND 时常见）。".into());
+            return Vec::new();
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for name in names
+        .into_iter()
+        .filter(|n| n.starts_with("mtd") && !n.ends_with("ro"))
+    {
+        let dir = root.join(&name);
+        out.push(MtdDev {
+            mtd_name: access::read_trimmed(dir.join("name")),
+            size: access::read_u64(dir.join("size")),
+            erasesize: access::read_u64(dir.join("erasesize")),
+            typ: access::read_trimmed(dir.join("type")),
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn read_infiniband(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<IbDev> {
+    let root = ctx.sys_path("class/infiniband");
+    let names = match dir_list(&root) {
+        DirList::Names(n) => n,
+        DirList::Missing => {
+            notes.push("无 InfiniBand class。".into());
+            return Vec::new();
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for name in names {
+        let dir = root.join(&name);
+        let ports = match access::list_dir_names(dir.join("ports")) {
+            Sample {
+                access: AccessKind::Ok,
+                value: Some(n),
+                ..
+            } => n.len(),
+            _ => 0,
+        };
+        out.push(IbDev {
+            node_guid: access::read_trimmed(dir.join("node_guid")),
+            node_type: access::read_trimmed(dir.join("node_type")),
+            ports,
+            name,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
@@ -402,6 +601,29 @@ mod tests {
         let mei = root.join("sys/class/mei/mei0");
         fs::create_dir_all(&mei).unwrap();
         fs::write(mei.join("fw_status"), "00\n").unwrap();
+        let hid = root.join("sys/class/hidraw/hidraw0/device");
+        fs::create_dir_all(&hid).unwrap();
+        fs::write(hid.join("uevent"), "HID_NAME=Test Keyboard\nHID_ID=0003:0000:0000\n").unwrap();
+        let gpio = root.join("sys/class/gpio/gpiochip0");
+        fs::create_dir_all(&gpio).unwrap();
+        fs::write(gpio.join("label"), "INTC0001\n").unwrap();
+        fs::write(gpio.join("ngpio"), "8\n").unwrap();
+        fs::write(gpio.join("base"), "0\n").unwrap();
+        let mtd = root.join("sys/class/mtd/mtd0");
+        fs::create_dir_all(&mtd).unwrap();
+        fs::write(mtd.join("name"), "spi-flash\n").unwrap();
+        fs::write(mtd.join("size"), "16777216\n").unwrap();
+        fs::write(mtd.join("erasesize"), "4096\n").unwrap();
+        fs::write(mtd.join("type"), "nor\n").unwrap();
+        fs::create_dir_all(root.join("sys/class/mtd/mtd0ro")).unwrap();
+        let ib = root.join("sys/class/infiniband/mlx5_0/ports/1");
+        fs::create_dir_all(&ib).unwrap();
+        fs::write(
+            root.join("sys/class/infiniband/mlx5_0/node_guid"),
+            "0000:0000:0000:0001\n",
+        )
+        .unwrap();
+        fs::write(root.join("sys/class/infiniband/mlx5_0/node_type"), "CA\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -414,11 +636,20 @@ mod tests {
         assert_eq!(r.video[0].dev_name.value.as_deref(), Some("USB Camera"));
         assert_eq!(r.mmc[0].name_tag.value.as_deref(), Some("SD32G"));
         assert_eq!(r.mei[0].name, "mei0");
+        assert_eq!(r.hidraw[0].hid_name.value.as_deref(), Some("Test Keyboard"));
+        assert_eq!(r.gpio[0].ngpio.value, Some(8));
+        assert_eq!(r.mtd[0].mtd_name.value.as_deref(), Some("spi-flash"));
+        assert_eq!(r.mtd.len(), 1);
+        assert_eq!(r.infiniband[0].ports, 1);
         let tty = root.join("sys/class/tty/ttyS0");
         fs::create_dir_all(&tty).unwrap();
         fs::write(tty.join("uartclk"), "1843200\n").unwrap();
         fs::write(tty.join("irq"), "4\n").unwrap();
         fs::write(tty.join("type"), "4\n").unwrap();
+        let idle = root.join("sys/class/tty/ttyS1");
+        fs::create_dir_all(&idle).unwrap();
+        fs::write(idle.join("type"), "0\n").unwrap();
+        fs::create_dir_all(root.join("sys/class/tty/hvc0")).unwrap();
         fs::create_dir_all(root.join("sys/class/tty/tty0")).unwrap();
         fs::create_dir_all(root.join("proc/tty")).unwrap();
         fs::write(

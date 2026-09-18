@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 
+use std::fs;
+
 use crate::access::{self, AccessKind, ProbeCtx, Sample};
 
 #[derive(Clone, Debug, Serialize)]
@@ -30,6 +32,8 @@ pub struct SoftwareInfo {
     pub entropy_avail: Sample<u64>,
     pub machine_id: Sample<String>,
     pub domainname: Sample<String>,
+    pub config_gz: Sample<String>,
+    pub bpf_fs_entries: usize,
     pub notes: Vec<String>,
 }
 
@@ -92,7 +96,36 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         entropy_avail: access::read_u64(ctx.proc_path("sys/kernel/random/entropy_avail")),
         machine_id: access::read_trimmed(ctx.etc.join("machine-id")),
         domainname: access::read_trimmed(ctx.proc_path("sys/kernel/domainname")),
+        config_gz: config_gz_sample(ctx),
+        bpf_fs_entries: match access::list_dir_names(ctx.sys_path("fs/bpf")) {
+            Sample {
+                access: AccessKind::Ok,
+                value: Some(n),
+                ..
+            } => n.len(),
+            _ => 0,
+        },
         notes: Vec::new(),
+    }
+}
+
+fn config_gz_sample(ctx: &ProbeCtx) -> Sample<String> {
+    let path = ctx.proc_path("config.gz");
+    match fs::metadata(&path) {
+        Ok(m) => Sample::ok(format!("{} bytes", m.len()), path.display().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Sample::missing(path.display().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Sample {
+            value: None,
+            access: AccessKind::PermissionDenied,
+            source: path.display().to_string(),
+            hint: Some(e.to_string()),
+        },
+        Err(e) => Sample {
+            value: None,
+            access: AccessKind::Error,
+            source: path.display().to_string(),
+            hint: Some(e.to_string()),
+        },
     }
 }
 
