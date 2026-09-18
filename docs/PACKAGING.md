@@ -25,7 +25,7 @@ GitHub Actions：`.github/workflows/package.yml` 在 PR / tag 上传上述产物
 APPIMAGE_EXTRACT_AND_RUN=1 ./dist/AIDA_Linux-*.AppImage gui
 ```
 
-`VERSION` / `LINUXDEPLOY_OUTPUT_VERSION` 默认等于 `Cargo.toml` 的 `version`。linuxdeploy 下到 `.cache/`，不进 `dist/`。AppStream 的 `<release date>` 默认是 UTC 当天，可用 `DATE=` 或 `SOURCE_DATE_EPOCH` 覆盖。AppDir 只放 `aida.appdata.xml`（desktop id），不要再复制一份 `com.aida.linux.metainfo.xml`，否则 GitHub 上的 `appstreamcli` 会把同一条错误计两次。
+`VERSION` / `LINUXDEPLOY_OUTPUT_VERSION` 默认等于 `Cargo.toml` 的 `version`。linuxdeploy 下到 `.cache/`，不进 `dist/`。AppStream 的 `<release date>` 默认是 UTC 当天，可用 `DATE=` 或 `SOURCE_DATE_EPOCH` 覆盖。AppDir 只放 `com.aida.linux.metainfo.xml`，桌面文件用 `com.aida.linux.desktop`（与 component id 一致）。ubuntu-latest 的 `appstreamcli` 把 warning 当失败：文件名对不上 id 会 `metainfo-filename-cid-mismatch`；放两份会把同一条错误计两次。
 
 linuxdeploy 在临时目录出包，`aida version` 对得上 `Cargo.toml` 之后才替换 `dist/AIDA_Linux-*.AppImage`。cargo 或 linuxdeploy 失败时保留上次成功的包。`package.sh` 只把这一次成功的 AppImage 写进 `SHA256SUMS`。
 

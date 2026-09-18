@@ -33,18 +33,20 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/polkit-1/actions" "$APPDIR/usr/share/metainfo"
 
 install -m 0755 "$ROOT/target/release/aida" "$APPDIR/usr/bin/aida"
-install -m 0644 "$ROOT/packaging/aida.desktop" "$APPDIR/usr/share/applications/aida.desktop"
+# desktop 文件名必须等于 component id，否则 ubuntu-latest 的 appstreamcli 把
+# metainfo-filename-cid-mismatch 警告当成失败（exit 3）。
+install -m 0644 "$ROOT/packaging/aida.desktop" \
+  "$APPDIR/usr/share/applications/com.aida.linux.desktop"
 install -m 0644 "$ROOT/packaging/aida.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/aida.svg"
 install -m 0644 "$ROOT/packaging/aida.svg" "$APPDIR/aida.svg"
 install -m 0644 "$ROOT/packaging/polkit/com.aida.linux.policy" \
   "$APPDIR/usr/share/polkit-1/actions/com.aida.linux.policy"
 if [[ -f "$ROOT/packaging/com.aida.linux.metainfo.xml" ]]; then
-  # appimagetool 按 desktop id 找 aida.appdata.xml。只放这一份，避免 appstreamcli 验两次。
   sed -e "s/@VERSION@/${VERSION}/g" -e "s/@DATE@/${DATE}/g" \
     "$ROOT/packaging/com.aida.linux.metainfo.xml" \
-    >"$APPDIR/usr/share/metainfo/aida.appdata.xml"
+    >"$APPDIR/usr/share/metainfo/com.aida.linux.metainfo.xml"
 fi
-cp "$ROOT/packaging/aida.desktop" "$APPDIR/aida.desktop"
+cp "$APPDIR/usr/share/applications/com.aida.linux.desktop" "$APPDIR/com.aida.linux.desktop"
 
 TOOL="$CACHE/linuxdeploy-${ARCH}.AppImage"
 if [[ ! -x "$TOOL" ]]; then
@@ -80,7 +82,7 @@ done
 "$TOOL" \
   --appdir "$APPDIR" \
   --executable "$APPDIR/usr/bin/aida" \
-  --desktop-file "$APPDIR/aida.desktop" \
+  --desktop-file "$APPDIR/com.aida.linux.desktop" \
   --icon-file "$APPDIR/aida.svg" \
   "${EXTRA_LIBS[@]}" \
   --output appimage
