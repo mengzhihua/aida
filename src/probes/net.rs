@@ -1024,6 +1024,7 @@ mod tests {
         fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/all")).unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_retries2"), "15\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_syn_retries"), "6\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_synack_retries"), "5\n").unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_rmem"),
             "4096\t131072\t6291456\n",
@@ -1070,6 +1071,7 @@ mod tests {
         assert_eq!(r.tcp_congestion.value.as_deref(), Some("cubic"));
         assert_eq!(r.tcp.retries2.value, Some(15));
         assert_eq!(r.tcp.syn_retries.value, Some(6));
+        assert_eq!(r.tcp.synack_retries.value, Some(5));
         assert_eq!(r.tcp.rmem.value.as_deref(), Some("4096\t131072\t6291456"));
         assert_eq!(r.optmem_max.value, Some(131072));
         assert_eq!(r.accept_redirects.value.as_deref(), Some("0"));

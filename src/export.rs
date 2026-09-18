@@ -883,7 +883,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -916,6 +916,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.somaxconn.display(),
         snap.net.tcp.keepalive_time.display(),
         snap.net.tcp.sack.display(),
+        snap.net.tcp.syn_retries.display(),
+        snap.net.tcp.synack_retries.display(),
+        snap.net.tcp.retries2.display(),
         snap.net.default_qdisc.display(),
         snap.net.netdev_budget.display(),
         snap.net.rp_filter.display(),

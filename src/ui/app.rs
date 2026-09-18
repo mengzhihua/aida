@@ -1862,7 +1862,7 @@ impl AidaApp {
             ui,
             "tcp knobs",
             &format!(
-                "fastopen {}  syncookies {}  ports {}  ka {}/{}x{}  fin {}  syn {}  sack {} ts {} wscale {} ecn {} tw {} retries {}/{} slow_start {}",
+                "fastopen {}  syncookies {}  ports {}  ka {}/{}x{}  fin {}  syn {}  sack {} ts {} wscale {} ecn {} tw {} syn/synack {}/{} retries2 {} slow_start {}",
                 self.snap.net.tcp_fastopen.display(),
                 self.snap.net.tcp_syncookies.display(),
                 self.snap.net.ip_local_port_range.display(),
@@ -1877,6 +1877,7 @@ impl AidaApp {
                 self.snap.net.tcp.ecn.display(),
                 self.snap.net.tcp.tw_reuse.display(),
                 self.snap.net.tcp.syn_retries.display(),
+                self.snap.net.tcp.synack_retries.display(),
                 self.snap.net.tcp.retries2.display(),
                 self.snap.net.tcp.slow_start_after_idle.display()
             ),
