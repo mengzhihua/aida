@@ -33,7 +33,8 @@ pub struct SysctlReport {
     pub watchdog_thresh: Sample<u64>,
     pub pipe_max_size: Sample<u64>,
     pub file_max: Sample<u64>,
-    pub panic: Sample<u64>,
+    /// 负数表示 panic 后立即重启，不是读取失败。
+    pub panic: Sample<i64>,
     pub sysrq: Sample<String>,
     pub min_free_kbytes: Sample<u64>,
     pub vfs_cache_pressure: Sample<u64>,
@@ -46,6 +47,23 @@ pub struct SysctlReport {
     pub suid_dumpable: Sample<String>,
     pub cap_last_cap: Sample<u64>,
     pub keys_maxkeys: Sample<u64>,
+    pub keys_maxbytes: Sample<u64>,
+    pub hung_task_timeout_secs: Sample<u64>,
+    pub panic_on_oops: Sample<String>,
+    pub panic_on_warn: Sample<String>,
+    pub core_uses_pid: Sample<String>,
+    pub shmmax: Sample<String>,
+    pub shmmni: Sample<u64>,
+    pub msgmax: Sample<u64>,
+    pub sem: Sample<String>,
+    pub mqueue_queues_max: Sample<u64>,
+    pub inotify_max_queued_events: Sample<u64>,
+    pub epoll_max_user_watches: Sample<u64>,
+    pub dirty_writeback_centisecs: Sample<u64>,
+    pub page_cluster: Sample<u64>,
+    pub sysvipc_shm: usize,
+    pub sysvipc_sem: usize,
+    pub sysvipc_msg: usize,
     pub consoles: Vec<Console>,
     pub notes: Vec<String>,
 }
@@ -110,7 +128,7 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         watchdog_thresh: access::read_u64(ctx.proc_path("sys/kernel/watchdog_thresh")),
         pipe_max_size: access::read_u64(ctx.proc_path("sys/fs/pipe-max-size")),
         file_max: access::read_u64(ctx.proc_path("sys/fs/file-max")),
-        panic: access::read_u64(ctx.proc_path("sys/kernel/panic")),
+        panic: access::read_i64(ctx.proc_path("sys/kernel/panic")),
         sysrq: access::read_trimmed(ctx.proc_path("sys/kernel/sysrq")),
         min_free_kbytes: access::read_u64(ctx.proc_path("sys/vm/min_free_kbytes")),
         vfs_cache_pressure: access::read_u64(ctx.proc_path("sys/vm/vfs_cache_pressure")),
@@ -123,9 +141,40 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         suid_dumpable: access::read_trimmed(ctx.proc_path("sys/fs/suid_dumpable")),
         cap_last_cap: access::read_u64(ctx.proc_path("sys/kernel/cap_last_cap")),
         keys_maxkeys: access::read_u64(ctx.proc_path("sys/kernel/keys/maxkeys")),
+        keys_maxbytes: access::read_u64(ctx.proc_path("sys/kernel/keys/maxbytes")),
+        hung_task_timeout_secs: access::read_u64(ctx.proc_path("sys/kernel/hung_task_timeout_secs")),
+        panic_on_oops: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_oops")),
+        panic_on_warn: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_warn")),
+        core_uses_pid: access::read_trimmed(ctx.proc_path("sys/kernel/core_uses_pid")),
+        shmmax: access::read_trimmed(ctx.proc_path("sys/kernel/shmmax")),
+        shmmni: access::read_u64(ctx.proc_path("sys/kernel/shmmni")),
+        msgmax: access::read_u64(ctx.proc_path("sys/kernel/msgmax")),
+        sem: access::read_trimmed(ctx.proc_path("sys/kernel/sem")),
+        mqueue_queues_max: access::read_u64(ctx.proc_path("sys/fs/mqueue/queues_max")),
+        inotify_max_queued_events: access::read_u64(
+            ctx.proc_path("sys/fs/inotify/max_queued_events"),
+        ),
+        epoll_max_user_watches: access::read_u64(ctx.proc_path("sys/fs/epoll/max_user_watches")),
+        dirty_writeback_centisecs: access::read_u64(
+            ctx.proc_path("sys/vm/dirty_writeback_centisecs"),
+        ),
+        page_cluster: access::read_u64(ctx.proc_path("sys/vm/page-cluster")),
+        sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
+        sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
+        sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
         consoles,
         notes,
     }
+}
+
+fn count_table_rows(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .count()
 }
 
 /// `file-nr`：已分配、未用、上限。
@@ -222,6 +271,18 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/random/poolsize"), "256\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/kernel/keys")).unwrap();
         fs::write(root.join("proc/sys/kernel/keys/maxkeys"), "200\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/keys/maxbytes"), "20000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/hung_task_timeout_secs"), "120\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
+        fs::write(root.join("proc/sys/fs/mqueue/queues_max"), "256\n").unwrap();
+        fs::create_dir_all(root.join("proc/sysvipc")).unwrap();
+        fs::write(
+            root.join("proc/sysvipc/shm"),
+            "key shmid\n0 7\n0 10\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/fs/suid_dumpable"), "0\n").unwrap();
         fs::write(root.join("proc/consoles"), "tty0                 -WU (E    )    4:1\n").unwrap();
         let ctx = ProbeCtx {
@@ -245,7 +306,31 @@ mod tests {
         assert_eq!(r.watermark_scale_factor.value, Some(10));
         assert_eq!(r.random_poolsize.value, Some(256));
         assert_eq!(r.keys_maxkeys.value, Some(200));
+        assert_eq!(r.keys_maxbytes.value, Some(20000));
+        assert_eq!(r.hung_task_timeout_secs.value, Some(120));
+        assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
+        assert_eq!(r.shmmni.value, Some(4096));
+        assert_eq!(r.mqueue_queues_max.value, Some(256));
+        assert_eq!(r.sysvipc_shm, 2);
         assert_eq!(r.suid_dumpable.value.as_deref(), Some("0"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn panic_timeout_accepts_negative() {
+        let root = std::env::temp_dir().join(format!("aida-panic-neg-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc/sys/kernel")).unwrap();
+        fs::write(root.join("proc/sys/kernel/panic"), "-1\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.panic.value, Some(-1));
+        assert_eq!(r.panic.access, crate::access::AccessKind::Ok);
         let _ = fs::remove_dir_all(&root);
     }
 }

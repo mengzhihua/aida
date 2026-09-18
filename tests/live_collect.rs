@@ -170,6 +170,18 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"clockevents\""));
     assert!(json.contains("\"sysfs_irqs\""));
     assert!(json.contains("\"file_locks\""));
+    assert!(json.contains("\"sysvipc_shm\""));
+    assert!(json.contains("\"protected_hardlinks\""));
+    assert!(json.contains("\"kexec_loaded\""));
+    assert!(json.contains("\"shmmax\""));
+    assert!(
+        snap.sysctl.panic.access != aida::access::AccessKind::Error,
+        "kernel.panic 不应是读取失败（负数也是合法值）"
+    );
+    assert!(
+        snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
+        "kexec_loaded 不应是读取失败"
+    );
     assert!(
         snap.sysctl.boot_id.value.is_some(),
         "boot_id 应可读"
@@ -237,6 +249,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("protocols") || html.contains("nfsd") || html.contains("qdisc"));
     assert!(html.contains("somaxconn"));
     assert!(html.contains("maxkeys") || html.contains("watermark") || html.contains("vtcon"));
+    assert!(html.contains("shmmax") || html.contains("kexec") || html.contains("protected"));
     assert!(!html.contains("<script"));
 }
 

@@ -112,6 +112,14 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 90. **`rt6_stats` 是十六进制。** 第一列 dst entries；IPv4-only 主机仍可能有该文件。
 91. **`tcp_fastopen` 可读即可。** 不要把 IPv6/unix 表当 live 测试前置条件。
 92. **`/sys/kernel/irq` 计数与 `/proc/interrupts` 行数不必相等。** 后者含 NMI/ERR。
+93. **`kernel.panic` 允许负数。** `-1` 表示立即重启，不要用无符号解析标成读取失败。
+94. **`/proc/net/igmp` 只计接口头行。** 组记录定时器含冒号，不能当接口。
+95. **`shmmax` 在 64 位上常接近 `u64::MAX`。** 不是溢出错误。
+96. **sysvipc 表只有表头表示当前无对象。** 不要把表头当一条 shm。
+97. **`protected_fifos=1` / `protected_regular=2` 是发行版默认加固。** 不是采集失败。
+98. **`kexec_loaded=0` 表示未加载 crash/kexec 内核。** 云 VM 常见。
+99. **`/proc/net/tcp` 行数含 TIME_WAIT。** 不是 established-only。
+100. **`firmware/memmap` 编号目录是 e820 段。** 不要展开每一段的 type/start（长度已够）。
 
 ## 测试方案
 

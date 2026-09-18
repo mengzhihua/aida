@@ -34,6 +34,12 @@ pub struct SoftwareInfo {
     pub bpf_fs_entries: usize,
     /// `/proc/locks` 行数。空文件表示当前无锁，不是读取失败。
     pub file_locks: usize,
+    pub oops_count: Sample<u64>,
+    pub warn_count: Sample<u64>,
+    pub kexec_loaded: Sample<String>,
+    pub fscaps: Sample<String>,
+    pub uevent_seqnum: Sample<u64>,
+    pub filesystems: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -106,6 +112,12 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
             _ => 0,
         },
         file_locks: count_lock_lines(&access::read_trimmed(ctx.proc_path("locks"))),
+        oops_count: access::read_u64(ctx.sys_path("kernel/oops_count")),
+        warn_count: access::read_u64(ctx.sys_path("kernel/warn_count")),
+        kexec_loaded: access::read_trimmed(ctx.sys_path("kernel/kexec_loaded")),
+        fscaps: access::read_trimmed(ctx.sys_path("kernel/fscaps")),
+        uevent_seqnum: access::read_u64(ctx.sys_path("kernel/uevent_seqnum")),
+        filesystems: parse_filesystems(&access::read_trimmed(ctx.proc_path("filesystems"))),
         notes: Vec::new(),
     }
 }
@@ -141,6 +153,25 @@ pub fn count_lock_lines(sample: &Sample<String>) -> usize {
         return 0;
     };
     text.lines().filter(|l| !l.trim().is_empty()).count()
+}
+
+/// `/proc/filesystems`：只列块设备文件系统名（跳过 `nodev`）。
+pub fn parse_filesystems(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("nodev") {
+            continue;
+        }
+        out.push(t.to_string());
+        if out.len() >= 24 {
+            break;
+        }
+    }
+    out
 }
 
 fn parse_loadavg(sample: &Sample<String>) -> Load {
@@ -423,6 +454,10 @@ mod tests {
         assert_eq!(missing.access, AccessKind::NotFound);
         assert_eq!(count_lock_lines(&Sample::ok("1: POSIX ADVISORY WRITE 1\n2: FLOCK\n".into(), "locks")), 2);
         assert_eq!(count_lock_lines(&Sample::missing("locks")), 0);
+        assert_eq!(
+            parse_filesystems(&Sample::ok("nodev\tsysfs\n\text4\n\txfs\nnodev\tfuse\n".into(), "fs")),
+            vec!["ext4".to_string(), "xfs".to_string()]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

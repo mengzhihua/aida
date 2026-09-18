@@ -144,6 +144,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("ACPI pm_profile", snap.firmware.acpi_pm_profile.display()),
             ("pstore", snap.firmware.pstore_files.to_string()),
             ("firmware timeout", snap.firmware.firmware_timeout.display()),
+            ("memmap", snap.firmware.memmap_entries.to_string()),
             ("hwrng", snap.firmware.rng_current.display()),
         ],
     );
@@ -882,7 +883,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} qdisc {} budget {} rp_filter {}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -917,7 +918,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp.sack.display(),
         snap.net.default_qdisc.display(),
         snap.net.netdev_budget.display(),
-        snap.net.rp_filter.display()
+        snap.net.rp_filter.display(),
+        snap.net.accept_redirects.display(),
+        snap.net.tcp_socks,
+        snap.net.udp_socks
     ));
     if !snap.net.protocols.is_empty() {
         html.push_str(&format!(
@@ -1352,6 +1356,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ),
             ),
             (
+                "fs.protected",
+                format!(
+                    "hardlinks {} symlinks {} fifos {} regular {}",
+                    snap.security.protected_hardlinks.display(),
+                    snap.security.protected_symlinks.display(),
+                    snap.security.protected_fifos.display(),
+                    snap.security.protected_regular.display()
+                ),
+            ),
+            (
                 "crypto",
                 format!(
                     "{} algs ({} internal)",
@@ -1378,26 +1392,58 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("config.gz", snap.software.config_gz.display()),
             ("file locks", snap.software.file_locks.to_string()),
             (
+                "oops / kexec",
+                format!(
+                    "oops {} warn {} kexec {} fscaps {}",
+                    snap.software.oops_count.display(),
+                    snap.software.warn_count.display(),
+                    snap.software.kexec_loaded.display(),
+                    snap.software.fscaps.display()
+                ),
+            ),
+            (
+                "filesystems",
+                if snap.software.filesystems.is_empty() {
+                    "—".into()
+                } else {
+                    snap.software.filesystems.join(" ")
+                },
+            ),
+            (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {} panic {} sysrq {} min_free {}",
+                    "nmi {} wd {} thresh {} panic {} sysrq {} min_free {} hung {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
                     snap.sysctl.watchdog_thresh.display(),
                     snap.sysctl.panic.display(),
                     snap.sysctl.sysrq.display(),
-                    snap.sysctl.min_free_kbytes.display()
+                    snap.sysctl.min_free_kbytes.display(),
+                    snap.sysctl.hung_task_timeout_secs.display()
                 ),
             ),
             (
                 "keys / dumpable",
                 format!(
-                    "maxkeys {} cap_last {} dumpable {} autogroup {} cad {}",
+                    "maxkeys {} maxbytes {} cap_last {} dumpable {} autogroup {} cad {}",
                     snap.sysctl.keys_maxkeys.display(),
+                    snap.sysctl.keys_maxbytes.display(),
                     snap.sysctl.cap_last_cap.display(),
                     snap.sysctl.suid_dumpable.display(),
                     snap.sysctl.sched_autogroup.display(),
                     snap.sysctl.ctrl_alt_del.display()
+                ),
+            ),
+            (
+                "ipc",
+                format!(
+                    "shmmax {} shmmni {} mqueue {} sysvipc {}/{}/{}",
+                    snap.sysctl.shmmax.display(),
+                    snap.sysctl.shmmni.display(),
+                    snap.sysctl.mqueue_queues_max.display(),
+                    snap.sysctl.sysvipc_shm,
+                    snap.sysctl.sysvipc_sem,
+                    snap.sysctl.sysvipc_msg
                 ),
             ),
             (

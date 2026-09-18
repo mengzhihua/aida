@@ -293,6 +293,23 @@ pub fn read_u64(path: impl AsRef<Path>) -> Sample<u64> {
     }
 }
 
+/// `kernel.panic` 等允许负数（立即重启）。
+pub fn read_i64(path: impl AsRef<Path>) -> Sample<i64> {
+    let s = read_trimmed(path);
+    match (s.access, s.value) {
+        (AccessKind::Ok, Some(text)) => match text.trim().parse::<i64>() {
+            Ok(v) => Sample::ok(v, s.source),
+            Err(_) => Sample::error(s.source, "无法解析为整数"),
+        },
+        _ => Sample {
+            value: None,
+            access: s.access,
+            source: s.source,
+            hint: s.hint,
+        },
+    }
+}
+
 fn map_io_err<T: Serialize>(source: String, e: std::io::Error) -> Sample<T> {
     match e.kind() {
         ErrorKind::PermissionDenied => Sample::denied(source),

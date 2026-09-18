@@ -49,6 +49,15 @@ pub struct NetReport {
     pub icmp_echo_ignore_broadcasts: Sample<String>,
     pub ipv6_use_tempaddr: Sample<String>,
     pub rt6_entries: Sample<u64>,
+    pub optmem_max: Sample<u64>,
+    pub netdev_budget_usecs: Sample<u64>,
+    pub accept_redirects: Sample<String>,
+    pub accept_source_route: Sample<String>,
+    pub log_martians: Sample<String>,
+    pub icmp_ignore_bogus: Sample<String>,
+    pub netlink_sockets: usize,
+    pub tcp_socks: usize,
+    pub udp_socks: usize,
     pub notes: Vec<String>,
 }
 
@@ -64,6 +73,13 @@ pub struct TcpTune {
     pub tw_reuse: Sample<String>,
     pub retries2: Sample<u64>,
     pub slow_start_after_idle: Sample<String>,
+    pub syn_retries: Sample<u64>,
+    pub synack_retries: Sample<u64>,
+    pub keepalive_probes: Sample<u64>,
+    pub keepalive_intvl: Sample<u64>,
+    pub rmem: Sample<String>,
+    pub wmem: Sample<String>,
+    pub mtu_probing: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -219,6 +235,13 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         slow_start_after_idle: access::read_trimmed(
             ctx.proc_path("sys/net/ipv4/tcp_slow_start_after_idle"),
         ),
+        syn_retries: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_syn_retries")),
+        synack_retries: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_synack_retries")),
+        keepalive_probes: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_probes")),
+        keepalive_intvl: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_intvl")),
+        rmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_rmem")),
+        wmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_wmem")),
+        mtu_probing: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_mtu_probing")),
     };
     let default_qdisc = access::read_trimmed(ctx.proc_path("sys/net/core/default_qdisc"));
     let ipv6_disable = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_ipv6"));
@@ -232,6 +255,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let ipv6_use_tempaddr =
         access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/use_tempaddr"));
     let rt6_entries = parse_rt6_stats(&access::read_trimmed(ctx.proc_path("net/rt6_stats")));
+    let optmem_max = access::read_u64(ctx.proc_path("sys/net/core/optmem_max"));
+    let netdev_budget_usecs = access::read_u64(ctx.proc_path("sys/net/core/netdev_budget_usecs"));
+    let accept_redirects =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/conf/all/accept_redirects"));
+    let accept_source_route =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/conf/all/accept_source_route"));
+    let log_martians = access::read_trimmed(ctx.proc_path("sys/net/ipv4/conf/all/log_martians"));
+    let icmp_ignore_bogus =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_ignore_bogus_error_responses"));
+    let netlink_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/netlink")));
+    let tcp_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/tcp")));
+    let udp_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udp")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -279,6 +314,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 icmp_echo_ignore_broadcasts,
                 ipv6_use_tempaddr,
                 rt6_entries,
+                optmem_max,
+                netdev_budget_usecs,
+                accept_redirects,
+                accept_source_route,
+                log_martians,
+                icmp_ignore_bogus,
+                netlink_sockets,
+                tcp_socks,
+                udp_socks,
                 notes,
             };
         }
@@ -434,6 +478,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         icmp_echo_ignore_broadcasts,
         ipv6_use_tempaddr,
         rt6_entries,
+        optmem_max,
+        netdev_budget_usecs,
+        accept_redirects,
+        accept_source_route,
+        log_martians,
+        icmp_ignore_bogus,
+        netlink_sockets,
+        tcp_socks,
+        udp_socks,
         notes,
     }
 }
@@ -614,12 +667,22 @@ pub fn parse_protocols(sample: &Sample<String>) -> Vec<String> {
     out
 }
 
-fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
+/// `/proc/net/igmp`：只计接口头行（行首是 Idx + 设备名）。组记录定时器也含冒号，不能当接口。
+pub fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
     let Some(text) = sample.value.as_deref() else {
         return 0;
     };
     text.lines()
-        .filter(|l| l.contains(':') && !l.starts_with("Idx"))
+        .filter(|l| {
+            if l.starts_with(char::is_whitespace) {
+                return false;
+            }
+            let mut it = l.split_whitespace();
+            let Some(idx) = it.next() else {
+                return false;
+            };
+            idx.parse::<u32>().is_ok() && it.next().is_some() && l.contains(':')
+        })
         .count()
 }
 
@@ -904,6 +967,11 @@ mod tests {
         fs::create_dir_all(root.join("proc/sys/net/core")).unwrap();
         fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/all")).unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_retries2"), "15\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_syn_retries"), "6\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_rmem"), "4096\t131072\t6291456\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/optmem_max"), "131072\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/all/accept_redirects"), "0\n").unwrap();
+        fs::write(root.join("proc/net/tcp"), "sl local rem\n 0: 0 0\n 1: 0 0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/core/netdev_budget"), "300\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/conf/all/rp_filter"), "0\n").unwrap();
@@ -921,6 +989,11 @@ mod tests {
         assert_eq!(r.conntrack_max.value, Some(262144));
         assert_eq!(r.tcp_congestion.value.as_deref(), Some("cubic"));
         assert_eq!(r.tcp.retries2.value, Some(15));
+        assert_eq!(r.tcp.syn_retries.value, Some(6));
+        assert_eq!(r.tcp.rmem.value.as_deref(), Some("4096\t131072\t6291456"));
+        assert_eq!(r.optmem_max.value, Some(131072));
+        assert_eq!(r.accept_redirects.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_socks, 2);
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -964,7 +1037,7 @@ mod tests {
         assert_eq!(proto, vec!["TCP:13".to_string(), "UDP:2".to_string()]);
         assert_eq!(
             count_igmp_ifaces(&Sample::ok(
-                "Idx\tDevice    : Count\n1\tlo        :     1      V3\n2\teth0      :     1      V3\n".into(),
+                "Idx\tDevice    : Count\n1\tlo        :     1      V3\n\t\t010000E0     1 0:00000000\t0\n2\teth0      :     1      V3\n\t\t010000E0     1 0:00000000\t0\n".into(),
                 "igmp",
             )),
             2
