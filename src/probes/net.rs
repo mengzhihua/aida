@@ -194,6 +194,18 @@ pub struct NetReport {
     pub ipv6_keep_addr_on_down: Sample<String>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_keep_addr_on_down_dev: Vec<String>,
+    pub udp_wmem_min: Sample<u64>,
+    /// `0` 表示不把窗口收到未确认边界。
+    pub tcp_shrink_window: Sample<String>,
+    pub tcp_l3mdev_accept: Sample<String>,
+    pub tcp_migrate_req: Sample<String>,
+    pub tcp_reflect_tos: Sample<String>,
+    /// 最小 RTO，微秒。
+    pub tcp_rto_min_us: Sample<u64>,
+    pub icmp_errors_use_inbound_ifaddr: Sample<String>,
+    pub ipv6_accept_ra_min_hop_limit: Sample<u64>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_min_hop_limit_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -632,6 +644,23 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "keep_addr_on_down",
         ipv6_keep_addr_on_down.value.as_deref(),
     );
+    let udp_wmem_min = access::read_u64(ctx.proc_path("sys/net/ipv4/udp_wmem_min"));
+    let tcp_shrink_window = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_shrink_window"));
+    let tcp_l3mdev_accept = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_l3mdev_accept"));
+    let tcp_migrate_req = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_migrate_req"));
+    let tcp_reflect_tos = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_reflect_tos"));
+    let tcp_rto_min_us = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_rto_min_us"));
+    let icmp_errors_use_inbound_ifaddr =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_errors_use_inbound_ifaddr"));
+    let ipv6_accept_ra_min_hop_limit =
+        access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_min_hop_limit"));
+    let ra_min_hop_all = ipv6_accept_ra_min_hop_limit.value.map(|v| v.to_string());
+    let ipv6_accept_ra_min_hop_limit_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_min_hop_limit",
+        ra_min_hop_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -808,6 +837,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_ip6frag_time,
                 ipv6_keep_addr_on_down,
                 ipv6_keep_addr_on_down_dev,
+                udp_wmem_min,
+                tcp_shrink_window,
+                tcp_l3mdev_accept,
+                tcp_migrate_req,
+                tcp_reflect_tos,
+                tcp_rto_min_us,
+                icmp_errors_use_inbound_ifaddr,
+                ipv6_accept_ra_min_hop_limit,
+                ipv6_accept_ra_min_hop_limit_dev,
                 notes,
             };
         }
@@ -1092,6 +1130,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_ip6frag_time,
         ipv6_keep_addr_on_down,
         ipv6_keep_addr_on_down_dev,
+        udp_wmem_min,
+        tcp_shrink_window,
+        tcp_l3mdev_accept,
+        tcp_migrate_req,
+        tcp_reflect_tos,
+        tcp_rto_min_us,
+        icmp_errors_use_inbound_ifaddr,
+        ipv6_accept_ra_min_hop_limit,
+        ipv6_accept_ra_min_hop_limit_dev,
         notes,
     }
 }
@@ -1999,6 +2046,22 @@ mod tests {
             "0\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/udp_wmem_min"), "4096\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_shrink_window"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_l3mdev_accept"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_migrate_req"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_reflect_tos"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_rto_min_us"), "200000\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/icmp_errors_use_inbound_ifaddr"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_min_hop_limit"),
+            "1\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -2147,6 +2210,14 @@ mod tests {
         assert_eq!(r.ipv6_idgen_delay.value, Some(1));
         assert_eq!(r.ipv6_ip6frag_time.value, Some(60));
         assert_eq!(r.ipv6_keep_addr_on_down.value.as_deref(), Some("0"));
+        assert_eq!(r.udp_wmem_min.value, Some(4096));
+        assert_eq!(r.tcp_shrink_window.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_l3mdev_accept.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_migrate_req.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_reflect_tos.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_rto_min_us.value, Some(200_000));
+        assert_eq!(r.icmp_errors_use_inbound_ifaddr.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_ra_min_hop_limit.value, Some(1));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2225,6 +2296,16 @@ mod tests {
         fs::write(
             root.join("proc/sys/net/ipv6/conf/lo/keep_addr_on_down"),
             "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_min_hop_limit"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_min_hop_limit"),
+            "0\n",
         )
         .unwrap();
         let ctx = ProbeCtx {
@@ -2311,6 +2392,14 @@ mod tests {
             r.ipv6_keep_addr_on_down_dev.iter().any(|s| s == "lo:1"),
             "lo keep_addr_on_down=1 must differ from conf/all: {:?}",
             r.ipv6_keep_addr_on_down_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_min_hop_limit.value, Some(1));
+        assert!(
+            r.ipv6_accept_ra_min_hop_limit_dev
+                .iter()
+                .any(|s| s == "lo:0"),
+            "lo accept_ra_min_hop_limit=0 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_min_hop_limit_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

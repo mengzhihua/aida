@@ -183,6 +183,13 @@ pub struct SysctlReport {
     pub percpu_pagelist_high_fraction: Sample<u64>,
     /// `1` 表示采集 NUMA VM 计数。
     pub numa_stat: Sample<String>,
+    /// NUMA 热页提升速率上限，单位 MB/s。
+    pub numa_balancing_promote_rate_limit_mbps: Sample<u64>,
+    /// `0` 表示新的 64-bit VA 布局。
+    pub legacy_va_layout: Sample<String>,
+    /// `0` 表示没有组可通过 shm 分配 hugetlb。
+    pub hugetlb_shm_group: Sample<u64>,
+    pub core_file_note_size_limit: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -440,6 +447,14 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
             ctx.proc_path("sys/vm/percpu_pagelist_high_fraction"),
         ),
         numa_stat: access::read_trimmed(ctx.proc_path("sys/vm/numa_stat")),
+        numa_balancing_promote_rate_limit_mbps: access::read_u64(
+            ctx.proc_path("sys/kernel/numa_balancing_promote_rate_limit_MBps"),
+        ),
+        legacy_va_layout: access::read_trimmed(ctx.proc_path("sys/vm/legacy_va_layout")),
+        hugetlb_shm_group: access::read_u64(ctx.proc_path("sys/vm/hugetlb_shm_group")),
+        core_file_note_size_limit: access::read_u64(
+            ctx.proc_path("sys/kernel/core_file_note_size_limit"),
+        ),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -781,6 +796,18 @@ mod tests {
         .unwrap();
         fs::write(root.join("proc/sys/vm/numa_stat"), "1\n").unwrap();
         fs::write(
+            root.join("proc/sys/kernel/numa_balancing_promote_rate_limit_MBps"),
+            "65536\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/vm/legacy_va_layout"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/hugetlb_shm_group"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/core_file_note_size_limit"),
+            "4194304\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
         )
@@ -914,6 +941,10 @@ mod tests {
         assert_eq!(r.perf_event_max_contexts_per_stack.value, Some(8));
         assert_eq!(r.percpu_pagelist_high_fraction.value, Some(0));
         assert_eq!(r.numa_stat.value.as_deref(), Some("1"));
+        assert_eq!(r.numa_balancing_promote_rate_limit_mbps.value, Some(65536));
+        assert_eq!(r.legacy_va_layout.value.as_deref(), Some("0"));
+        assert_eq!(r.hugetlb_shm_group.value, Some(0));
+        assert_eq!(r.core_file_note_size_limit.value, Some(4_194_304));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

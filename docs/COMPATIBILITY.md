@@ -221,6 +221,16 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 199. **`numa_stat=1` 表示采集 NUMA VM 计数。** `0` 关闭以换性能。
 200. **不要 dump `net.core.netdev_rss_key` 或 IPv6 `stable_secret`。** 前者是 RSS 密钥，后者非 root 常无权限。
 201. **`tcp_min_rtt_wlen` 是 min RTT 滑动窗口（秒）。** 不是超时。
+202. **`numa_balancing_promote_rate_limit_MBps` 是 NUMA 热页提升速率上限（MB/s）。** 文件名带大写 `MBps`，不要写成 `mbps`。
+203. **`legacy_va_layout=0` 表示新的 64-bit VA 布局。** `1` 才用旧布局。
+204. **`hugetlb_shm_group=0` 表示没有 gid 可通过 shm 分配 hugetlb。**
+205. **`tcp_shrink_window=0` 表示不把窗口收到未确认边界。**
+206. **`udp_wmem_min` 与 `udp_rmem_min` 成对。** 是 UDP 套接字最小写缓冲。
+207. **`accept_ra_min_hop_limit` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+208. **空的 fc / accel / vdpa 表示没有对应硬件。** Fibre Channel 分别看 `fc_host` / `fc_remote_ports` / `fc_vports`（没有统一 `class/fc`）。accel 看 `class/accel`。vDPA 先看 `bus/vdpa/devices`，没有再看 `class/vdpa`。`PermissionDenied` 仍写 note。
+209. **`tcp_rto_min_us` 是最小 RTO（微秒）。** 不是毫秒。
+210. **`icmp_errors_use_inbound_ifaddr=0` 表示 ICMP 错误用出接口地址。** `1` 才用入接口。
+211. **`core_file_note_size_limit` 是 core dump note 大小上限。** 不是 core 文件总大小。
 
 ## 测试方案
 
