@@ -29,7 +29,7 @@
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02 |
 | GPU | `/sys/class/drm/cardN`，PCI class `0x03` | amdgpu busy/vram、i915/xe 频率、连接器 EDID、`/proc/driver/nvidia` |
-| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；`/proc/net/netstat`；snmp6；net.core busy_poll/dev_weight；ipv6_route；if_inet6；tcp knobs/rmem/notsent_lowat；tcp6/udp6/raw/udplite/raw6/udplite6；xfrm_stat；ptype（function 取末 token）；fib_triestat 主表 Leaves（不读 fib_trie）；igmp6 按接口名去重；ip_tables_names（空=未加载）；protocols；rt6_stats 第 6 列 dst cache；rp_filter/use_tempaddr 含与 `conf/all` 不同的接口；igmp 只计接口头行 |
+| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；`/proc/net/netstat`；snmp6；net.core busy_poll/dev_weight；ipv6_route；if_inet6；tcp knobs/rmem/notsent_lowat/adv_win_scale；tcp6/udp6/raw/udplite/raw6/udplite6；xfrm_stat；ptype（function 取末 token）；fib_triestat 主表 Leaves（不读 fib_trie）；igmp6 按接口名去重；ip_tables_names（空=未加载）；connector 名；protocols；rt6_stats 第 6 列 dst cache；rp_filter/use_tempaddr 含与 `conf/all` 不同的接口；igmp 只计接口头行 |
 | USB | `/sys/bus/usb/devices`（跳过 `*:*.*` 接口节点） | `usb.ids` 名称 |
 | Input | `/proc/bus/input/devices` | handlers → keyboard/mouse/js |
 | NUMA | `/sys/devices/system/node/nodeN` | meminfo / cpulist / distance |
@@ -59,12 +59,12 @@
 | Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；MSR；vtconsole；`bus/platform/devices` 名（最多 16）；不调用 i2cdetect |
 | Periph | `/proc/dma`；`/sys/class/dma` | PWM `pwmchipN/npwm`；IIO `name`；nvmem `type`（不读二进制）；regulator 电压；devlink `status`；`pci_bus` cpulist；不调用 `devlink` |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI / ttyS / misc / hidraw / gpio / mtd / IB | ieee80211 / typec / udc / dax / wmi / spi / serio / ubi 名（缺类合并一条 note）；`/proc/tty/drivers`；不调用 setserial/`iw`；ttyS `type=0` 跳过 |
-| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC；mqueue；consoles；sched_rt（`-1` 不限）；OOM/laptop/kexec_load_disabled；printk_ratelimit；cfs bandwidth；oops_limit；uffd |
-| Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current；第一层 `.slice`/`.scope` |
+| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC；mqueue；consoles；sched_rt（`-1` 不限）；OOM/laptop/kexec_load_disabled；printk_ratelimit；cfs bandwidth；oops_limit；uffd；dentry-state；overflowuid；vsyscall32；ldisc_autoload；`/proc/key-users` 只计数 |
+| Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current；第一层 `.slice`/`.scope`；`/proc/cgroups` enabled=1 |
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf / fs.protected_* | bpf_jit_enable/harden；binfmt_misc status（不写 register）；不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |
 | Ns | `/proc/self/ns` | `max_*_namespaces` |
-| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems` |
+| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling` |
 
 ## 界面
 

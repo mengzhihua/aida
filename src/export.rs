@@ -1089,6 +1089,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&snap.net.ip6tables.join(" "))
         ));
     }
+    if !snap.net.connectors.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">connector {}</p>",
+            esc(&snap.net.connectors.join(" "))
+        ));
+    }
     for b in &snap.net.bridges {
         html.push_str(&format!(
             "<p>bridge {} {} members {}</p>",
@@ -1550,6 +1556,15 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("boot_id", snap.sysctl.boot_id.display()),
             ("machine-id", snap.software.machine_id.display()),
             ("config.gz", snap.software.config_gz.display()),
+            (
+                "arch",
+                format!(
+                    "{} {}-bit profiling {}",
+                    snap.software.cpu_byteorder.display(),
+                    snap.software.address_bits.display(),
+                    snap.software.profiling.display()
+                ),
+            ),
             ("file locks", snap.software.file_locks.to_string()),
             (
                 "oops / kexec",
@@ -1617,9 +1632,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "keys / dumpable",
                 format!(
-                    "maxkeys {} maxbytes {} cap_last {} dumpable {} autogroup {} cad {}",
+                    "maxkeys {} maxbytes {} gc {} key-users {} cap_last {} dumpable {} autogroup {} cad {}",
                     snap.sysctl.keys_maxkeys.display(),
                     snap.sysctl.keys_maxbytes.display(),
+                    snap.sysctl.keys_gc_delay.display(),
+                    snap.sysctl.key_users,
                     snap.sysctl.cap_last_cap.display(),
                     snap.sysctl.suid_dumpable.display(),
                     snap.sysctl.sched_autogroup.display(),
@@ -1641,21 +1658,28 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "aio/inotify",
                 format!(
-                    "{} / {} watches {}",
+                    "{} / {} watches {} dentry {}/{} overflowuid {} vsyscall32 {} ldisc {}",
                     snap.sysctl.aio_nr.display(),
                     snap.sysctl.aio_max_nr.display(),
-                    snap.sysctl.inotify_max_user_watches.display()
+                    snap.sysctl.inotify_max_user_watches.display(),
+                    snap.sysctl.dentry_nr.display(),
+                    snap.sysctl.dentry_unused.display(),
+                    snap.sysctl.overflowuid.display(),
+                    snap.sysctl.vsyscall32.display(),
+                    snap.sysctl.ldisc_autoload.display()
                 ),
             ),
             (
                 "bpf/perf",
                 format!(
-                    "unpriv_bpf {} jit {}/{} binfmt {} perf {}",
+                    "unpriv_bpf {} jit {}/{} binfmt {} perf {} sample_rate {} cpu% {}",
                     snap.security.unprivileged_bpf_disabled.display(),
                     snap.security.bpf_jit_enable.display(),
                     snap.security.bpf_jit_harden.display(),
                     snap.security.binfmt_misc_status.display(),
-                    snap.security.perf_event_paranoid.display()
+                    snap.security.perf_event_paranoid.display(),
+                    snap.sysctl.perf_event_max_sample_rate.display(),
+                    snap.sysctl.perf_cpu_time_max_percent.display()
                 ),
             ),
             (
@@ -1677,7 +1701,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.dirty_expire_centisecs.display()
                 ),
             ),
-            ("cgroup", snap.cgroup.controllers.display()),
+            (
+                "cgroup",
+                format!(
+                    "{} v1 {}",
+                    snap.cgroup.controllers.display(),
+                    if snap.cgroup.v1_enabled.is_empty() {
+                        "—".into()
+                    } else {
+                        snap.cgroup.v1_enabled.join(" ")
+                    }
+                ),
+            ),
             (
                 "consoles",
                 if snap.sysctl.consoles.is_empty() {

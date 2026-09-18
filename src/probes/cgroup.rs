@@ -12,6 +12,8 @@ pub struct CgroupReport {
     pub cpu_usage_usec: Sample<u64>,
     pub nr_descendants: Sample<u64>,
     pub groups: Vec<CgroupNode>,
+    /// `/proc/cgroups` 里 `enabled=1` 的子系统名。不要递归扫整棵树。
+    pub v1_enabled: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -24,6 +26,7 @@ pub struct CgroupNode {
 
 pub fn collect(ctx: &ProbeCtx) -> CgroupReport {
     let mut notes = Vec::new();
+    let v1_enabled = parse_cgroups_v1(&access::read_trimmed(ctx.proc_path("cgroups")));
     let root = ctx.sys_path("fs/cgroup");
     let controllers = access::read_trimmed(root.join("cgroup.controllers"));
     if controllers.access == AccessKind::NotFound {
@@ -35,6 +38,7 @@ pub fn collect(ctx: &ProbeCtx) -> CgroupReport {
             cpu_usage_usec: Sample::missing("cpu.stat"),
             nr_descendants: Sample::missing("cgroup.stat"),
             groups: Vec::new(),
+            v1_enabled,
             notes,
         };
     }
@@ -54,6 +58,7 @@ pub fn collect(ctx: &ProbeCtx) -> CgroupReport {
         nr_descendants,
         groups,
         controllers,
+        v1_enabled,
         notes,
     }
 }
@@ -145,6 +150,30 @@ fn parse_cgroup_stat_field(sample: &Sample<String>, key: &str) -> Sample<u64> {
     Sample::error(sample.source.clone(), format!("cgroup.stat 无 {key}"))
 }
 
+/// `/proc/cgroups`：跳过 `#` 头，最后一列 `1` 表示该子系统已启用。
+pub fn parse_cgroups_v1(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let mut it = t.split_whitespace();
+        let Some(name) = it.next() else { continue };
+        let Some(enabled) = it.nth(2) else { continue };
+        if enabled == "1" {
+            out.push(name.to_string());
+        }
+        if out.len() >= 16 {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +198,12 @@ mod tests {
         fs::write(cg.join("docker/cgroup.procs"), "99\n").unwrap();
         fs::create_dir_all(cg.join("user.slice")).unwrap();
         fs::write(cg.join("user.slice/cgroup.procs"), "7\n").unwrap();
+        fs::create_dir_all(root.join("proc")).unwrap();
+        fs::write(
+            root.join("proc/cgroups"),
+            "#subsys_name\thierarchy\tnum_cgroups\tenabled\ncpu\t0\t28\t1\ncpuacct\t0\t28\t1\nnet_cls\t0\t1\t0\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -186,6 +221,7 @@ mod tests {
         assert_eq!(r.groups[0].procs.value, Some(2));
         assert_eq!(r.groups[1].name, "user.slice");
         assert!(r.groups.iter().all(|g| g.name.ends_with(".slice") || g.name.ends_with(".scope")));
+        assert_eq!(r.v1_enabled, vec!["cpu".to_string(), "cpuacct".to_string()]);
         let _ = fs::remove_dir_all(&root);
     }
 }

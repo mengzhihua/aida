@@ -82,6 +82,20 @@ pub struct SysctlReport {
     pub user_reserve_kbytes: Sample<u64>,
     pub unprivileged_userfaultfd: Sample<String>,
     pub ngroups_max: Sample<u64>,
+    pub overflowuid: Sample<u64>,
+    pub dir_notify_enable: Sample<String>,
+    pub lease_break_time: Sample<u64>,
+    pub sysctl_writes_strict: Sample<String>,
+    pub dentry_nr: Sample<u64>,
+    pub dentry_unused: Sample<u64>,
+    pub admin_reserve_kbytes: Sample<u64>,
+    pub perf_event_max_sample_rate: Sample<u64>,
+    pub perf_cpu_time_max_percent: Sample<u64>,
+    pub keys_gc_delay: Sample<u64>,
+    /// `/proc/key-users` 行数。不要 dump `/proc/keys`。
+    pub key_users: usize,
+    pub vsyscall32: Sample<String>,
+    pub ldisc_autoload: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -206,6 +220,26 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
             ctx.proc_path("sys/vm/unprivileged_userfaultfd"),
         ),
         ngroups_max: access::read_u64(ctx.proc_path("sys/kernel/ngroups_max")),
+        overflowuid: access::read_u64(ctx.proc_path("sys/fs/overflowuid")),
+        dir_notify_enable: access::read_trimmed(ctx.proc_path("sys/fs/dir-notify-enable")),
+        lease_break_time: access::read_u64(ctx.proc_path("sys/fs/lease-break-time")),
+        sysctl_writes_strict: access::read_trimmed(ctx.proc_path("sys/kernel/sysctl_writes_strict")),
+        dentry_nr: parse_state_nth(&access::read_trimmed(ctx.proc_path("sys/fs/dentry-state")), 0),
+        dentry_unused: parse_state_nth(
+            &access::read_trimmed(ctx.proc_path("sys/fs/dentry-state")),
+            1,
+        ),
+        admin_reserve_kbytes: access::read_u64(ctx.proc_path("sys/vm/admin_reserve_kbytes")),
+        perf_event_max_sample_rate: access::read_u64(
+            ctx.proc_path("sys/kernel/perf_event_max_sample_rate"),
+        ),
+        perf_cpu_time_max_percent: access::read_u64(
+            ctx.proc_path("sys/kernel/perf_cpu_time_max_percent"),
+        ),
+        keys_gc_delay: access::read_u64(ctx.proc_path("sys/kernel/keys/gc_delay")),
+        key_users: count_data_lines(&access::read_trimmed(ctx.proc_path("key-users"))),
+        vsyscall32: access::read_trimmed(ctx.proc_path("sys/abi/vsyscall32")),
+        ldisc_autoload: access::read_trimmed(ctx.proc_path("sys/dev/tty/ldisc_autoload")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -222,6 +256,29 @@ fn count_table_rows(sample: &Sample<String>) -> usize {
         .skip(1)
         .filter(|l| !l.trim().is_empty())
         .count()
+}
+
+fn count_data_lines(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines().filter(|l| !l.trim().is_empty()).count()
+}
+
+fn parse_state_nth(sample: &Sample<String>, idx: usize) -> Sample<u64> {
+    let miss = || Sample {
+        value: None,
+        access: sample.access,
+        source: sample.source.clone(),
+        hint: sample.hint.clone(),
+    };
+    let Some(text) = sample.value.as_deref() else {
+        return miss();
+    };
+    match text.split_whitespace().nth(idx).and_then(|s| s.parse().ok()) {
+        Some(v) => Sample::ok(v, sample.source.clone()),
+        None => miss(),
+    }
 }
 
 /// `file-nr`：已分配、未用、上限。
@@ -338,6 +395,24 @@ mod tests {
         fs::write(root.join("proc/sys/vm/user_reserve_kbytes"), "131072\n").unwrap();
         fs::write(root.join("proc/sys/vm/unprivileged_userfaultfd"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/ngroups_max"), "65536\n").unwrap();
+        fs::write(root.join("proc/sys/fs/overflowuid"), "65534\n").unwrap();
+        fs::write(root.join("proc/sys/fs/dir-notify-enable"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/fs/lease-break-time"), "45\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/sysctl_writes_strict"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/fs/dentry-state"), "100 40 45 0 0 0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/admin_reserve_kbytes"), "8192\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/perf_event_max_sample_rate"), "100000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/perf_cpu_time_max_percent"), "25\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/keys/gc_delay"), "300\n").unwrap();
+        fs::write(
+            root.join("proc/key-users"),
+            "    0:    32 31/31 25/1000000 505/25000000\n  997:     1 1/1 1/200 9/20000\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("proc/sys/abi")).unwrap();
+        fs::write(root.join("proc/sys/abi/vsyscall32"), "1\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/dev/tty")).unwrap();
+        fs::write(root.join("proc/sys/dev/tty/ldisc_autoload"), "1\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
@@ -391,6 +466,16 @@ mod tests {
         assert_eq!(r.user_reserve_kbytes.value, Some(131072));
         assert_eq!(r.unprivileged_userfaultfd.value.as_deref(), Some("0"));
         assert_eq!(r.ngroups_max.value, Some(65536));
+        assert_eq!(r.overflowuid.value, Some(65534));
+        assert_eq!(r.dir_notify_enable.value.as_deref(), Some("1"));
+        assert_eq!(r.lease_break_time.value, Some(45));
+        assert_eq!(r.dentry_nr.value, Some(100));
+        assert_eq!(r.dentry_unused.value, Some(40));
+        assert_eq!(r.admin_reserve_kbytes.value, Some(8192));
+        assert_eq!(r.perf_event_max_sample_rate.value, Some(100_000));
+        assert_eq!(r.key_users, 2);
+        assert_eq!(r.vsyscall32.value.as_deref(), Some("1"));
+        assert_eq!(r.ldisc_autoload.value.as_deref(), Some("1"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

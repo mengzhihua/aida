@@ -144,6 +144,11 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 122. **`tcp_notsent_lowat=4294967295` 表示不限制。** 用 u64 解析。
 123. **不要读 `/proc/sys/vm/drop_caches` 或 `compact_memory`。** 它们是只写触发器。
 124. **不要转储 `/sys/kernel/notes` 二进制。**
+125. **不要 dump `/proc/keys`。** 只计 `/proc/key-users` 行数。
+126. **`/proc/cgroups` 最后一列才是 enabled。** `0` 表示该 v1 子系统未启用，不要列进去。
+127. **`dentry-state` 第一列是 nr_dentry，第二列 nr_unused。** 不要把整行当单个整数。
+128. **不要读 `/sys/kernel/vmcoreinfo` 当文本。** 那是二进制地址范围。
+129. **`/proc/net/connector` 跳过表头。** 只取 Name 列。
 
 ## 测试方案
 

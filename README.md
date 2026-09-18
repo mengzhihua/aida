@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第十九轮** 补齐剩余总线 class（ieee80211 / Type-C / UDC / DAX / WMI / SPI / serio / UBI）、bpf_jit / binfmt_misc、以及本机常见的 printk/cfs/oops、igmp6、busy_poll。不写 binfmt `register`，不读 `drop_caches`/`fib_trie`。
+**第二十轮** 补齐内核 endian/位宽、VFS dentry-state、key-users（不 dump `/proc/keys`）、cgroup v1 子系统表、netlink connector。不读 `drop_caches`，不转储 `vmcoreinfo` 二进制。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -19,7 +19,7 @@
 | EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
 | 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout / memmap |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc、dentry-state、key-users、cgroup v1 enabled |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
 | 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi |
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |

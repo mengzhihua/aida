@@ -39,6 +39,9 @@ pub struct SoftwareInfo {
     pub kexec_loaded: Sample<String>,
     pub fscaps: Sample<String>,
     pub uevent_seqnum: Sample<u64>,
+    pub cpu_byteorder: Sample<String>,
+    pub address_bits: Sample<String>,
+    pub profiling: Sample<String>,
     pub filesystems: Vec<String>,
     pub notes: Vec<String>,
 }
@@ -128,6 +131,9 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         kexec_loaded: access::read_trimmed(ctx.sys_path("kernel/kexec_loaded")),
         fscaps: access::read_trimmed(ctx.sys_path("kernel/fscaps")),
         uevent_seqnum: access::read_u64(ctx.sys_path("kernel/uevent_seqnum")),
+        cpu_byteorder: access::read_trimmed(ctx.sys_path("kernel/cpu_byteorder")),
+        address_bits: access::read_trimmed(ctx.sys_path("kernel/address_bits")),
+        profiling: access::read_trimmed(ctx.sys_path("kernel/profiling")),
         filesystems: parse_filesystems(&access::read_trimmed(ctx.proc_path("filesystems"))),
         notes,
     }
@@ -514,5 +520,28 @@ mod tests {
             "denied /proc/locks must not look like zero locks: {:?}",
             r.notes
         );
+    }
+
+    #[test]
+    fn cpu_byteorder_and_address_bits() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("aida-sw-arch-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/kernel")).unwrap();
+        fs::create_dir_all(root.join("proc")).unwrap();
+        fs::write(root.join("sys/kernel/cpu_byteorder"), "little\n").unwrap();
+        fs::write(root.join("sys/kernel/address_bits"), "64\n").unwrap();
+        fs::write(root.join("sys/kernel/profiling"), "0\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.cpu_byteorder.value.as_deref(), Some("little"));
+        assert_eq!(r.address_bits.value.as_deref(), Some("64"));
+        assert_eq!(r.profiling.value.as_deref(), Some("0"));
+        let _ = fs::remove_dir_all(&root);
     }
 }

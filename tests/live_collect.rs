@@ -192,6 +192,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"bpf_jit_enable\""));
     assert!(json.contains("\"binfmt_misc_status\""));
     assert!(json.contains("\"busy_poll\""));
+    assert!(json.contains("\"cpu_byteorder\""));
+    assert!(json.contains("\"v1_enabled\""));
+    assert!(json.contains("\"key_users\""));
+    assert!(json.contains("\"dentry_nr\""));
+    assert!(json.contains("\"connectors\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -220,6 +225,18 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.net.igmp6_ifaces >= 1 || snap.net.igmp_ifaces >= 1,
         "igmp 或 igmp6 应至少看到一个接口（IPv4-only 主机用 igmp）"
+    );
+    assert!(
+        snap.software.cpu_byteorder.access != aida::access::AccessKind::Error,
+        "cpu_byteorder 不应是读取失败"
+    );
+    assert!(
+        !snap.cgroup.v1_enabled.is_empty() || snap.cgroup.controllers.value.is_some(),
+        "cgroup v1 enabled 或 v2 controllers 应至少有一个"
+    );
+    assert!(
+        snap.sysctl.dentry_nr.value.is_some(),
+        "dentry-state 应可读"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -297,6 +314,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));
     assert!(html.contains("sched_rt") || html.contains("tcp6") || html.contains("xfrm"));
     assert!(html.contains("igmp6") || html.contains("printk") || html.contains("binfmt") || html.contains("ieee80211"));
+    assert!(html.contains("byteorder") || html.contains("dentry") || html.contains("key-users") || html.contains("connector"));
     assert!(!html.contains("<script"));
 }
 
