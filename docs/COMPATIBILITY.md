@@ -252,6 +252,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 230. **`tcp_plb_idle_rehash_rounds` / `tcp_plb_rehash_rounds` / `tcp_plb_suspend_rto_sec` 与 `tcp_plb_enabled` 成对。** 分别是空闲再哈希轮数、拥塞再哈希轮数、RTO 后暂停秒数。
 231. **`accept_ra_rt_info_max_plen` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 232. **`nr_hugepages=0` 表示默认大小 hugepage 池没有静态预留页。** 不是采集失败；与 `nr_overcommit_hugepages` / `nr_hugepages_mempolicy` 不要混。
+233. **空的 vduse / mux / soundwire 表示没有对应硬件。** SoundWire 先看 `bus/soundwire/devices`，没有再看 `class/soundwire`。`PermissionDenied` 仍写 note。
+234. **`tcp_pingpong_thresh` 是 delayed ACK 的 ping-pong 阈值。** `tcp_retrans_collapse=1` 表示重传时合并相邻 SKB。`tcp_probe_interval` / `tcp_probe_threshold` 与 `tcp_mtu_probing` 成对。
+235. **`accept_ra_rtr_pref` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 忽略 RA Router Preference，`1` 接受。
+236. **`acpi_video_flags=0` 表示不启用 ACPI video 特殊标志。** 不是采集失败。
 
 ## 测试方案
 
