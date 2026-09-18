@@ -1099,6 +1099,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&snap.net.ipv6_use_tempaddr_dev.join(" "))
         ));
     }
+    if !snap.net.ipv6_accept_dad_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">accept_dad iface {}</p>",
+            esc(&snap.net.ipv6_accept_dad_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_addr_gen_mode_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">addr_gen iface {}</p>",
+            esc(&snap.net.ipv6_addr_gen_mode_dev.join(" "))
+        ));
+    }
     if !snap.net.protocols.is_empty() {
         html.push_str(&format!(
             "<p class=\"muted\">protocols {}</p>",

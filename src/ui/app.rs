@@ -1991,6 +1991,16 @@ impl AidaApp {
                 &self.snap.net.ipv6_use_tempaddr_dev.join("  "),
             );
         }
+        if !self.snap.net.ipv6_accept_dad_dev.is_empty() {
+            kv(ui, "accept_dad iface", &self.snap.net.ipv6_accept_dad_dev.join("  "));
+        }
+        if !self.snap.net.ipv6_addr_gen_mode_dev.is_empty() {
+            kv(
+                ui,
+                "addr_gen iface",
+                &self.snap.net.ipv6_addr_gen_mode_dev.join("  "),
+            );
+        }
         kv(
             ui,
             "xfrm",

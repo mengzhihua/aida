@@ -96,6 +96,9 @@ pub struct NetReport {
     pub ipv6_accept_dad: Sample<String>,
     /// `0` EUI64，`1` none，`2` stable-privacy，`3` random。
     pub ipv6_addr_gen_mode: Sample<String>,
+    /// 与 `conf/all` 不同的接口值。
+    pub ipv6_accept_dad_dev: Vec<String>,
+    pub ipv6_addr_gen_mode_dev: Vec<String>,
     pub ip6frag_high_thresh: Sample<u64>,
     pub rps_sock_flow_entries: Sample<u64>,
     pub notes: Vec<String>,
@@ -367,6 +370,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_dad"));
     let ipv6_addr_gen_mode =
         access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/addr_gen_mode"));
+    let ipv6_accept_dad_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_dad",
+        ipv6_accept_dad.value.as_deref(),
+    );
+    let ipv6_addr_gen_mode_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "addr_gen_mode",
+        ipv6_addr_gen_mode.value.as_deref(),
+    );
     let ip6frag_high_thresh = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_high_thresh"));
     let rps_sock_flow_entries =
         access::read_u64(ctx.proc_path("sys/net/core/rps_sock_flow_entries"));
@@ -461,6 +476,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_autocorking,
                 ipv6_accept_dad,
                 ipv6_addr_gen_mode,
+                ipv6_accept_dad_dev,
+                ipv6_addr_gen_mode_dev,
                 ip6frag_high_thresh,
                 rps_sock_flow_entries,
                 notes,
@@ -662,6 +679,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_autocorking,
         ipv6_accept_dad,
         ipv6_addr_gen_mode,
+        ipv6_accept_dad_dev,
+        ipv6_addr_gen_mode_dev,
         ip6frag_high_thresh,
         rps_sock_flow_entries,
         notes,
@@ -1499,6 +1518,11 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv4/conf/lo/rp_filter"), "0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/all/use_tempaddr"), "0\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/lo/use_tempaddr"), "-1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_dad"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/accept_dad"), "-1\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/eth0")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/addr_gen_mode"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/eth0/addr_gen_mode"), "3\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -1523,6 +1547,18 @@ mod tests {
             r.ipv6_use_tempaddr_dev.iter().any(|s| s == "lo:-1"),
             "lo use_tempaddr=-1 must differ from conf/all: {:?}",
             r.ipv6_use_tempaddr_dev
+        );
+        assert_eq!(r.ipv6_accept_dad.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_accept_dad_dev.iter().any(|s| s == "lo:-1"),
+            "lo accept_dad=-1 must differ from conf/all: {:?}",
+            r.ipv6_accept_dad_dev
+        );
+        assert_eq!(r.ipv6_addr_gen_mode.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_addr_gen_mode_dev.iter().any(|s| s == "eth0:3"),
+            "eth0 addr_gen_mode=3 must differ from conf/all: {:?}",
+            r.ipv6_addr_gen_mode_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

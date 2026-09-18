@@ -120,7 +120,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 98. **`kexec_loaded=0` 表示未加载 crash/kexec 内核。** 云 VM 常见。
 99. **`/proc/net/tcp` 行数含 TIME_WAIT。** 不是 established-only。
 100. **`firmware/memmap` 编号目录是 e820 段。** 不要展开每一段的 type/start（长度已够）。
-101. **`rp_filter` / `use_tempaddr` 是 per-iface。** 只读 `conf/all` 会漏掉 `eth0:1` 或 `lo:-1`。
+101. **`rp_filter` / `use_tempaddr` / `accept_dad` / `addr_gen_mode` 是 per-iface。** 只读 `conf/all` 会漏掉 `eth0:1` 或 `lo:-1`。不要用 `default` 代替现有接口。
 102. **`clockevents` 只列 `broadcast` 与 `clockeventN`。** 目录 PermissionDenied 不要当成没有时钟事件设备。
 103. **`/proc/dma` 的 `4: cascade` 在 PC 上正常。** 这是 ISA DMA 级联，不是采集错误。
 104. **空的 `/sys/class/dma` 表示没有 dmaengine 通道。** 云 VM 常见，不要当读失败。
@@ -161,7 +161,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 139. **`overcommit_kbytes=0` 表示改用 `overcommit_ratio`。**
 140. **空的 remoteproc/extcon/tee/mdio_bus 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
 141. **`tcp_mem` / `udp_mem` 是三个页数（min / pressure / max）。** 保留整行字符串，不要拆成单个整数。
-142. **IPv6 `addr_gen_mode`：`0` EUI64，`1` none，`2` stable-privacy，`3` random。**
+142. **IPv6 `addr_gen_mode`：`0` EUI64，`1` none，`2` stable-privacy，`3` random。** 与 `accept_dad` 一样列出和 `conf/all` 不同的接口。`lo` 上 `accept_dad=-1` 常见。
 143. **`pipe-user-pages-hard=0` 表示不限制。** soft 默认常为 16384 页。
 144. **`kernel_max` 是内核编译时的最大 CPU 下标，不是在线数量。** `possible`/`present` 是掩码列表。
 145. **`/sys/class/wakeup` 只计数。** 不要展开每个 `wakeupN`。`PermissionDenied` 必须写 note。

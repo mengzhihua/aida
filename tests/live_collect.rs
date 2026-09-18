@@ -207,6 +207,7 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"dirty_bytes\""));
     assert!(json.contains("\"tcp_mem\""));
     assert!(json.contains("\"ipv6_addr_gen_mode\""));
+    assert!(json.contains("\"ipv6_accept_dad_dev\""));
     assert!(json.contains("\"remoteproc\""));
     assert!(json.contains("\"wakeup_sources\""));
     assert!(

@@ -12,7 +12,7 @@
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent/tcp_mem/udp_mem/orphans/dsack/autocorking；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/busy_read/dev_weight/rps_sock_flow_entries；IPv6 accept_ra/autoconf/hop/accept_dad/addr_gen_mode；ip6frag_high_thresh；conntrack 超时/buckets；tcp_max_tw_buckets；icmp_ratelimit；ip_default_ttl；protocols；conntrack；net.core；rp_filter per-iface |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent/tcp_mem/udp_mem/orphans/dsack/autocorking；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/busy_read/dev_weight/rps_sock_flow_entries；IPv6 accept_ra/autoconf/hop/accept_dad/addr_gen_mode；ip6frag_high_thresh；conntrack 超时/buckets；tcp_max_tw_buckets；icmp_ratelimit；ip_default_ttl；protocols；conntrack；net.core；rp_filter/use_tempaddr/accept_dad/addr_gen_mode per-iface |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap + memory_tier |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
