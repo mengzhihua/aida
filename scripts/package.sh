@@ -24,9 +24,12 @@ echo
 echo "==> SHA256SUMS"
 (
   cd "$OUT_DIR"
-  # 只对真正带走的产物做校验和；跳过 linuxdeploy 缓存与短名 symlink。
+  # 只对这一次成功的产物做校验和。AppImage 失败时 dist 里可能还留着上次的包，不要写进 SUMS。
   shopt -s nullglob
-  files=(aida-cli-[0-9]* AIDA_Linux-*.AppImage)
+  files=(aida-cli-[0-9]*)
+  if [[ "$appimage_ok" -eq 1 ]]; then
+    files+=(AIDA_Linux-*.AppImage)
+  fi
   if ((${#files[@]})); then
     sha256sum "${files[@]}" | tee SHA256SUMS
   fi

@@ -6,6 +6,10 @@
   <summary xml:lang="zh_CN">从 sysfs/procfs 采集的硬件检测与监控</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
+  <developer id="com.aida.linux">
+    <name>AIDA Linux</name>
+  </developer>
+  <content_rating type="oars-1.1" />
   <description>
     <p>
       Linux hardware information, sensor charts, microbenchmarks and JSON/HTML
@@ -16,7 +20,7 @@
       dmidecode / lspci / smartctl。
     </p>
   </description>
-  <launchable type="desktop-id">aida.desktop</launchable>
+  <launchable type="desktop-id">com.aida.linux.desktop</launchable>
   <url type="homepage">https://github.com/mengzhihua/aida</url>
   <provides>
     <binary>aida</binary>
@@ -26,6 +30,6 @@
     <category>Monitor</category>
   </categories>
   <releases>
-    <release version="@VERSION@" />
+    <release version="@VERSION@" date="@DATE@" />
   </releases>
 </component>

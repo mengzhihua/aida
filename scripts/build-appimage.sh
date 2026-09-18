@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/version.sh"
 ARCH="$(aida_arch)"
 VERSION="${VERSION:-$(aida_version "$ROOT")}"
+DATE="${DATE:-$(aida_date)}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 APPDIR="${APPDIR:-$ROOT/AppDir}"
 CACHE="${CACHE_DIR:-$ROOT/.cache}"
@@ -18,6 +19,9 @@ if [[ "$ARCH" != "x86_64" && "$ARCH" != "aarch64" ]]; then
 fi
 
 mkdir -p "$OUT_DIR" "$CACHE"
+# linuxdeploy 自己的镜像不要留在 dist/。已发布的 AIDA_Linux*.AppImage 先留着，
+# 等新镜像过完 version 校验再替换，避免 cargo/linuxdeploy 失败时把上次成功的包删掉。
+rm -f "$OUT_DIR"/linuxdeploy*.AppImage
 
 echo "==> cargo build --release --features gui  (version $VERSION)"
 cd "$ROOT"
@@ -29,16 +33,20 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/polkit-1/actions" "$APPDIR/usr/share/metainfo"
 
 install -m 0755 "$ROOT/target/release/aida" "$APPDIR/usr/bin/aida"
-install -m 0644 "$ROOT/packaging/aida.desktop" "$APPDIR/usr/share/applications/aida.desktop"
+# desktop 文件名必须等于 component id，否则 ubuntu-latest 的 appstreamcli 把
+# metainfo-filename-cid-mismatch 警告当成失败（exit 3）。
+install -m 0644 "$ROOT/packaging/aida.desktop" \
+  "$APPDIR/usr/share/applications/com.aida.linux.desktop"
 install -m 0644 "$ROOT/packaging/aida.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/aida.svg"
 install -m 0644 "$ROOT/packaging/aida.svg" "$APPDIR/aida.svg"
 install -m 0644 "$ROOT/packaging/polkit/com.aida.linux.policy" \
   "$APPDIR/usr/share/polkit-1/actions/com.aida.linux.policy"
 if [[ -f "$ROOT/packaging/com.aida.linux.metainfo.xml" ]]; then
-  sed "s/@VERSION@/${VERSION}/g" "$ROOT/packaging/com.aida.linux.metainfo.xml" \
+  sed -e "s/@VERSION@/${VERSION}/g" -e "s/@DATE@/${DATE}/g" \
+    "$ROOT/packaging/com.aida.linux.metainfo.xml" \
     >"$APPDIR/usr/share/metainfo/com.aida.linux.metainfo.xml"
 fi
-cp "$ROOT/packaging/aida.desktop" "$APPDIR/aida.desktop"
+cp "$APPDIR/usr/share/applications/com.aida.linux.desktop" "$APPDIR/com.aida.linux.desktop"
 
 TOOL="$CACHE/linuxdeploy-${ARCH}.AppImage"
 if [[ ! -x "$TOOL" ]]; then
@@ -53,8 +61,12 @@ export LINUXDEPLOY_OUTPUT_VERSION="$VERSION"
 export VERSION
 export ARCH
 
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/aida-appimage.XXXXXX")"
+cleanup() { rm -rf "$STAGE"; }
+trap cleanup EXIT
+
 echo "==> linuxdeploy"
-cd "$OUT_DIR"
+cd "$STAGE"
 
 # winit 通过 dlopen 加载 xkb/GL，不在 ELF NEEDED 里，linuxdeploy 默认不会打包。
 EXTRA_LIBS=()
@@ -70,24 +82,47 @@ done
 "$TOOL" \
   --appdir "$APPDIR" \
   --executable "$APPDIR/usr/bin/aida" \
-  --desktop-file "$APPDIR/aida.desktop" \
+  --desktop-file "$APPDIR/com.aida.linux.desktop" \
   --icon-file "$APPDIR/aida.svg" \
   "${EXTRA_LIBS[@]}" \
   --output appimage
 
-# linuxdeploy 默认文件名不带版本；规范成带 Cargo 版本的名字。
+dest="$OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
 shopt -s nullglob
-for img in "$OUT_DIR"/AIDA_Linux*.AppImage "$OUT_DIR"/aida*.AppImage; do
-  base="$(basename "$img")"
-  case "$base" in
+produced=()
+for img in "$STAGE"/AIDA_Linux*.AppImage "$STAGE"/aida*.AppImage; do
+  case "$(basename "$img")" in
     linuxdeploy*) continue ;;
   esac
-  dest="$OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
-  if [[ "$img" != "$dest" ]]; then
-    mv -f "$img" "$dest"
-  fi
+  produced+=("$img")
 done
 shopt -u nullglob
+if ((${#produced[@]} == 0)); then
+  echo "linuxdeploy 没有产出 AppImage" >&2
+  exit 1
+fi
+staged=""
+for img in "${produced[@]}"; do
+  if [[ "$(basename "$img")" == "$(basename "$dest")" ]]; then
+    staged="$img"
+    break
+  fi
+done
+if [[ -z "$staged" ]]; then
+  staged="${produced[0]}"
+fi
+
+echo "==> 校验 $staged version == $VERSION"
+got="$(APPIMAGE_EXTRACT_AND_RUN=1 "$staged" version)"
+echo "    $got"
+if [[ "$got" != "aida $VERSION" ]]; then
+  echo "AppImage 版本不是 $VERSION: $got（保留 dist 里上次成功的包）" >&2
+  exit 1
+fi
+
+# 校验通过后再替换 dest；跨文件系统用 install+mv，避免半写入覆盖上次成功的包。
+install -m 0755 "$staged" "$dest.new"
+mv -f "$dest.new" "$dest"
 
 echo "==> done"
-ls -lh "$OUT_DIR"/AIDA_Linux-*.AppImage
+ls -lh "$dest"
