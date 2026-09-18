@@ -768,6 +768,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("cec", &snap.buses.cec),
         ("media", &snap.buses.media),
         ("nbd", &snap.buses.nbd),
+        ("vfio", &snap.buses.vfio),
+        ("mdev", &snap.buses.mdev),
+        ("vhost", &snap.buses.vhost),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1168,7 +1171,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.ip_dynaddr.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">thin_linear {} limit_out {} comp_sack {} fwd_prio {} fib_notify {} echo_probe {} fwmark {} ndisc_notify {} early_demux {}/{} sack_delay {}ns sack_slack {}ns app_win {} tfo_blackhole {}s base_mss {} min_snd_mss {} reorder {} recovery {} max_reorder {} tso_div {} udp_demux {} syn_linear {} fwd_pmtu {} no_ssthresh {}</p>",
+        "<p class=\"muted\">thin_linear {} limit_out {} comp_sack {} fwd_prio {} fib_notify {} echo_probe {} fwmark {} ndisc_notify {} early_demux {}/{} sack_delay {}ns sack_slack {}ns app_win {} tfo_blackhole {}s base_mss {} min_snd_mss {} reorder {} recovery {} max_reorder {} tso_div {} udp_demux {} syn_linear {} fwd_pmtu {} no_ssthresh {} min_rtt_wlen {} mtu_floor {} tso_rtt_log {} udp_rmem_min {}</p>",
         snap.net.tcp_thin_linear_timeouts.display(),
         snap.net.tcp_limit_output_bytes.display(),
         snap.net.tcp_comp_sack_nr.display(),
@@ -1195,10 +1198,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.udp_early_demux.display(),
         snap.net.tcp_syn_linear_timeouts.display(),
         snap.net.ip_forward_use_pmtu.display(),
-        snap.net.tcp_no_ssthresh_metrics_save.display()
+        snap.net.tcp_no_ssthresh_metrics_save.display(),
+        snap.net.tcp_min_rtt_wlen.display(),
+        snap.net.tcp_mtu_probe_floor.display(),
+        snap.net.tcp_tso_rtt_log.display(),
+        snap.net.udp_rmem_min.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1223,7 +1230,15 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.icmp_msgs_burst.display(),
         snap.net.ipv6_flowlabel_consistency.display(),
         snap.net.ipv6_idgen_retries.display(),
-        snap.net.ipv6_accept_ra_mtu.display()
+        snap.net.ipv6_accept_ra_mtu.display(),
+        snap.net.ipv6_idgen_delay.display(),
+        snap.net.ipv6_ip6frag_time.display(),
+        snap.net.ipv6_keep_addr_on_down.display(),
+        match snap.net.ping_group_range.value.as_deref() {
+            Some("1\t0") | Some("1 0") => "1 0 无特权ping".into(),
+            _ => snap.net.ping_group_range.display(),
+        },
+        snap.net.icmp_ratemask.display()
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1289,6 +1304,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">accept_ra_mtu iface {}</p>",
             esc(&snap.net.ipv6_accept_ra_mtu_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_keep_addr_on_down_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">keep_addr_on_down iface {}</p>",
+            esc(&snap.net.ipv6_keep_addr_on_down_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -1978,7 +1999,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "bpf/perf",
                 format!(
-                    "unpriv_bpf {} jit {}/{} binfmt {} perf {} sample_rate {} mlock_kb {} cpu% {}",
+                    "unpriv_bpf {} jit {}/{} binfmt {} perf {} sample_rate {} mlock_kb {} max_stack {} ctx_stack {} cpu% {}",
                     snap.security.unprivileged_bpf_disabled.display(),
                     snap.security.bpf_jit_enable.display(),
                     snap.security.bpf_jit_harden.display(),
@@ -1986,6 +2007,8 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.security.perf_event_paranoid.display(),
                     snap.sysctl.perf_event_max_sample_rate.display(),
                     snap.sysctl.perf_event_mlock_kb.display(),
+                    snap.sysctl.perf_event_max_stack.display(),
+                    snap.sysctl.perf_event_max_contexts_per_stack.display(),
                     snap.sysctl.perf_cpu_time_max_percent.display()
                 ),
             ),
@@ -2001,7 +2024,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "vm",
                 format!(
-                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} zone_reclaim {} dirty_expire {} dirtytime {} memfd_noexec {} compact_proact {} page_lock {} min_slab {} min_unmapped {} extfrag {} stat_interval {} hugetlb_vmemmap {}",
+                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} zone_reclaim {} dirty_expire {} dirtytime {} memfd_noexec {} compact_proact {} page_lock {} min_slab {} min_unmapped {} extfrag {} stat_interval {} hugetlb_vmemmap {} percpu_high {} numa_stat {}",
                     snap.sysctl.swappiness.display(),
                     snap.sysctl.overcommit_memory.display(),
                     snap.sysctl.overcommit_kbytes.display(),
@@ -2025,7 +2048,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     match snap.sysctl.hugetlb_optimize_vmemmap.value.as_deref() {
                         Some("0") => "0 关".into(),
                         _ => snap.sysctl.hugetlb_optimize_vmemmap.display(),
-                    }
+                    },
+                    match snap.sysctl.percpu_pagelist_high_fraction.value {
+                        Some(0) => "0 默认".into(),
+                        _ => snap.sysctl.percpu_pagelist_high_fraction.display(),
+                    },
+                    snap.sysctl.numa_stat.display()
                 ),
             ),
             (
