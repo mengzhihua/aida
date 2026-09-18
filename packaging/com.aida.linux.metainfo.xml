@@ -20,7 +20,7 @@
       dmidecode / lspci / smartctl。
     </p>
   </description>
-  <launchable type="desktop-id">aida.desktop</launchable>
+  <launchable type="desktop-id">com.aida.linux.desktop</launchable>
   <url type="homepage">https://github.com/mengzhihua/aida</url>
   <provides>
     <binary>aida</binary>
