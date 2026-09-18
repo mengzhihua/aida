@@ -25,7 +25,7 @@
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
-| 传感器告警 / 记录 / 状态栏 | hwmon 阈值 JSONL；指标历史 `$AIDA_RECORD_LOG` / `history.jsonl`；窗口内状态条（含 load 与内存用量）+ 可选置顶条（对标 iStat Menus，不引入托盘 crate） |
+| 传感器告警 / 记录 / 状态栏 | hwmon 阈值 JSONL；指标历史 `$AIDA_RECORD_LOG` / `history.jsonl`；窗口内状态条（含 load 与内存用量）+ 可选置顶条（对标 iStat Menus，不引入托盘 crate）；有底层盘时跳过 Device Mapper，只有 `dm-*` 时保留 mapper 速率 |
 | 权限 / 提权 / GUI / 基准 / 导出 / AppImage | 同前几轮 |
 
 技术选型：**Rust + egui**，采集路径优先内核文件，不调用 `dmidecode`、`lspci`、`nvme-cli`、`smartctl`、`lscpu`。

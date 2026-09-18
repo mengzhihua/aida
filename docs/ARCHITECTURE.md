@@ -71,7 +71,7 @@
 - 左：`SidePanel` 树（摘要 / CPU / DMI / 内存 / GPU / 传感器 / 电源 / 存储 / 文件系统 / 网络 / USB / 输入 / 声卡 / PCI / 平台 / NUMA / OS / 基准 / 导出）
 - 右：对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点
 - 顶：权限条 +「以管理员身份重启」（`elevate::reexec`）
-- 状态栏：对标 iStat Menus，窗口内常驻 CPU/内存用量/网络/磁盘/温度/loadavg；可选 always-on-top 窄条（无托盘 crate）；磁盘合计跳过 Device Mapper
+- 状态栏：对标 iStat Menus，窗口内常驻 CPU/内存用量/网络/磁盘/温度/loadavg；可选 always-on-top 窄条（无托盘 crate）；有底层盘时磁盘合计跳过 Device Mapper，只有 `dm-*` 时保留 mapper 速率
 - 记录：GUI 开始/停止，把每次 live 采样写成 JSONL（`$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`）
 - 告警：对照 `*_max`/`*_crit`/`*_min`，状态变化写入 JSONL（`$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`）
 - 中文标签：若系统有 Noto/文泉驿等 CJK 字体则加载，否则回退英文，避免方块字

@@ -72,15 +72,12 @@ impl StatusMeters {
             add_rate(&mut net_rx, i.rx_bps);
             add_rate(&mut net_tx, i.tx_bps);
         }
-        let mut disk_rd = None;
-        let mut disk_wr = None;
-        for d in &snap.block.devices {
-            if d.r#type == "Device Mapper" {
-                continue;
-            }
-            add_rate(&mut disk_rd, d.rd_bps);
-            add_rate(&mut disk_wr, d.wr_bps);
-        }
+        let (disk_rd, disk_wr) = sum_disk_rates(
+            snap.block
+                .devices
+                .iter()
+                .map(|d| (d.r#type.as_str(), d.rd_bps, d.wr_bps)),
+        );
         let hottest = hwmon::temperature_series(&snap.sensors)
             .into_iter()
             .max_by(|a, b| a.1.total_cmp(&b.1));
@@ -161,6 +158,26 @@ fn add_rate(acc: &mut Option<f64>, v: Option<f64>) {
     if let Some(v) = v {
         *acc.get_or_insert(0.0) += v;
     }
+}
+
+/// 有非 mapper 块设备时跳过 Device Mapper，避免和底层盘双计。
+/// 只有 `dm-*`（backing 是被排除的 loop/zram，或环境只暴露 mapper）时保留 mapper 速率。
+fn sum_disk_rates<'a, I>(devices: I) -> (Option<f64>, Option<f64>)
+where
+    I: IntoIterator<Item = (&'a str, Option<f64>, Option<f64>)>,
+{
+    let items: Vec<_> = devices.into_iter().collect();
+    let has_non_mapper = items.iter().any(|(ty, _, _)| *ty != "Device Mapper");
+    let mut rd = None;
+    let mut wr = None;
+    for (ty, r, w) in items {
+        if has_non_mapper && ty == "Device Mapper" {
+            continue;
+        }
+        add_rate(&mut rd, r);
+        add_rate(&mut wr, w);
+    }
+    (rd, wr)
 }
 
 pub fn format_mem(kb: u64) -> String {
@@ -264,6 +281,23 @@ mod tests {
         assert_eq!(tx, None);
         add_rate(&mut tx, Some(0.0));
         assert_eq!(tx, Some(0.0));
+    }
+
+    #[test]
+    fn disk_rates_skip_mapper_when_backing_present() {
+        let (rd, wr) = sum_disk_rates([
+            ("virtio", Some(100.0), Some(20.0)),
+            ("Device Mapper", Some(100.0), Some(20.0)),
+        ]);
+        assert_eq!(rd, Some(100.0));
+        assert_eq!(wr, Some(20.0));
+    }
+
+    #[test]
+    fn disk_rates_keep_mapper_when_only_dm() {
+        let (rd, wr) = sum_disk_rates([("Device Mapper", Some(50.0), None)]);
+        assert_eq!(rd, Some(50.0));
+        assert_eq!(wr, None);
     }
 
     #[test]
