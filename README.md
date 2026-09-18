@@ -2,26 +2,26 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第二十五轮** 补齐全局 cpuidle 驱动/governor（`none` 在虚拟机上合法）、`watchdog_cpumask` / `warn_limit`（`0` 不限）/ `kexec_load_limit_panic`（`-1` 不限）/ `hung_task_warnings`、TCP pacing_ca / orphan_retries / rfc1337、IPv6 `dad_transmits` 与 `bindv6only`，以及 iSCSI leftover class / ACPI container。不读 `cad_pid`，不 dump `cpu/hotplug/states`。
+**第二十六轮** 补齐 cpuidle `available_governors`、hung_task 检查间隔（`0` 沿用 timeout）、`kexec_load_limit_reboot`（`-1` 不限）、TCP ECN fallback / challenge ACK、以及 iSCSI flashnode / NVDIMM / dma_heap leftover class。不 dump `tcp_fastopen_key`，不读 `cad_pid`。
 
 | 模块 | 状态 |
 | --- | --- |
-| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs；CPU `offline`/`possible`/`present`/`kernel_max`/`enabled`/`nohz_full`/`modalias`/`cpuidle` 全局驱动；`ostype`；firmware device-tree `model` |
+| CPU / DMI / hwmon / NVMe / PCI / 块设备 / 软件 | 可读 sysfs/procfs；CPU `offline`/`possible`/`present`/`kernel_max`/`enabled`/`nohz_full`/`modalias`/`cpuidle` 全局驱动与 available governors；`ostype`；firmware device-tree `model` |
 | CPU 拓扑 / cpuidle / 漏洞 / 每核利用率 / 缓存 / SMT | siblings + `cpuidle` + `smt/{active,control}` + `isolated` + cpufreq policy |
 | GPU / 显示器 | DRM + 连接器 EDID（不调用 `edid-decode`/`xrandr`） |
 | virtio / KVM | virtio `modalias`；`/dev/kvm` + `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | PCIe 链路 / SR-IOV | `current_link_*` + MSI；`sriov_{num,total}vfs` |
 | IOMMU | `/sys/kernel/iommu_groups`，不调用 `find` |
-| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent/tcp_mem/udp_mem/orphans/dsack/autocorking/retries1/early_retrans/frto/min_tso/pacing_ss/pacing_ca/orphan_retries/rfc1337；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/busy_read/dev_weight/rps_sock_flow_entries；IPv6 accept_ra/autoconf/hop/accept_dad/addr_gen_mode/max_addresses/accept_ra_defrtr/router_solicitations/dad_transmits；ip6frag/ipfrag/ipfrag_time；conntrack 超时/buckets；tcp_max_tw_buckets；icmp_ratelimit；ip_default_ttl；ip_no_pmtu_disc；fib_multipath_hash_policy；netdev_tstamp_prequeue；message_cost/burst；ip_unprivileged_port_start；bindv6only；protocols；conntrack；net.core；rp_filter/use_tempaddr/accept_dad/addr_gen_mode/accept_ra_defrtr/router_solicitations/dad_transmits per-iface |
+| 网络 | `/sys/class/net` + getifaddrs；snmp/softnet/TcpExt；IPv6 snmp6/路由/rt6_stats 第 6 列；TCP knobs/rmem/notsent/tcp_mem/udp_mem/orphans/dsack/autocorking/retries1/early_retrans/frto/min_tso/pacing_ss/pacing_ca/orphan_retries/rfc1337/ecn_fallback/abort_overflow/no_metrics/challenge_ack；tcp6/udp6/raw/udplite/raw6；xfrm_stat；ptype；fib_triestat Leaves；igmp6 按接口去重；iptables 表名；busy_poll/busy_read/dev_weight/rps_sock_flow_entries；IPv6 accept_ra/autoconf/hop/accept_dad/addr_gen_mode/max_addresses/accept_ra_defrtr/router_solicitations/dad_transmits；ip6frag/ipfrag/ipfrag_time/ipfrag_max_dist；conntrack 超时/buckets；tcp_max_tw_buckets；icmp_ratelimit；icmp_echo_ignore_all；ip_default_ttl；ip_no_pmtu_disc；ip_nonlocal_bind；ip_dynaddr；fib_multipath_hash_policy；netdev_tstamp_prequeue；message_cost/burst；ip_unprivileged_port_start；bindv6only；protocols；conntrack；net.core；rp_filter/use_tempaddr/accept_dad/addr_gen_mode/accept_ra_defrtr/router_solicitations/dad_transmits per-iface |
 | USB / 输入 / NUMA | sysfs / proc / nodeN |
 | 内存 | meminfo + DirectMap + THP defrag + hugepages + zoneinfo + vmstat + KSM + zswap + memory_tier |
 | zram | `/sys/block/zramN`（不调用 zramctl）；常规块设备表仍跳过 zram |
 | EDAC / RAPL / 电源 / 睡眠 / 声卡 | power_supply；`/sys/power`；RAPL；无节点时说明 |
 | 固件 | EFI / Secure Boot / ACPI 表名 / pm_profile / TPM / hwrng / firmware timeout / memmap |
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
-| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc、dentry-state、inode-state、pty、io_uring、dirty_bytes/overcommit_kbytes、pipe-user-pages、core_pipe_limit/printk_devkmsg/delayacct/acct、zone_reclaim/mount-max、RNG write_wakeup/urandom_reseed、memfd_noexec、soft_watchdog、watchdog_cpumask、warn_limit、kexec_load_limit_panic、hung_task_warnings、split_lock_mitigate、key-users、seccomp actions_avail、cgroup v1 enabled |
+| PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM、printk/cfs/uffd、bpf_jit/binfmt_misc、dentry-state、inode-state、pty、io_uring、dirty_bytes/overcommit_kbytes、pipe-user-pages、core_pipe_limit/printk_devkmsg/delayacct/acct、zone_reclaim/mount-max、RNG write_wakeup/urandom_reseed、memfd_noexec、soft_watchdog、watchdog_cpumask、warn_limit、kexec_load_limit_panic/reboot、hung_task_warnings/check_count/interval、max_rcu_stall_to_panic、panic_print、panic_on_io_nmi、split_lock_mitigate、key-users、seccomp actions_avail、cgroup v1 enabled |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi；scsi_generic/wwan/ppp/phy；remoteproc/extcon/tee/mdio_bus；spi_master/i2c-dev/nvme-subsystem/w1；macvtap/tun/nvme-generic/nvme-fabrics；iscsi_endpoint/iface/connection；bus/container；wakeup 源计数 |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi；scsi_generic/wwan/ppp/phy；remoteproc/extcon/tee/mdio_bus；spi_master/i2c-dev/nvme-subsystem/w1；macvtap/tun/nvme-generic/nvme-fabrics；iscsi_endpoint/iface/connection/flashnode；bus/container；nd/dma_heap；wakeup 源计数 |
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |

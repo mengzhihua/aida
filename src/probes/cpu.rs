@@ -42,6 +42,7 @@ pub struct CpuInfo {
     /// 全局 cpuidle 驱动；`none` 在虚拟机上常见，不是失败。
     pub cpuidle_driver: Sample<String>,
     pub cpuidle_governor: Sample<String>,
+    pub cpuidle_available_governors: Sample<String>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
@@ -269,6 +270,8 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_driver"));
     let cpuidle_governor =
         access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_governor"));
+    let cpuidle_available_governors =
+        access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/available_governors"));
     if smt_control
         .value
         .as_deref()
@@ -305,6 +308,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         modalias,
         cpuidle_driver,
         cpuidle_governor,
+        cpuidle_available_governors,
         logical,
         caches,
         utilization_pct,
@@ -663,9 +667,18 @@ flags\t\t: fpu hypervisor sse
             "menu\n",
         )
         .unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/available_governors"),
+            "ladder menu haltpoll\n",
+        )
+        .unwrap();
         let info = collect_with_util(&ctx, None);
         assert_eq!(info.cpuidle_driver.value.as_deref(), Some("none"));
         assert_eq!(info.cpuidle_governor.value.as_deref(), Some("menu"));
+        assert_eq!(
+            info.cpuidle_available_governors.value.as_deref(),
+            Some("ladder menu haltpoll")
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

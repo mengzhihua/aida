@@ -131,6 +131,15 @@ pub struct NetReport {
     pub ipv6_dad_transmits_dev: Vec<String>,
     /// 与 `message_cost` 成对；`cost=0` 时 burst 不生效。
     pub message_burst: Sample<u64>,
+    pub tcp_ecn_fallback: Sample<String>,
+    pub ip_nonlocal_bind: Sample<String>,
+    pub icmp_echo_ignore_all: Sample<String>,
+    pub ipfrag_max_dist: Sample<u64>,
+    pub tcp_abort_on_overflow: Sample<String>,
+    pub tcp_no_metrics_save: Sample<String>,
+    /// 默认 `2147483647`（INT_MAX）表示不额外收紧。
+    pub tcp_challenge_ack_limit: Sample<u64>,
+    pub ip_dynaddr: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -451,6 +460,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let dad_all = ipv6_dad_transmits.value.map(|v| v.to_string());
     let ipv6_dad_transmits_dev = conf_dev_diffs(ctx, "ipv6", "dad_transmits", dad_all.as_deref());
     let message_burst = access::read_u64(ctx.proc_path("sys/net/core/message_burst"));
+    let tcp_ecn_fallback = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_ecn_fallback"));
+    let ip_nonlocal_bind = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_nonlocal_bind"));
+    let icmp_echo_ignore_all =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_echo_ignore_all"));
+    let ipfrag_max_dist = access::read_u64(ctx.proc_path("sys/net/ipv4/ipfrag_max_dist"));
+    let tcp_abort_on_overflow =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_abort_on_overflow"));
+    let tcp_no_metrics_save =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_no_metrics_save"));
+    let tcp_challenge_ack_limit =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_challenge_ack_limit"));
+    let ip_dynaddr = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_dynaddr"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -572,6 +593,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_dad_transmits,
                 ipv6_dad_transmits_dev,
                 message_burst,
+                tcp_ecn_fallback,
+                ip_nonlocal_bind,
+                icmp_echo_ignore_all,
+                ipfrag_max_dist,
+                tcp_abort_on_overflow,
+                tcp_no_metrics_save,
+                tcp_challenge_ack_limit,
+                ip_dynaddr,
                 notes,
             };
         }
@@ -801,6 +830,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_dad_transmits,
         ipv6_dad_transmits_dev,
         message_burst,
+        tcp_ecn_fallback,
+        ip_nonlocal_bind,
+        icmp_echo_ignore_all,
+        ipfrag_max_dist,
+        tcp_abort_on_overflow,
+        tcp_no_metrics_save,
+        tcp_challenge_ack_limit,
+        ip_dynaddr,
         notes,
     }
 }
@@ -1606,6 +1643,18 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv4/ipfrag_time"), "30\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/all/dad_transmits"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/core/message_burst"), "10\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_ecn_fallback"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_nonlocal_bind"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_echo_ignore_all"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ipfrag_max_dist"), "64\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_abort_on_overflow"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_no_metrics_save"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_challenge_ack_limit"),
+            "2147483647\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_dynaddr"), "0\n").unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -1704,6 +1753,14 @@ mod tests {
         assert_eq!(r.ipfrag_time.value, Some(30));
         assert_eq!(r.ipv6_dad_transmits.value, Some(1));
         assert_eq!(r.message_burst.value, Some(10));
+        assert_eq!(r.tcp_ecn_fallback.value.as_deref(), Some("1"));
+        assert_eq!(r.ip_nonlocal_bind.value.as_deref(), Some("0"));
+        assert_eq!(r.icmp_echo_ignore_all.value.as_deref(), Some("0"));
+        assert_eq!(r.ipfrag_max_dist.value, Some(64));
+        assert_eq!(r.tcp_abort_on_overflow.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_no_metrics_save.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_challenge_ack_limit.value, Some(2_147_483_647));
+        assert_eq!(r.ip_dynaddr.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));

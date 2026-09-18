@@ -86,9 +86,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "cpuidle",
                 format!(
-                    "driver {} governor {}",
+                    "driver {} governor {} available {}",
                     snap.cpu.cpuidle_driver.display(),
-                    snap.cpu.cpuidle_governor.display()
+                    snap.cpu.cpuidle_governor.display(),
+                    snap.cpu.cpuidle_available_governors.display()
                 ),
             ),
             ("KVM", snap.kvm.device.display()),
@@ -752,6 +753,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("iscsi_iface", &snap.buses.iscsi_iface),
         ("iscsi_connection", &snap.buses.iscsi_connection),
         ("container", &snap.buses.container),
+        ("iscsi_flashnode", &snap.buses.iscsi_flashnode),
+        ("nd", &snap.buses.nd),
+        ("dma_heap", &snap.buses.dma_heap),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1132,13 +1136,24 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.ip6frag_low_thresh.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">orphan_retries {} rfc1337 {} unpriv_port {} bindv6only {} ipfrag_time {} dad_tx {}</p>",
+        "<p class=\"muted\">orphan_retries {} rfc1337 {} unpriv_port {} bindv6only {} ipfrag_time {} dad_tx {} ecn_fb {} nonlocal {} echo_ignore_all {} ipfrag_max_dist {} abort_ovf {} no_metrics {} challenge_ack {} dynaddr {}</p>",
         snap.net.tcp_orphan_retries.display(),
         snap.net.tcp_rfc1337.display(),
         snap.net.ip_unprivileged_port_start.display(),
         snap.net.bindv6only.display(),
         snap.net.ipfrag_time.display(),
-        snap.net.ipv6_dad_transmits.display()
+        snap.net.ipv6_dad_transmits.display(),
+        snap.net.tcp_ecn_fallback.display(),
+        snap.net.ip_nonlocal_bind.display(),
+        snap.net.icmp_echo_ignore_all.display(),
+        snap.net.ipfrag_max_dist.display(),
+        snap.net.tcp_abort_on_overflow.display(),
+        snap.net.tcp_no_metrics_save.display(),
+        match snap.net.tcp_challenge_ack_limit.value {
+            Some(2_147_483_647) => "2147483647 不限".into(),
+            _ => snap.net.tcp_challenge_ack_limit.display(),
+        },
+        snap.net.ip_dynaddr.display()
     ));
     html.push_str(&format!(
         "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
@@ -1739,7 +1754,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {} core_pipe {} printk_devkmsg {} delayacct {} acct {} mount_max {} rng_wake {} urandom_reseed {} soft_wd {} wd_mask {} rcu_stall {} warn {} kexec_limit {} split_lock {} hung_warn {}",
+                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {} core_pipe {} printk_devkmsg {} delayacct {} acct {} mount_max {} rng_wake {} urandom_reseed {} soft_wd {} wd_mask {} rcu_stall {} warn {} kexec_limit {} split_lock {} hung_warn {} hung_check {} hung_interval {} kexec_reboot {} rcu_stall_max {} panic_print {} io_nmi {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
                     snap.sysctl.watchdog_thresh.display(),
@@ -1767,7 +1782,22 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                         _ => snap.sysctl.kexec_load_limit_panic.display(),
                     },
                     snap.sysctl.split_lock_mitigate.display(),
-                    snap.sysctl.hung_task_warnings.display()
+                    snap.sysctl.hung_task_warnings.display(),
+                    snap.sysctl.hung_task_check_count.display(),
+                    match snap.sysctl.hung_task_check_interval_secs.value {
+                        Some(0) => "0 用 timeout".into(),
+                        _ => snap.sysctl.hung_task_check_interval_secs.display(),
+                    },
+                    match snap.sysctl.kexec_load_limit_reboot.value {
+                        Some(-1) => "-1 不限".into(),
+                        _ => snap.sysctl.kexec_load_limit_reboot.display(),
+                    },
+                    match snap.sysctl.max_rcu_stall_to_panic.value {
+                        Some(0) => "0 不升级".into(),
+                        _ => snap.sysctl.max_rcu_stall_to_panic.display(),
+                    },
+                    snap.sysctl.panic_print.display(),
+                    snap.sysctl.panic_on_io_nmi.display()
                 ),
             ),
             (
