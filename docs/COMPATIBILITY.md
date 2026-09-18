@@ -193,9 +193,16 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 171. **`tcp_challenge_ack_limit=2147483647`（INT_MAX）是默认上限，表示不额外收紧。** 不要 dump `tcp_fastopen_key`。
 172. **空的 iscsi_flashnode / nd / dma_heap 表示没有对应硬件。** flashnode 先看 `class/iscsi_flashnode`，没有再看 `bus/iscsi_flashnode/devices`（旧内核仍是 bus）。两边都缺失才写 leftover note；`PermissionDenied` 仍写 note。不 dump `serial-base` 设备名。
 173. **GUI `refresh_live` 必须替换整份 CPU 报告。** 只写回 `logical` 会让 cpuidle governor 停留在启动值。
-174. **空的 cxl / devfreq / fpga / gnss 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+174. **空的 cxl / devfreq / fpga / gnss 表示没有对应硬件。** CXL 先看 `bus/cxl/devices`，没有再看 `class/cxl`。FPGA 分别看 `fpga_manager` / `fpga_bridge` / `fpga_region`（没有统一的 `class/fpga`），三个 class 都缺失才记 leftover。`PermissionDenied` 仍写 note。
 175. **`ndisc_notify` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 176. **不要读 `compact_memory`。** 那是一次性触发器，不是状态。
+177. **空的 rpmsg / devcoredump 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+178. **`accept_ra_pinfo` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+179. **`print-fatal-signals` 路径带连字符。** 不要写成 `print_fatal_signals`。
+180. **`bpf_stats_enabled=0` 表示不采集 BPF 运行统计。** 不是采集失败。
+181. **`core_sort_vma=0` 表示 core dump VMA 按插入顺序。** `1` 按地址排序。
+182. **`min_slab_ratio` / `min_unmapped_ratio` 是 zone reclaim 百分比阈值。** 不是采集失败。
+183. **GUI `refresh_live` 必须更新 `buses.devcoredump`。** 这是设备崩溃后才出现、读完或超时即消失的瞬时 class；不要为此重扫整份 buses。不更新会让界面和后续导出停在启动清单。
 
 ## 测试方案
 

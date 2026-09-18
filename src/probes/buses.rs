@@ -58,6 +58,9 @@ pub struct BusesReport {
     pub devfreq: Vec<String>,
     pub fpga: Vec<String>,
     pub gnss: Vec<String>,
+    pub rpmsg: Vec<String>,
+    /// 设备崩溃转储是瞬时节点；GUI `refresh_live` 会单独更新这一项。
+    pub devcoredump: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -410,8 +413,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let cxl = list_optional_names(
-        ctx.sys_path("class/cxl"),
+    let cxl = list_alt_dirs(
+        ctx,
+        "bus/cxl/devices",
+        "class/cxl",
         8,
         "cxl",
         &mut notes,
@@ -424,8 +429,13 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let fpga = list_optional_names(
-        ctx.sys_path("class/fpga"),
+    let fpga = list_prefixed_classes(
+        ctx,
+        &[
+            ("class/fpga_manager", "fpga_manager"),
+            ("class/fpga_bridge", "fpga_bridge"),
+            ("class/fpga_region", "fpga_region"),
+        ],
         8,
         "fpga",
         &mut notes,
@@ -435,6 +445,20 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         ctx.sys_path("class/gnss"),
         8,
         "gnss",
+        &mut notes,
+        &mut missing,
+    );
+    let rpmsg = list_optional_names(
+        ctx.sys_path("class/rpmsg"),
+        8,
+        "rpmsg",
+        &mut notes,
+        &mut missing,
+    );
+    let devcoredump = list_optional_names(
+        ctx.sys_path("class/devcoredump"),
+        8,
+        "devcoredump",
         &mut notes,
         &mut missing,
     );
@@ -494,7 +518,55 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         devfreq,
         fpga,
         gnss,
+        rpmsg,
+        devcoredump,
         notes,
+    }
+}
+
+/// 只刷新瞬时的 `class/devcoredump`，不重扫整份 buses。
+/// 权限/leftover note 同步改写，避免 GUI 一直显示启动时的空列表或已消失的 `devcdN`。
+pub fn refresh_devcoredump(report: &mut BusesReport, ctx: &ProbeCtx) {
+    let mut extra = Vec::new();
+    let mut missing = Vec::new();
+    report.devcoredump = list_optional_names(
+        ctx.sys_path("class/devcoredump"),
+        8,
+        "devcoredump",
+        &mut extra,
+        &mut missing,
+    );
+    report
+        .notes
+        .retain(|n| leftover_note(n).is_some() || !n.contains("devcoredump"));
+    set_leftover_label(&mut report.notes, "devcoredump", !missing.is_empty());
+    report.notes.extend(extra);
+}
+
+const LEFTOVER_SUFFIX: &str = "（云主机/无对应硬件时常见）。";
+
+fn leftover_note(n: &str) -> Option<&str> {
+    n.strip_prefix("无 ")?.strip_suffix(LEFTOVER_SUFFIX)
+}
+
+fn set_leftover_label(notes: &mut Vec<String>, label: &str, missing: bool) {
+    if let Some(idx) = notes.iter().position(|n| leftover_note(n).is_some()) {
+        let inner = leftover_note(&notes[idx]).unwrap_or("").to_string();
+        let mut labels: Vec<String> = inner
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != label)
+            .map(str::to_string)
+            .collect();
+        if missing {
+            labels.push(label.to_string());
+        }
+        if labels.is_empty() {
+            notes.remove(idx);
+        } else {
+            notes[idx] = format!("无 {}{LEFTOVER_SUFFIX}", labels.join("/"));
+        }
+    } else if missing {
+        notes.push(format!("无 {label}{LEFTOVER_SUFFIX}"));
     }
 }
 
@@ -533,7 +605,20 @@ fn list_class_or_bus(
     notes: &mut Vec<String>,
     missing: &mut Vec<&'static str>,
 ) -> Vec<String> {
-    match dir_list(ctx.sys_path(class_rel)) {
+    list_alt_dirs(ctx, class_rel, bus_rel, cap, label, notes, missing)
+}
+
+/// 先试 `first_rel`，NotFound 再试 `second_rel`。两边都缺失才记 leftover。
+fn list_alt_dirs(
+    ctx: &ProbeCtx,
+    first_rel: &str,
+    second_rel: &str,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    match dir_list(ctx.sys_path(first_rel)) {
         DirList::Names(mut n) => {
             n.sort();
             n.truncate(cap);
@@ -545,7 +630,7 @@ fn list_class_or_bus(
         }
         DirList::Missing => {}
     }
-    match dir_list(ctx.sys_path(bus_rel)) {
+    match dir_list(ctx.sys_path(second_rel)) {
         DirList::Names(mut n) => {
             n.sort();
             n.truncate(cap);
@@ -560,6 +645,41 @@ fn list_class_or_bus(
             Vec::new()
         }
     }
+}
+
+/// FPGA 没有统一的 `class/fpga`。分别看 manager / bridge / region，名前加 class 前缀。
+/// 三个 class 都缺失才记 leftover；权限不足写 note，不要当成缺失。
+fn list_prefixed_classes(
+    ctx: &ProbeCtx,
+    classes: &[(&str, &str)],
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut saw_any = false;
+    for (rel, prefix) in classes {
+        match dir_list(ctx.sys_path(rel)) {
+            DirList::Names(n) => {
+                saw_any = true;
+                for name in n {
+                    out.push(format!("{prefix}/{name}"));
+                }
+            }
+            DirList::Failed(l) => {
+                saw_any = true;
+                notes.push(l);
+            }
+            DirList::Missing => {}
+        }
+    }
+    out.sort();
+    out.truncate(cap);
+    if !saw_any {
+        missing.push(label);
+    }
+    out
 }
 
 /// TUN / nvme-fabrics 注册为 misc 设备，没有独立 `/sys/class/{tun,nvme-fabrics}`。
@@ -1057,10 +1177,14 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/iscsi_flashnode/devices/flashnode0")).unwrap();
         fs::create_dir_all(root.join("sys/class/nd/nmem0")).unwrap();
         fs::create_dir_all(root.join("sys/class/dma_heap/system")).unwrap();
-        fs::create_dir_all(root.join("sys/class/cxl/mem0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/cxl/devices/mem0")).unwrap();
         fs::create_dir_all(root.join("sys/class/devfreq/devfreq0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/fpga/fpga0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/fpga_manager/fpga0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/fpga_bridge/br0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/fpga_region/region0")).unwrap();
         fs::create_dir_all(root.join("sys/class/gnss/gnss0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/rpmsg/rpmsg0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/devcoredump/devcd0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1106,8 +1230,17 @@ mod tests {
         assert_eq!(r.dma_heap, vec!["system".to_string()]);
         assert_eq!(r.cxl, vec!["mem0".to_string()]);
         assert_eq!(r.devfreq, vec!["devfreq0".to_string()]);
-        assert_eq!(r.fpga, vec!["fpga0".to_string()]);
+        assert_eq!(
+            r.fpga,
+            vec![
+                "fpga_bridge/br0".to_string(),
+                "fpga_manager/fpga0".to_string(),
+                "fpga_region/region0".to_string(),
+            ]
+        );
         assert_eq!(r.gnss, vec!["gnss0".to_string()]);
+        assert_eq!(r.rpmsg, vec!["rpmsg0".to_string()]);
+        assert_eq!(r.devcoredump, vec!["devcd0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -1246,6 +1379,95 @@ mod tests {
         assert!(
             r.notes.iter().all(|n| !n.contains("iscsi_flashnode")),
             "class flashnode must not be reported missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cxl_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-cxl-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/cxl/devices/mem0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.cxl, vec!["mem0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| !n.contains("cxl")),
+            "bus cxl must not be reported missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fpga_from_framework_classes_without_class_fpga() {
+        let root = std::env::temp_dir().join(format!("aida-fpga-class-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/fpga_manager/fpga0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/fpga_bridge/br0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(
+            r.fpga,
+            vec![
+                "fpga_bridge/br0".to_string(),
+                "fpga_manager/fpga0".to_string(),
+            ]
+        );
+        assert!(
+            r.notes.iter().all(|n| !n.contains("fpga")),
+            "fpga_manager/bridge must not be reported missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_devcoredump_picks_up_and_drops_nodes() {
+        let root = std::env::temp_dir().join(format!("aida-devcd-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        assert!(r.devcoredump.is_empty());
+        assert!(
+            r.notes.iter().any(|n| leftover_note(n)
+                .is_some_and(|inner| inner.split('/').any(|s| s == "devcoredump"))),
+            "missing class should be leftover: {:?}",
+            r.notes
+        );
+        fs::create_dir_all(root.join("sys/class/devcoredump/devcd0")).unwrap();
+        refresh_devcoredump(&mut r, &ctx);
+        assert_eq!(r.devcoredump, vec!["devcd0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n)
+                .is_none_or(|inner| inner.split('/').all(|s| s != "devcoredump"))),
+            "present class must not stay leftover: {:?}",
+            r.notes
+        );
+        fs::remove_dir_all(root.join("sys/class/devcoredump")).unwrap();
+        refresh_devcoredump(&mut r, &ctx);
+        assert!(r.devcoredump.is_empty());
+        assert!(
+            r.notes.iter().any(|n| leftover_note(n)
+                .is_some_and(|inner| inner.split('/').any(|s| s == "devcoredump"))),
+            "removed class should return to leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

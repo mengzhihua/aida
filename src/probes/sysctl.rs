@@ -161,6 +161,12 @@ pub struct SysctlReport {
     pub page_lock_unfairness: Sample<u64>,
     pub sched_deadline_period_max_us: Sample<u64>,
     pub sched_deadline_period_min_us: Sample<u64>,
+    pub hardlockup_all_cpu_backtrace: Sample<String>,
+    pub print_fatal_signals: Sample<String>,
+    pub bpf_stats_enabled: Sample<String>,
+    pub core_sort_vma: Sample<String>,
+    pub min_slab_ratio: Sample<u64>,
+    pub min_unmapped_ratio: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -390,6 +396,14 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         sched_deadline_period_min_us: access::read_u64(
             ctx.proc_path("sys/kernel/sched_deadline_period_min_us"),
         ),
+        hardlockup_all_cpu_backtrace: access::read_trimmed(
+            ctx.proc_path("sys/kernel/hardlockup_all_cpu_backtrace"),
+        ),
+        print_fatal_signals: access::read_trimmed(ctx.proc_path("sys/kernel/print-fatal-signals")),
+        bpf_stats_enabled: access::read_trimmed(ctx.proc_path("sys/kernel/bpf_stats_enabled")),
+        core_sort_vma: access::read_trimmed(ctx.proc_path("sys/kernel/core_sort_vma")),
+        min_slab_ratio: access::read_u64(ctx.proc_path("sys/vm/min_slab_ratio")),
+        min_unmapped_ratio: access::read_u64(ctx.proc_path("sys/vm/min_unmapped_ratio")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -697,6 +711,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/kernel/hardlockup_all_cpu_backtrace"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/kernel/print-fatal-signals"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/bpf_stats_enabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/core_sort_vma"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/min_slab_ratio"), "5\n").unwrap();
+        fs::write(root.join("proc/sys/vm/min_unmapped_ratio"), "1\n").unwrap();
+        fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
         )
@@ -812,6 +836,12 @@ mod tests {
         assert_eq!(r.page_lock_unfairness.value, Some(5));
         assert_eq!(r.sched_deadline_period_max_us.value, Some(4_194_304));
         assert_eq!(r.sched_deadline_period_min_us.value, Some(100));
+        assert_eq!(r.hardlockup_all_cpu_backtrace.value.as_deref(), Some("0"));
+        assert_eq!(r.print_fatal_signals.value.as_deref(), Some("1"));
+        assert_eq!(r.bpf_stats_enabled.value.as_deref(), Some("0"));
+        assert_eq!(r.core_sort_vma.value.as_deref(), Some("0"));
+        assert_eq!(r.min_slab_ratio.value, Some(5));
+        assert_eq!(r.min_unmapped_ratio.value, Some(1));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
