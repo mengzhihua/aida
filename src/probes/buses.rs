@@ -47,6 +47,10 @@ pub struct BusesReport {
     pub tun: Vec<String>,
     pub nvme_generic: Vec<String>,
     pub nvme_fabrics: Vec<String>,
+    pub iscsi_endpoint: Vec<String>,
+    pub iscsi_iface: Vec<String>,
+    pub iscsi_connection: Vec<String>,
+    pub container: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -354,6 +358,34 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let iscsi_endpoint = list_optional_names(
+        ctx.sys_path("class/iscsi_endpoint"),
+        8,
+        "iscsi_endpoint",
+        &mut notes,
+        &mut missing,
+    );
+    let iscsi_iface = list_optional_names(
+        ctx.sys_path("class/iscsi_iface"),
+        8,
+        "iscsi_iface",
+        &mut notes,
+        &mut missing,
+    );
+    let iscsi_connection = list_optional_names(
+        ctx.sys_path("class/iscsi_connection"),
+        8,
+        "iscsi_connection",
+        &mut notes,
+        &mut missing,
+    );
+    let container = list_optional_names(
+        ctx.sys_path("bus/container/devices"),
+        8,
+        "container",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -399,6 +431,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         tun,
         nvme_generic,
         nvme_fabrics,
+        iscsi_endpoint,
+        iscsi_iface,
+        iscsi_connection,
+        container,
         notes,
     }
 }
@@ -915,6 +951,10 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/macvtap/tap0")).unwrap();
         fs::create_dir_all(root.join("sys/class/nvme-generic/ng0n1")).unwrap();
         fs::create_dir_all(root.join("sys/class/misc/tun")).unwrap();
+        fs::create_dir_all(root.join("sys/class/iscsi_endpoint/ep0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/iscsi_iface/iface0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/iscsi_connection/connection0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/container/devices/ACPI0004:00")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -951,6 +991,10 @@ mod tests {
         assert_eq!(r.nvme_generic, vec!["ng0n1".to_string()]);
         assert_eq!(r.tun, vec!["tun".to_string()]);
         assert!(r.nvme_fabrics.is_empty());
+        assert_eq!(r.iscsi_endpoint, vec!["ep0".to_string()]);
+        assert_eq!(r.iscsi_iface, vec!["iface0".to_string()]);
+        assert_eq!(r.iscsi_connection, vec!["connection0".to_string()]);
+        assert_eq!(r.container, vec!["ACPI0004:00".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

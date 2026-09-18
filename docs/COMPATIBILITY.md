@@ -180,6 +180,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 158. **空的 macvtap / nvme-generic 表示没有对应硬件。** `tun` / `nvme-fabrics` 是 misc 设备（`class/misc/tun`、`/dev/net/tun`），不是独立 class；未加载才写 note。`PermissionDenied` 仍写 note，不要当成缺失。
 159. **`cpu/modalias` 可能很长。** JSON 保留全文，界面与 HTML 截断前缀。
 160. **`message_cost=0` 表示关闭内核网络 printk 限速。** 不是采集失败。
+161. **`cpuidle/current_driver=none` 在虚拟机上合法。** 不是采集失败；同时读 `current_governor`。
+162. **`warn_limit=0` 表示不限制 warn 次数。**
+163. **`kexec_load_limit_panic` 是有符号 i64。** `-1` 表示 panic 路径不限制 kexec load。
+164. **`hung_task_warnings` 是有符号 i64。** 不要当无符号解析。
+165. **`split_lock_mitigate` 在非 x86 上可能不存在。** `NotFound` 不是采集失败。
+166. **空的 iscsi_endpoint / iscsi_iface / iscsi_connection / bus/container 表示没有对应硬件。** `PermissionDenied` 仍写 note，不要当成缺失。
+167. **`dad_transmits` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

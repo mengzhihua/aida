@@ -198,6 +198,10 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"ipv6_router_solicitations\""));
     assert!(json.contains("\"macvtap\""));
     assert!(json.contains("\"modalias\""));
+    assert!(json.contains("\"cpuidle_driver\""));
+    assert!(json.contains("\"kexec_load_limit_panic\""));
+    assert!(json.contains("\"ip_unprivileged_port_start\""));
+    assert!(json.contains("\"iscsi_endpoint\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -305,6 +309,30 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.cpu.modalias.access != aida::access::AccessKind::Error,
         "cpu modalias 不应是读取失败（无该文件时为 NotFound）"
+    );
+    assert!(
+        snap.cpu.cpuidle_driver.access != aida::access::AccessKind::Error,
+        "cpuidle current_driver 不应是读取失败（none 在虚拟机上合法）"
+    );
+    assert!(
+        snap.sysctl.kexec_load_limit_panic.access != aida::access::AccessKind::Error,
+        "kexec_load_limit_panic 不应是读取失败（-1 表示不限）"
+    );
+    assert!(
+        snap.sysctl.warn_limit.access != aida::access::AccessKind::Error,
+        "warn_limit 不应是读取失败（0 表示不限）"
+    );
+    assert!(
+        snap.sysctl.split_lock_mitigate.access != aida::access::AccessKind::Error,
+        "split_lock_mitigate 不应是读取失败（非 x86 可为 NotFound）"
+    );
+    assert!(
+        snap.net.ip_unprivileged_port_start.access != aida::access::AccessKind::Error,
+        "ip_unprivileged_port_start 不应是读取失败"
+    );
+    assert!(
+        snap.net.ipv6_dad_transmits.access != aida::access::AccessKind::Error,
+        "dad_transmits 不应是读取失败"
     );
     assert!(
         !snap.buses.tun.is_empty()
@@ -417,6 +445,12 @@ fn live_snapshot_json_and_html() {
             || html.contains("rng_wake")
             || html.contains("macvtap")
             || html.contains("modalias")
+    );
+    assert!(
+        html.contains("cpuidle")
+            || html.contains("kexec_limit")
+            || html.contains("unpriv_port")
+            || html.contains("iscsi_endpoint")
     );
     assert!(!html.contains("<script"));
 }

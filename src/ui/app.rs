@@ -585,6 +585,15 @@ impl AidaApp {
             "modalias",
             &crate::probes::cpu::display_modalias(&self.snap.cpu.modalias),
         );
+        kv(
+            ui,
+            "cpuidle",
+            &format!(
+                "driver {}  governor {}",
+                self.snap.cpu.cpuidle_driver.display(),
+                self.snap.cpu.cpuidle_governor.display()
+            ),
+        );
         if self.snap.cpu.isolated.access == AccessKind::Ok {
             kv(
                 ui,
@@ -1989,13 +1998,28 @@ impl AidaApp {
             ui,
             "tcp tso / frto",
             &format!(
-                "frto {}  invalid_ratelimit {}  min_tso {}  pacing_ss {}  tstamp_prequeue {}  message_cost {}",
+                "frto {}  invalid_ratelimit {}  min_tso {}  pacing_ss {}  pacing_ca {}  tstamp_prequeue {}  message_cost {}  burst {}",
                 self.snap.net.tcp_frto.display(),
                 self.snap.net.tcp_invalid_ratelimit.display(),
                 self.snap.net.tcp_min_tso_segs.display(),
                 self.snap.net.tcp_pacing_ss_ratio.display(),
+                self.snap.net.tcp_pacing_ca_ratio.display(),
                 self.snap.net.netdev_tstamp_prequeue.display(),
-                self.snap.net.message_cost.display()
+                self.snap.net.message_cost.display(),
+                self.snap.net.message_burst.display()
+            ),
+        );
+        kv(
+            ui,
+            "tcp extra",
+            &format!(
+                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}",
+                self.snap.net.tcp_orphan_retries.display(),
+                self.snap.net.tcp_rfc1337.display(),
+                self.snap.net.ip_unprivileged_port_start.display(),
+                self.snap.net.bindv6only.display(),
+                self.snap.net.ipfrag_time.display(),
+                self.snap.net.ipv6_dad_transmits.display()
             ),
         );
         kv(
@@ -2085,6 +2109,13 @@ impl AidaApp {
                 ui,
                 "router_solicitations iface",
                 &self.snap.net.ipv6_router_solicitations_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_dad_transmits_dev.is_empty() {
+            kv(
+                ui,
+                "dad_transmits iface",
+                &self.snap.net.ipv6_dad_transmits_dev.join("  "),
             );
         }
         kv(
@@ -2648,6 +2679,10 @@ impl AidaApp {
             ("tun", &self.snap.buses.tun),
             ("nvme-generic", &self.snap.buses.nvme_generic),
             ("nvme-fabrics", &self.snap.buses.nvme_fabrics),
+            ("iscsi_endpoint", &self.snap.buses.iscsi_endpoint),
+            ("iscsi_iface", &self.snap.buses.iscsi_iface),
+            ("iscsi_connection", &self.snap.buses.iscsi_connection),
+            ("container", &self.snap.buses.container),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -2832,7 +2867,7 @@ impl AidaApp {
             ui,
             "nmi/watchdog",
             &format!(
-                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}",
+                "nmi {}  wd {}  thresh {}  unknown_nmi_panic {}  file-max {}  panic {}  sysrq {}  min_free {}  vfs_cache {}  hung {}  oops_panic {}  core_pipe {}  printk_devkmsg {}  delayacct {}  acct {}  mount_max {}  rng_wake {}  urandom_reseed {}  soft_wd {}  wd_mask {}  rcu_stall {}  warn {}  kexec_limit {}  split_lock {}  hung_warn {}",
                 self.snap.sysctl.nmi_watchdog.display(),
                 self.snap.sysctl.watchdog.display(),
                 self.snap.sysctl.watchdog_thresh.display(),
@@ -2851,7 +2886,19 @@ impl AidaApp {
                 self.snap.sysctl.mount_max.display(),
                 self.snap.sysctl.write_wakeup_threshold.display(),
                 self.snap.sysctl.urandom_min_reseed_secs.display(),
-                self.snap.sysctl.soft_watchdog.display()
+                self.snap.sysctl.soft_watchdog.display(),
+                self.snap.sysctl.watchdog_cpumask.display(),
+                self.snap.sysctl.panic_on_rcu_stall.display(),
+                match self.snap.sysctl.warn_limit.value {
+                    Some(0) => "0 不限".into(),
+                    _ => self.snap.sysctl.warn_limit.display(),
+                },
+                match self.snap.sysctl.kexec_load_limit_panic.value {
+                    Some(-1) => "-1 不限".into(),
+                    _ => self.snap.sysctl.kexec_load_limit_panic.display(),
+                },
+                self.snap.sysctl.split_lock_mitigate.display(),
+                self.snap.sysctl.hung_task_warnings.display()
             ),
         );
         kv(

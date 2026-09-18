@@ -135,6 +135,15 @@ pub struct SysctlReport {
     pub memfd_noexec: Sample<String>,
     pub dirtytime_expire_seconds: Sample<u64>,
     pub soft_watchdog: Sample<String>,
+    pub watchdog_cpumask: Sample<String>,
+    pub panic_on_rcu_stall: Sample<String>,
+    /// `0` 表示不限制 warn 次数。
+    pub warn_limit: Sample<u64>,
+    /// `-1` 表示不限制 kexec load（panic 路径）。
+    pub kexec_load_limit_panic: Sample<i64>,
+    pub split_lock_mitigate: Sample<String>,
+    /// 可为负；不要当无符号解析。
+    pub hung_task_warnings: Sample<i64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -325,6 +334,14 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
             ctx.proc_path("sys/vm/dirtytime_expire_seconds"),
         ),
         soft_watchdog: access::read_trimmed(ctx.proc_path("sys/kernel/soft_watchdog")),
+        watchdog_cpumask: access::read_trimmed(ctx.proc_path("sys/kernel/watchdog_cpumask")),
+        panic_on_rcu_stall: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_rcu_stall")),
+        warn_limit: access::read_u64(ctx.proc_path("sys/kernel/warn_limit")),
+        kexec_load_limit_panic: access::read_i64(
+            ctx.proc_path("sys/kernel/kexec_load_limit_panic"),
+        ),
+        split_lock_mitigate: access::read_trimmed(ctx.proc_path("sys/kernel/split_lock_mitigate")),
+        hung_task_warnings: access::read_i64(ctx.proc_path("sys/kernel/hung_task_warnings")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -592,6 +609,12 @@ mod tests {
         fs::write(root.join("proc/sys/vm/memfd_noexec"), "0\n").unwrap();
         fs::write(root.join("proc/sys/vm/dirtytime_expire_seconds"), "43200\n").unwrap();
         fs::write(root.join("proc/sys/kernel/soft_watchdog"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/watchdog_cpumask"), "0-3\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/panic_on_rcu_stall"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/warn_limit"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/kexec_load_limit_panic"), "-1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/split_lock_mitigate"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/hung_task_warnings"), "10\n").unwrap();
         fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
@@ -689,6 +712,12 @@ mod tests {
         assert_eq!(r.memfd_noexec.value.as_deref(), Some("0"));
         assert_eq!(r.dirtytime_expire_seconds.value, Some(43200));
         assert_eq!(r.soft_watchdog.value.as_deref(), Some("0"));
+        assert_eq!(r.watchdog_cpumask.value.as_deref(), Some("0-3"));
+        assert_eq!(r.panic_on_rcu_stall.value.as_deref(), Some("0"));
+        assert_eq!(r.warn_limit.value, Some(0));
+        assert_eq!(r.kexec_load_limit_panic.value, Some(-1));
+        assert_eq!(r.split_lock_mitigate.value.as_deref(), Some("1"));
+        assert_eq!(r.hung_task_warnings.value, Some(10));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

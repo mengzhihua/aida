@@ -83,6 +83,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 "modalias",
                 crate::probes::cpu::display_modalias(&snap.cpu.modalias),
             ),
+            (
+                "cpuidle",
+                format!(
+                    "driver {} governor {}",
+                    snap.cpu.cpuidle_driver.display(),
+                    snap.cpu.cpuidle_governor.display()
+                ),
+            ),
             ("KVM", snap.kvm.device.display()),
             ("nested", snap.kvm.nested.display()),
             ("microcode", snap.cpu.microcode.display()),
@@ -740,6 +748,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("tun", &snap.buses.tun),
         ("nvme-generic", &snap.buses.nvme_generic),
         ("nvme-fabrics", &snap.buses.nvme_fabrics),
+        ("iscsi_endpoint", &snap.buses.iscsi_endpoint),
+        ("iscsi_iface", &snap.buses.iscsi_iface),
+        ("iscsi_connection", &snap.buses.iscsi_connection),
+        ("container", &snap.buses.container),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1108,14 +1120,25 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.fib_multipath_hash_policy.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">frto {} invalid_ratelimit {} min_tso {} pacing_ss {} tstamp_prequeue {} message_cost {} ip6frag_low {}</p>",
+        "<p class=\"muted\">frto {} invalid_ratelimit {} min_tso {} pacing_ss {} pacing_ca {} tstamp_prequeue {} message_cost {} burst {} ip6frag_low {}</p>",
         snap.net.tcp_frto.display(),
         snap.net.tcp_invalid_ratelimit.display(),
         snap.net.tcp_min_tso_segs.display(),
         snap.net.tcp_pacing_ss_ratio.display(),
+        snap.net.tcp_pacing_ca_ratio.display(),
         snap.net.netdev_tstamp_prequeue.display(),
         snap.net.message_cost.display(),
+        snap.net.message_burst.display(),
         snap.net.ip6frag_low_thresh.display()
+    ));
+    html.push_str(&format!(
+        "<p class=\"muted\">orphan_retries {} rfc1337 {} unpriv_port {} bindv6only {} ipfrag_time {} dad_tx {}</p>",
+        snap.net.tcp_orphan_retries.display(),
+        snap.net.tcp_rfc1337.display(),
+        snap.net.ip_unprivileged_port_start.display(),
+        snap.net.bindv6only.display(),
+        snap.net.ipfrag_time.display(),
+        snap.net.ipv6_dad_transmits.display()
     ));
     html.push_str(&format!(
         "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
@@ -1170,6 +1193,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">router_solicitations iface {}</p>",
             esc(&snap.net.ipv6_router_solicitations_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_dad_transmits_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">dad_transmits iface {}</p>",
+            esc(&snap.net.ipv6_dad_transmits_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -1710,7 +1739,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {} core_pipe {} printk_devkmsg {} delayacct {} acct {} mount_max {} rng_wake {} urandom_reseed {} soft_wd {}",
+                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {} core_pipe {} printk_devkmsg {} delayacct {} acct {} mount_max {} rng_wake {} urandom_reseed {} soft_wd {} wd_mask {} rcu_stall {} warn {} kexec_limit {} split_lock {} hung_warn {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
                     snap.sysctl.watchdog_thresh.display(),
@@ -1726,7 +1755,19 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.mount_max.display(),
                     snap.sysctl.write_wakeup_threshold.display(),
                     snap.sysctl.urandom_min_reseed_secs.display(),
-                    snap.sysctl.soft_watchdog.display()
+                    snap.sysctl.soft_watchdog.display(),
+                    snap.sysctl.watchdog_cpumask.display(),
+                    snap.sysctl.panic_on_rcu_stall.display(),
+                    match snap.sysctl.warn_limit.value {
+                        Some(0) => "0 不限".into(),
+                        _ => snap.sysctl.warn_limit.display(),
+                    },
+                    match snap.sysctl.kexec_load_limit_panic.value {
+                        Some(-1) => "-1 不限".into(),
+                        _ => snap.sysctl.kexec_load_limit_panic.display(),
+                    },
+                    snap.sysctl.split_lock_mitigate.display(),
+                    snap.sysctl.hung_task_warnings.display()
                 ),
             ),
             (

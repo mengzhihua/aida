@@ -120,6 +120,17 @@ pub struct NetReport {
     pub ipv6_accept_ra_defrtr_dev: Vec<String>,
     pub ipv6_router_solicitations_dev: Vec<String>,
     pub ip6frag_low_thresh: Sample<u64>,
+    pub ip_unprivileged_port_start: Sample<u64>,
+    pub tcp_pacing_ca_ratio: Sample<u64>,
+    pub tcp_orphan_retries: Sample<u64>,
+    pub tcp_rfc1337: Sample<String>,
+    pub bindv6only: Sample<String>,
+    pub ipfrag_time: Sample<u64>,
+    pub ipv6_dad_transmits: Sample<u64>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_dad_transmits_dev: Vec<String>,
+    /// 与 `message_cost` 成对；`cost=0` 时 burst 不生效。
+    pub message_burst: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -429,6 +440,17 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let ipv6_router_solicitations_dev =
         conf_dev_diffs(ctx, "ipv6", "router_solicitations", rs_all.as_deref());
     let ip6frag_low_thresh = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_low_thresh"));
+    let ip_unprivileged_port_start =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/ip_unprivileged_port_start"));
+    let tcp_pacing_ca_ratio = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_pacing_ca_ratio"));
+    let tcp_orphan_retries = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_orphan_retries"));
+    let tcp_rfc1337 = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_rfc1337"));
+    let bindv6only = access::read_trimmed(ctx.proc_path("sys/net/ipv6/bindv6only"));
+    let ipfrag_time = access::read_u64(ctx.proc_path("sys/net/ipv4/ipfrag_time"));
+    let ipv6_dad_transmits = access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/dad_transmits"));
+    let dad_all = ipv6_dad_transmits.value.map(|v| v.to_string());
+    let ipv6_dad_transmits_dev = conf_dev_diffs(ctx, "ipv6", "dad_transmits", dad_all.as_deref());
+    let message_burst = access::read_u64(ctx.proc_path("sys/net/core/message_burst"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -541,6 +563,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_accept_ra_defrtr_dev,
                 ipv6_router_solicitations_dev,
                 ip6frag_low_thresh,
+                ip_unprivileged_port_start,
+                tcp_pacing_ca_ratio,
+                tcp_orphan_retries,
+                tcp_rfc1337,
+                bindv6only,
+                ipfrag_time,
+                ipv6_dad_transmits,
+                ipv6_dad_transmits_dev,
+                message_burst,
                 notes,
             };
         }
@@ -761,6 +792,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_accept_ra_defrtr_dev,
         ipv6_router_solicitations_dev,
         ip6frag_low_thresh,
+        ip_unprivileged_port_start,
+        tcp_pacing_ca_ratio,
+        tcp_orphan_retries,
+        tcp_rfc1337,
+        bindv6only,
+        ipfrag_time,
+        ipv6_dad_transmits,
+        ipv6_dad_transmits_dev,
+        message_burst,
         notes,
     }
 }
@@ -1555,6 +1595,18 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/ip_unprivileged_port_start"),
+            "1024\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_pacing_ca_ratio"), "120\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_orphan_retries"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_rfc1337"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/bindv6only"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ipfrag_time"), "30\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/dad_transmits"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/message_burst"), "10\n").unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1644,6 +1696,14 @@ mod tests {
         assert_eq!(r.ipv6_accept_ra_defrtr.value.as_deref(), Some("1"));
         assert_eq!(r.ipv6_router_solicitations.value, Some(-1));
         assert_eq!(r.ip6frag_low_thresh.value, Some(3_145_728));
+        assert_eq!(r.ip_unprivileged_port_start.value, Some(1024));
+        assert_eq!(r.tcp_pacing_ca_ratio.value, Some(120));
+        assert_eq!(r.tcp_orphan_retries.value, Some(0));
+        assert_eq!(r.tcp_rfc1337.value.as_deref(), Some("0"));
+        assert_eq!(r.bindv6only.value.as_deref(), Some("0"));
+        assert_eq!(r.ipfrag_time.value, Some(30));
+        assert_eq!(r.ipv6_dad_transmits.value, Some(1));
+        assert_eq!(r.message_burst.value, Some(10));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -1696,6 +1756,8 @@ mod tests {
             "3\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/dad_transmits"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/dad_transmits"), "0\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -1744,6 +1806,12 @@ mod tests {
             r.ipv6_router_solicitations_dev.iter().any(|s| s == "lo:3"),
             "lo router_solicitations=3 must differ from conf/all: {:?}",
             r.ipv6_router_solicitations_dev
+        );
+        assert_eq!(r.ipv6_dad_transmits.value, Some(1));
+        assert!(
+            r.ipv6_dad_transmits_dev.iter().any(|s| s == "lo:0"),
+            "lo dad_transmits=0 must differ from conf/all: {:?}",
+            r.ipv6_dad_transmits_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
