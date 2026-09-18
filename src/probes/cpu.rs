@@ -39,6 +39,9 @@ pub struct CpuInfo {
     pub nohz_full: Sample<String>,
     /// 整机 CPU `modalias`；字符串可能很长，界面只展示前缀。
     pub modalias: Sample<String>,
+    /// 全局 cpuidle 驱动；`none` 在虚拟机上常见，不是失败。
+    pub cpuidle_driver: Sample<String>,
+    pub cpuidle_governor: Sample<String>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
@@ -262,6 +265,10 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
     let enabled = access::read_trimmed(ctx.sys_path("devices/system/cpu/enabled"));
     let nohz_full = access::read_trimmed(ctx.sys_path("devices/system/cpu/nohz_full"));
     let modalias = access::read_trimmed(ctx.sys_path("devices/system/cpu/modalias"));
+    let cpuidle_driver =
+        access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_driver"));
+    let cpuidle_governor =
+        access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_governor"));
     if smt_control
         .value
         .as_deref()
@@ -296,6 +303,8 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         enabled,
         nohz_full,
         modalias,
+        cpuidle_driver,
+        cpuidle_governor,
         logical,
         caches,
         utilization_pct,
@@ -643,6 +652,20 @@ flags\t\t: fpu hypervisor sse
             display_modalias(&Sample::ok("a".repeat(80), "modalias")),
             format!("{}…", "a".repeat(72))
         );
+        std::fs::create_dir_all(root.join("sys/devices/system/cpu/cpuidle")).unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/current_driver"),
+            "none\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpuidle/current_governor"),
+            "menu\n",
+        )
+        .unwrap();
+        let info = collect_with_util(&ctx, None);
+        assert_eq!(info.cpuidle_driver.value.as_deref(), Some("none"));
+        assert_eq!(info.cpuidle_governor.value.as_deref(), Some("menu"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
