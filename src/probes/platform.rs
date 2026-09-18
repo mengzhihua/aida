@@ -16,6 +16,7 @@ pub struct PlatformReport {
     pub event_sources: Vec<String>,
     pub msr_devices: usize,
     pub vtconsoles: Vec<VtConsole>,
+    pub platform_devices: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -116,6 +117,22 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         _ => 0,
     };
     let vtconsoles = read_vtconsoles(ctx, &mut notes);
+    let platform_devices = match access::list_dir_names(ctx.sys_path("bus/platform/devices")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(mut n),
+            ..
+        } => {
+            n.sort();
+            n.truncate(16);
+            n
+        }
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            Vec::new()
+        }
+        _ => Vec::new(),
+    };
     PlatformReport {
         watchdogs,
         backlights,
@@ -127,6 +144,7 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         event_sources,
         msr_devices,
         vtconsoles,
+        platform_devices,
         notes,
     }
 }
@@ -329,6 +347,8 @@ mod tests {
         fs::create_dir_all(&vt).unwrap();
         fs::write(vt.join("name"), "(S) dummy device\n").unwrap();
         fs::write(vt.join("bind"), "1\n").unwrap();
+        fs::create_dir_all(root.join("sys/bus/platform/devices/pcspkr")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/platform/devices/rtc_cmos")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -355,6 +375,10 @@ mod tests {
             Some("(S) dummy device")
         );
         assert_eq!(r.vtconsoles[0].bind.value.as_deref(), Some("1"));
+        assert_eq!(
+            r.platform_devices,
+            vec!["pcspkr".to_string(), "rtc_cmos".to_string()]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

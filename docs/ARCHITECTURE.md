@@ -29,11 +29,11 @@
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02 |
 | GPU | `/sys/class/drm/cardN`，PCI class `0x03` | amdgpu busy/vram、i915/xe 频率、连接器 EDID、`/proc/driver/nvidia` |
-| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；`/proc/net/netstat`；snmp6；net.core；ipv6_route；if_inet6；tcp knobs/rmem；protocols；rt6_stats 第 6 列 dst cache；rp_filter/use_tempaddr 含与 `conf/all` 不同的接口；igmp 只计接口头行 |
+| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；`/proc/net/netstat`；snmp6；net.core；ipv6_route；if_inet6；tcp knobs/rmem；tcp6/udp6/raw/udplite；xfrm_stat；ptype（function 取末 token）；fib_triestat 主表 Leaves（不读 fib_trie）；protocols；rt6_stats 第 6 列 dst cache；rp_filter/use_tempaddr 含与 `conf/all` 不同的接口；igmp 只计接口头行 |
 | USB | `/sys/bus/usb/devices`（跳过 `*:*.*` 接口节点） | `usb.ids` 名称 |
 | Input | `/proc/bus/input/devices` | handlers → keyboard/mouse/js |
 | NUMA | `/sys/devices/system/node/nodeN` | meminfo / cpulist / distance |
-| Memory | `/proc/meminfo` | hugepages + THP defrag；buddyinfo；zoneinfo；vmstat；KSM；DirectMap |
+| Memory | `/proc/meminfo` | hugepages + THP defrag；buddyinfo；zoneinfo；vmstat；KSM；DirectMap；`bus/memory_tiering/devices` |
 | zmem | `/sys/block/zramN` + `module/zswap/parameters` | mm_stat；不调用 zramctl |
 | EDAC | `/sys/devices/system/edac/mc/mcN` | ce_count / ue_count |
 | Power | `/sys/class/power_supply` | 电池容量/能量、AC online |
@@ -56,10 +56,10 @@
 | MD | `/proc/mdstat` | `/sys/block/mdN/md/{degraded,sync_action}` |
 | SCSI | `/sys/class/scsi_host` | `scsi_device` vendor/model/type |
 | iSCSI | `/sys/class/iscsi_{transport,host,session}` | 不调用 iscsiadm |
-| Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；MSR；vtconsole；不调用 i2cdetect |
+| Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；MSR；vtconsole；`bus/platform/devices` 名（最多 16）；不调用 i2cdetect |
 | Periph | `/proc/dma`；`/sys/class/dma` | PWM `pwmchipN/npwm`；IIO `name`；nvmem `type`（不读二进制）；regulator 电压；devlink `status`；`pci_bus` cpulist；不调用 `devlink` |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI / ttyS / misc / hidraw / gpio / mtd / IB | `/proc/tty/drivers`；不调用 setserial；ttyS `type=0` 跳过 |
-| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC；mqueue；consoles |
+| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic（可为负）；sysrq；keys；SysV IPC；mqueue；consoles；sched_rt（`-1` 不限）；OOM/laptop/kexec_load_disabled |
 | Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current；第一层 `.slice`/`.scope` |
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf / fs.protected_* | 不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |

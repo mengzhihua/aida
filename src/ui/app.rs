@@ -769,6 +769,9 @@ impl AidaApp {
                 m.ksm.full_scans.display()
             ),
         );
+        if !m.memory_tiers.is_empty() {
+            kv(ui, "memory tiers", &m.memory_tiers.join(" "));
+        }
         if m.mem_blocks.total > 0 {
             kv(
                 ui,
@@ -1846,7 +1849,7 @@ impl AidaApp {
             ui,
             "tables",
             &format!(
-                "arp {}  route {}  unix {}  inet6 {}  ipv6_route {}  packet {}  netlink {}  tcp {}  udp {}",
+                "arp {}  route {}  unix {}  inet6 {}  ipv6_route {}  packet {}  netlink {}  tcp {}  udp {}  tcp6 {}  udp6 {}  raw {}  udplite {}",
                 self.snap.net.arp_entries,
                 self.snap.net.route_entries,
                 self.snap.net.unix_sockets,
@@ -1855,7 +1858,11 @@ impl AidaApp {
                 self.snap.net.packet_sockets,
                 self.snap.net.netlink_sockets,
                 self.snap.net.tcp_socks,
-                self.snap.net.udp_socks
+                self.snap.net.udp_socks,
+                self.snap.net.tcp6_socks,
+                self.snap.net.udp6_socks,
+                self.snap.net.raw_socks,
+                self.snap.net.udplite_socks
             ),
         );
         kv(
@@ -1928,6 +1935,29 @@ impl AidaApp {
                 "use_tempaddr iface",
                 &self.snap.net.ipv6_use_tempaddr_dev.join("  "),
             );
+        }
+        kv(
+            ui,
+            "xfrm",
+            &format!(
+                "in_no_states {}  out_no_states {}",
+                self.snap
+                    .net
+                    .xfrm_in_no_states
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                self.snap
+                    .net
+                    .xfrm_out_no_states
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "—".into())
+            ),
+        );
+        if !self.snap.net.ptypes.is_empty() {
+            kv(ui, "ptype", &self.snap.net.ptypes.join("  "));
+        }
+        if let Some(leaves) = self.snap.net.fib_trie_leaves {
+            kv(ui, "fib leaves", &leaves.to_string());
         }
         if !self.snap.net.protocols.is_empty() {
             kv(ui, "protocols", &self.snap.net.protocols.join("  "));
@@ -2154,6 +2184,13 @@ impl AidaApp {
                 self.snap.platform.msr_devices
             ),
         );
+        if !self.snap.platform.platform_devices.is_empty() {
+            kv(
+                ui,
+                "platform",
+                &self.snap.platform.platform_devices.join(" "),
+            );
+        }
         if !self.snap.platform.workqueues.is_empty() {
             kv(ui, "workqueue", &self.snap.platform.workqueues.join(" "));
         }
@@ -2597,6 +2634,23 @@ impl AidaApp {
                 self.snap.sysctl.vfs_cache_pressure.display(),
                 self.snap.sysctl.hung_task_timeout_secs.display(),
                 self.snap.sysctl.panic_on_oops.display()
+            ),
+        );
+        kv(
+            ui,
+            "sched / oom",
+            &format!(
+                "rt {}/{}us  rr {}ms  numa {}  tmig {}  panic_oom {}  oom_alloc {}  laptop {}  kexec_off {}  hung_panic {}",
+                self.snap.sysctl.sched_rt_runtime_us.display(),
+                self.snap.sysctl.sched_rt_period_us.display(),
+                self.snap.sysctl.sched_rr_timeslice_ms.display(),
+                self.snap.sysctl.numa_balancing.display(),
+                self.snap.sysctl.timer_migration.display(),
+                self.snap.sysctl.panic_on_oom.display(),
+                self.snap.sysctl.oom_kill_allocating_task.display(),
+                self.snap.sysctl.laptop_mode.display(),
+                self.snap.sysctl.kexec_load_disabled.display(),
+                self.snap.sysctl.hung_task_panic.display()
             ),
         );
         kv(

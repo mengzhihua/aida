@@ -128,6 +128,14 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 106. **不要读取 nvmem 的 `nvmem` 二进制属性。** 只读 `type`。
 107. **空的 `/sys/class/devlink` 表示没有设备链路。** class 存在但无条目不是失败。
 108. **`pci_bus` 的 `cpulistaffinity` 是 host bridge 的 CPU 掩码。** 不要写 `rescan`。
+109. **`sched_rt_runtime_us` 是有符号 i64。** `-1` 表示 RT 运行时不限（占满 period），不要当读取失败。
+110. **不要读巨大的 `/proc/net/fib_trie`。** 只取 `fib_triestat` 第一段 `Leaves:`（主表）。
+111. **`/proc/net/ptype` 的 Device 列经常为空。** function 取最后一个空白分隔 token。
+112. **空的 `bus/memory_tiering/devices` 表示没有 CXL/HMAT 分层。** 不是采集失败。
+113. **`kexec_load_disabled=0` 表示仍允许 kexec。** 云 VM 常见。
+114. **`panic_on_oom=0` 是默认：OOM killer 而不 panic。** 不要当采集失败。
+115. **`/proc/net/tcp6`/`udp6`/`raw`/`udplite` 与 tcp 一样跳过表头。** IPv4-only 主机文件可能只有表头或缺失。
+116. **`xfrm_stat` 是每行 `Key Value`。** 不要用 snmp 两行组解析。
 
 ## 测试方案
 

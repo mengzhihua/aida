@@ -185,6 +185,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
             ("THP", snap.memory.thp_enabled.display()),
             (
+                "memory tiers",
+                if snap.memory.memory_tiers.is_empty() {
+                    "—".into()
+                } else {
+                    snap.memory.memory_tiers.join(" ")
+                },
+            ),
+            (
                 "DirectMap",
                 format!(
                     "4k {} 2M {} 1G {}",
@@ -471,10 +479,15 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
 
     section(&mut html, "平台");
     html.push_str(&format!(
-        "<p class=\"muted\">ACPI {} PnP {} MSR {} workqueue {} events {}</p>",
+        "<p class=\"muted\">ACPI {} PnP {} MSR {} platform {} workqueue {} events {}</p>",
         snap.platform.acpi_devices,
         snap.platform.pnp_devices,
         snap.platform.msr_devices,
+        esc(&if snap.platform.platform_devices.is_empty() {
+            "—".into()
+        } else {
+            snap.platform.platform_devices.join(" ")
+        }),
         esc(&snap.platform.workqueues.join(" ")),
         esc(&snap.platform.event_sources.join(" "))
     ));
@@ -954,7 +967,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -995,7 +1008,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.rp_filter.display(),
         snap.net.accept_redirects.display(),
         snap.net.tcp_socks,
-        snap.net.udp_socks
+        snap.net.udp_socks,
+        snap.net.tcp6_socks,
+        snap.net.udp6_socks,
+        snap.net.raw_socks,
+        snap.net.udplite_socks
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1013,6 +1030,27 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">protocols {}</p>",
             esc(&snap.net.protocols.join(" "))
+        ));
+    }
+    html.push_str(&format!(
+        "<p class=\"muted\">xfrm in_no_states {} out_no_states {} fib leaves {}</p>",
+        snap.net
+            .xfrm_in_no_states
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .xfrm_out_no_states
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into()),
+        snap.net
+            .fib_trie_leaves
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "—".into())
+    ));
+    if !snap.net.ptypes.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ptype {}</p>",
+            esc(&snap.net.ptypes.join(" "))
         ));
     }
     for b in &snap.net.bridges {
@@ -1506,6 +1544,22 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.sysctl.sysrq.display(),
                     snap.sysctl.min_free_kbytes.display(),
                     snap.sysctl.hung_task_timeout_secs.display()
+                ),
+            ),
+            (
+                "sched / oom",
+                format!(
+                    "rt {}/{}us rr {}ms numa {} tmig {} panic_oom {} oom_alloc {} laptop {} kexec_off {} hung_panic {}",
+                    snap.sysctl.sched_rt_runtime_us.display(),
+                    snap.sysctl.sched_rt_period_us.display(),
+                    snap.sysctl.sched_rr_timeslice_ms.display(),
+                    snap.sysctl.numa_balancing.display(),
+                    snap.sysctl.timer_migration.display(),
+                    snap.sysctl.panic_on_oom.display(),
+                    snap.sysctl.oom_kill_allocating_task.display(),
+                    snap.sysctl.laptop_mode.display(),
+                    snap.sysctl.kexec_load_disabled.display(),
+                    snap.sysctl.hung_task_panic.display()
                 ),
             ),
             (
