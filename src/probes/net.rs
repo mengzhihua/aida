@@ -206,6 +206,14 @@ pub struct NetReport {
     pub ipv6_accept_ra_min_hop_limit: Sample<u64>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_min_hop_limit_dev: Vec<String>,
+    /// `0` 表示关闭 Protective Load Balancing。
+    pub tcp_plb_enabled: Sample<String>,
+    pub udp_l3mdev_accept: Sample<String>,
+    pub tcp_backlog_ack_defer: Sample<String>,
+    pub fwmark_reflect: Sample<String>,
+    pub ipv6_accept_ra_min_lft: Sample<u64>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_min_lft_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -661,6 +669,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_ra_min_hop_limit",
         ra_min_hop_all.as_deref(),
     );
+    let tcp_plb_enabled = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_plb_enabled"));
+    let udp_l3mdev_accept = access::read_trimmed(ctx.proc_path("sys/net/ipv4/udp_l3mdev_accept"));
+    let tcp_backlog_ack_defer =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_backlog_ack_defer"));
+    let fwmark_reflect = access::read_trimmed(ctx.proc_path("sys/net/ipv4/fwmark_reflect"));
+    let ipv6_accept_ra_min_lft =
+        access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_min_lft"));
+    let ra_min_lft_all = ipv6_accept_ra_min_lft.value.map(|v| v.to_string());
+    let ipv6_accept_ra_min_lft_dev =
+        conf_dev_diffs(ctx, "ipv6", "accept_ra_min_lft", ra_min_lft_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -846,6 +864,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 icmp_errors_use_inbound_ifaddr,
                 ipv6_accept_ra_min_hop_limit,
                 ipv6_accept_ra_min_hop_limit_dev,
+                tcp_plb_enabled,
+                udp_l3mdev_accept,
+                tcp_backlog_ack_defer,
+                fwmark_reflect,
+                ipv6_accept_ra_min_lft,
+                ipv6_accept_ra_min_lft_dev,
                 notes,
             };
         }
@@ -1139,6 +1163,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         icmp_errors_use_inbound_ifaddr,
         ipv6_accept_ra_min_hop_limit,
         ipv6_accept_ra_min_hop_limit_dev,
+        tcp_plb_enabled,
+        udp_l3mdev_accept,
+        tcp_backlog_ack_defer,
+        fwmark_reflect,
+        ipv6_accept_ra_min_lft,
+        ipv6_accept_ra_min_lft_dev,
         notes,
     }
 }
@@ -2062,6 +2092,15 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_plb_enabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/udp_l3mdev_accept"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_backlog_ack_defer"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/fwmark_reflect"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_min_lft"),
+            "0\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -2218,6 +2257,11 @@ mod tests {
         assert_eq!(r.tcp_rto_min_us.value, Some(200_000));
         assert_eq!(r.icmp_errors_use_inbound_ifaddr.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_ra_min_hop_limit.value, Some(1));
+        assert_eq!(r.tcp_plb_enabled.value.as_deref(), Some("0"));
+        assert_eq!(r.udp_l3mdev_accept.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_backlog_ack_defer.value.as_deref(), Some("1"));
+        assert_eq!(r.fwmark_reflect.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_ra_min_lft.value, Some(0));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2306,6 +2350,16 @@ mod tests {
         fs::write(
             root.join("proc/sys/net/ipv6/conf/lo/accept_ra_min_hop_limit"),
             "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_min_lft"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_min_lft"),
+            "300\n",
         )
         .unwrap();
         let ctx = ProbeCtx {
@@ -2400,6 +2454,12 @@ mod tests {
                 .any(|s| s == "lo:0"),
             "lo accept_ra_min_hop_limit=0 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_min_hop_limit_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_min_lft.value, Some(0));
+        assert!(
+            r.ipv6_accept_ra_min_lft_dev.iter().any(|s| s == "lo:300"),
+            "lo accept_ra_min_lft=300 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_min_lft_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

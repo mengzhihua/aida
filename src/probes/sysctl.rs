@@ -190,6 +190,13 @@ pub struct SysctlReport {
     /// `0` 表示没有组可通过 shm 分配 hugetlb。
     pub hugetlb_shm_group: Sample<u64>,
     pub core_file_note_size_limit: Sample<u64>,
+    /// `0` 表示不自动重算 `msgmni`。
+    pub auto_msgmni: Sample<String>,
+    pub numa_zonelist_order: Sample<String>,
+    /// 各 zone 的 lowmem 预留比例，空白分隔。
+    pub lowmem_reserve_ratio: Sample<String>,
+    /// `0` 表示不额外 overcommit hugepage。
+    pub nr_overcommit_hugepages: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -455,6 +462,10 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         core_file_note_size_limit: access::read_u64(
             ctx.proc_path("sys/kernel/core_file_note_size_limit"),
         ),
+        auto_msgmni: access::read_trimmed(ctx.proc_path("sys/kernel/auto_msgmni")),
+        numa_zonelist_order: access::read_trimmed(ctx.proc_path("sys/vm/numa_zonelist_order")),
+        lowmem_reserve_ratio: access::read_trimmed(ctx.proc_path("sys/vm/lowmem_reserve_ratio")),
+        nr_overcommit_hugepages: access::read_u64(ctx.proc_path("sys/vm/nr_overcommit_hugepages")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -807,6 +818,14 @@ mod tests {
             "4194304\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/kernel/auto_msgmni"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/numa_zonelist_order"), "Node\n").unwrap();
+        fs::write(
+            root.join("proc/sys/vm/lowmem_reserve_ratio"),
+            "256 256 32 0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/vm/nr_overcommit_hugepages"), "0\n").unwrap();
         fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
@@ -945,6 +964,13 @@ mod tests {
         assert_eq!(r.legacy_va_layout.value.as_deref(), Some("0"));
         assert_eq!(r.hugetlb_shm_group.value, Some(0));
         assert_eq!(r.core_file_note_size_limit.value, Some(4_194_304));
+        assert_eq!(r.auto_msgmni.value.as_deref(), Some("0"));
+        assert_eq!(r.numa_zonelist_order.value.as_deref(), Some("Node"));
+        assert_eq!(
+            r.lowmem_reserve_ratio.value.as_deref(),
+            Some("256 256 32 0")
+        );
+        assert_eq!(r.nr_overcommit_hugepages.value, Some(0));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
