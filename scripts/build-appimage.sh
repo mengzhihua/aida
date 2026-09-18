@@ -18,6 +18,10 @@ if [[ "$ARCH" != "x86_64" && "$ARCH" != "aarch64" ]]; then
 fi
 
 mkdir -p "$OUT_DIR" "$CACHE"
+# 清掉上次留在 dist/ 的 linuxdeploy 和旧 AppImage，避免把 0.2.0 产物 mv 到新文件名上。
+rm -f "$OUT_DIR"/linuxdeploy*.AppImage \
+  "$OUT_DIR"/AIDA_Linux*.AppImage \
+  "$OUT_DIR"/aida*.AppImage
 
 echo "==> cargo build --release --features gui  (version $VERSION)"
 cd "$ROOT"
@@ -37,6 +41,9 @@ install -m 0644 "$ROOT/packaging/polkit/com.aida.linux.policy" \
 if [[ -f "$ROOT/packaging/com.aida.linux.metainfo.xml" ]]; then
   sed "s/@VERSION@/${VERSION}/g" "$ROOT/packaging/com.aida.linux.metainfo.xml" \
     >"$APPDIR/usr/share/metainfo/com.aida.linux.metainfo.xml"
+  # appimagetool 按 desktop id 找 aida.appdata.xml。
+  cp "$APPDIR/usr/share/metainfo/com.aida.linux.metainfo.xml" \
+    "$APPDIR/usr/share/metainfo/aida.appdata.xml"
 fi
 cp "$ROOT/packaging/aida.desktop" "$APPDIR/aida.desktop"
 
@@ -75,19 +82,46 @@ done
   "${EXTRA_LIBS[@]}" \
   --output appimage
 
-# linuxdeploy 默认文件名不带版本；规范成带 Cargo 版本的名字。
+dest="$OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
 shopt -s nullglob
+produced=()
 for img in "$OUT_DIR"/AIDA_Linux*.AppImage "$OUT_DIR"/aida*.AppImage; do
-  base="$(basename "$img")"
-  case "$base" in
+  case "$(basename "$img")" in
     linuxdeploy*) continue ;;
   esac
-  dest="$OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
-  if [[ "$img" != "$dest" ]]; then
-    mv -f "$img" "$dest"
-  fi
+  produced+=("$img")
 done
 shopt -u nullglob
+if ((${#produced[@]} == 0)); then
+  echo "linuxdeploy 没有产出 AppImage" >&2
+  exit 1
+fi
+# 只保留一份带 Cargo 版本的名字；不要把旧文件 mv 到已写好的 dest 上。
+keep=""
+for img in "${produced[@]}"; do
+  if [[ "$img" == "$dest" ]]; then
+    keep="$img"
+    break
+  fi
+done
+if [[ -z "$keep" ]]; then
+  mv -f "${produced[0]}" "$dest"
+  keep="$dest"
+fi
+for img in "${produced[@]}"; do
+  if [[ "$img" != "$keep" ]]; then
+    rm -f "$img"
+  fi
+done
+rm -f "$OUT_DIR"/linuxdeploy*.AppImage
+
+echo "==> 校验 $dest version == $VERSION"
+got="$(APPIMAGE_EXTRACT_AND_RUN=1 "$dest" version)"
+echo "    $got"
+if [[ "$got" != "aida $VERSION" ]]; then
+  echo "AppImage 版本不是 $VERSION: $got" >&2
+  exit 1
+fi
 
 echo "==> done"
-ls -lh "$OUT_DIR"/AIDA_Linux-*.AppImage
+ls -lh "$dest"
