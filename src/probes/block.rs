@@ -227,7 +227,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
     if mapper.is_empty() {
         notes.push("无 device-mapper 设备（无 LVM/crypt 时常见）。".into());
     }
-    let bdi = read_bdi(ctx);
+    let bdi = read_bdi(ctx, &mut notes);
     let bsg = match access::list_dir_names(ctx.sys_path("class/bsg")) {
         Sample {
             access: AccessKind::Ok,
@@ -237,6 +237,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             n.sort();
             n.truncate(16);
             n
+        }
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            Vec::new()
         }
         _ => Vec::new(),
     };
@@ -250,7 +254,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
     }
 }
 
-fn read_bdi(ctx: &ProbeCtx) -> Vec<BdiDev> {
+fn read_bdi(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<BdiDev> {
     let root = ctx.sys_path("class/bdi");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -258,6 +262,10 @@ fn read_bdi(ctx: &ProbeCtx) -> Vec<BdiDev> {
             value: Some(n),
             ..
         } => n,
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            return Vec::new();
+        }
         _ => return Vec::new(),
     };
     let mut out = Vec::new();

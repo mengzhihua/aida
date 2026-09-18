@@ -48,7 +48,19 @@ pub struct NetReport {
     pub rp_filter: Sample<String>,
     pub icmp_echo_ignore_broadcasts: Sample<String>,
     pub ipv6_use_tempaddr: Sample<String>,
+    /// 与 `conf/all` 不同的接口值，例如 `eth0:1`。
+    pub rp_filter_dev: Vec<String>,
+    pub ipv6_use_tempaddr_dev: Vec<String>,
     pub rt6_entries: Sample<u64>,
+    pub optmem_max: Sample<u64>,
+    pub netdev_budget_usecs: Sample<u64>,
+    pub accept_redirects: Sample<String>,
+    pub accept_source_route: Sample<String>,
+    pub log_martians: Sample<String>,
+    pub icmp_ignore_bogus: Sample<String>,
+    pub netlink_sockets: usize,
+    pub tcp_socks: usize,
+    pub udp_socks: usize,
     pub notes: Vec<String>,
 }
 
@@ -64,6 +76,13 @@ pub struct TcpTune {
     pub tw_reuse: Sample<String>,
     pub retries2: Sample<u64>,
     pub slow_start_after_idle: Sample<String>,
+    pub syn_retries: Sample<u64>,
+    pub synack_retries: Sample<u64>,
+    pub keepalive_probes: Sample<u64>,
+    pub keepalive_intvl: Sample<u64>,
+    pub rmem: Sample<String>,
+    pub wmem: Sample<String>,
+    pub mtu_probing: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -205,7 +224,8 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let packet_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/packet")));
     let tcp_fastopen = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_fastopen"));
     let tcp_syncookies = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_syncookies"));
-    let ip_local_port_range = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_local_port_range"));
+    let ip_local_port_range =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_local_port_range"));
     let tcp = TcpTune {
         keepalive_time: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_time")),
         fin_timeout: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_fin_timeout")),
@@ -219,6 +239,13 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         slow_start_after_idle: access::read_trimmed(
             ctx.proc_path("sys/net/ipv4/tcp_slow_start_after_idle"),
         ),
+        syn_retries: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_syn_retries")),
+        synack_retries: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_synack_retries")),
+        keepalive_probes: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_probes")),
+        keepalive_intvl: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_intvl")),
+        rmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_rmem")),
+        wmem: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_wmem")),
+        mtu_probing: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_mtu_probing")),
     };
     let default_qdisc = access::read_trimmed(ctx.proc_path("sys/net/core/default_qdisc"));
     let ipv6_disable = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_ipv6"));
@@ -231,7 +258,26 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_echo_ignore_broadcasts"));
     let ipv6_use_tempaddr =
         access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/use_tempaddr"));
+    let rp_filter_dev = conf_dev_diffs(ctx, "ipv4", "rp_filter", rp_filter.value.as_deref());
+    let ipv6_use_tempaddr_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "use_tempaddr",
+        ipv6_use_tempaddr.value.as_deref(),
+    );
     let rt6_entries = parse_rt6_stats(&access::read_trimmed(ctx.proc_path("net/rt6_stats")));
+    let optmem_max = access::read_u64(ctx.proc_path("sys/net/core/optmem_max"));
+    let netdev_budget_usecs = access::read_u64(ctx.proc_path("sys/net/core/netdev_budget_usecs"));
+    let accept_redirects =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/conf/all/accept_redirects"));
+    let accept_source_route =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/conf/all/accept_source_route"));
+    let log_martians = access::read_trimmed(ctx.proc_path("sys/net/ipv4/conf/all/log_martians"));
+    let icmp_ignore_bogus =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_ignore_bogus_error_responses"));
+    let netlink_sockets = count_table_rows(&access::read_trimmed(ctx.proc_path("net/netlink")));
+    let tcp_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/tcp")));
+    let udp_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udp")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -278,7 +324,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 rp_filter,
                 icmp_echo_ignore_broadcasts,
                 ipv6_use_tempaddr,
+                rp_filter_dev,
+                ipv6_use_tempaddr_dev,
                 rt6_entries,
+                optmem_max,
+                netdev_budget_usecs,
+                accept_redirects,
+                accept_source_route,
+                log_martians,
+                icmp_ignore_bogus,
+                netlink_sockets,
+                tcp_socks,
+                udp_socks,
                 notes,
             };
         }
@@ -433,7 +490,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         rp_filter,
         icmp_echo_ignore_broadcasts,
         ipv6_use_tempaddr,
+        rp_filter_dev,
+        ipv6_use_tempaddr_dev,
         rt6_entries,
+        optmem_max,
+        netdev_budget_usecs,
+        accept_redirects,
+        accept_source_route,
+        log_martians,
+        icmp_ignore_bogus,
+        netlink_sockets,
+        tcp_socks,
+        udp_socks,
         notes,
     }
 }
@@ -614,16 +682,27 @@ pub fn parse_protocols(sample: &Sample<String>) -> Vec<String> {
     out
 }
 
-fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
+/// `/proc/net/igmp`：只计接口头行（行首是 Idx + 设备名）。组记录定时器也含冒号，不能当接口。
+pub fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
     let Some(text) = sample.value.as_deref() else {
         return 0;
     };
     text.lines()
-        .filter(|l| l.contains(':') && !l.starts_with("Idx"))
+        .filter(|l| {
+            if l.starts_with(char::is_whitespace) {
+                return false;
+            }
+            let mut it = l.split_whitespace();
+            let Some(idx) = it.next() else {
+                return false;
+            };
+            idx.parse::<u32>().is_ok() && it.next().is_some() && l.contains(':')
+        })
         .count()
 }
 
-/// `/proc/net/rt6_stats` 十六进制列；第一列是 dst entries。IPv4-only 主机仍可能有该文件。
+/// `/proc/net/rt6_stats` 十六进制 7 列：fib_nodes … dst cache … discarded。
+/// 第 6 列才是 destination cache entries，不是第一列。
 pub fn parse_rt6_stats(sample: &Sample<String>) -> Sample<u64> {
     let miss = || Sample {
         value: None,
@@ -636,12 +715,40 @@ pub fn parse_rt6_stats(sample: &Sample<String>) -> Sample<u64> {
     };
     match text
         .split_whitespace()
-        .next()
+        .nth(5)
         .and_then(|s| u64::from_str_radix(s, 16).ok())
     {
         Some(v) => Sample::ok(v, sample.source.clone()),
         None => Sample::error(sample.source.clone(), "无法解析 rt6_stats"),
     }
+}
+
+fn conf_dev_diffs(ctx: &ProbeCtx, family: &str, attr: &str, all: Option<&str>) -> Vec<String> {
+    let root = ctx.proc_path(format!("sys/net/{family}/conf"));
+    let names = match access::list_dir_names(&root) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for name in names {
+        if name == "all" || name == "default" {
+            continue;
+        }
+        let s = access::read_trimmed(root.join(&name).join(attr));
+        if let Some(v) = s.value.as_deref() {
+            if all != Some(v) {
+                out.push(format!("{name}:{v}"));
+            }
+        }
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
 }
 
 /// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
@@ -893,9 +1000,21 @@ mod tests {
         fs::create_dir_all(root.join("proc/net")).unwrap();
         fs::create_dir_all(root.join("proc/sys/net/netfilter")).unwrap();
         fs::create_dir_all(root.join("proc/sys/net/ipv4")).unwrap();
-        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_count"), "53\n").unwrap();
-        fs::write(root.join("proc/sys/net/netfilter/nf_conntrack_max"), "262144\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/tcp_congestion_control"), "cubic\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_count"),
+            "53\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_max"),
+            "262144\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_congestion_control"),
+            "cubic\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_available_congestion_control"),
             "reno cubic\n",
@@ -904,11 +1023,41 @@ mod tests {
         fs::create_dir_all(root.join("proc/sys/net/core")).unwrap();
         fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/all")).unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_retries2"), "15\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_syn_retries"), "6\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_synack_retries"), "5\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_rmem"),
+            "4096\t131072\t6291456\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/core/optmem_max"), "131072\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/conf/all/accept_redirects"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/tcp"),
+            "sl local rem\n 0: 0 0\n 1: 0 0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
+            "1\n",
+        )
+        .unwrap();
         fs::write(root.join("proc/sys/net/core/netdev_budget"), "300\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/conf/all/rp_filter"), "0\n").unwrap();
-        fs::write(root.join("proc/sys/net/ipv4/icmp_echo_ignore_broadcasts"), "1\n").unwrap();
-        fs::write(root.join("proc/net/rt6_stats"), "0005 0004 001b 0004 0000 0000 0000\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/icmp_echo_ignore_broadcasts"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/net/rt6_stats"),
+            "0005 0004 001b 0004 0000 0007 0000\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -921,11 +1070,60 @@ mod tests {
         assert_eq!(r.conntrack_max.value, Some(262144));
         assert_eq!(r.tcp_congestion.value.as_deref(), Some("cubic"));
         assert_eq!(r.tcp.retries2.value, Some(15));
+        assert_eq!(r.tcp.syn_retries.value, Some(6));
+        assert_eq!(r.tcp.synack_retries.value, Some(5));
+        assert_eq!(r.tcp.rmem.value.as_deref(), Some("4096\t131072\t6291456"));
+        assert_eq!(r.optmem_max.value, Some(131072));
+        assert_eq!(r.accept_redirects.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_socks, 2);
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
         assert_eq!(r.icmp_echo_ignore_broadcasts.value.as_deref(), Some("1"));
-        assert_eq!(r.rt6_entries.value, Some(5));
+        assert_eq!(r.rt6_entries.value, Some(7));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn per_iface_rp_filter_and_tempaddr_diffs() {
+        let root = std::env::temp_dir().join(format!("aida-net-rp-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/net")).unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/all")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/eth0")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4/conf/lo")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/all")).unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/lo")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/all/rp_filter"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/eth0/rp_filter"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/conf/lo/rp_filter"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/use_tempaddr"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/use_tempaddr"), "-1\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
+        assert!(
+            r.rp_filter_dev.iter().any(|s| s == "eth0:1"),
+            "eth0 rp_filter=1 must differ from conf/all: {:?}",
+            r.rp_filter_dev
+        );
+        assert!(
+            !r.rp_filter_dev.iter().any(|s| s.starts_with("lo:")),
+            "lo matching all must not appear: {:?}",
+            r.rp_filter_dev
+        );
+        assert_eq!(r.ipv6_use_tempaddr.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_use_tempaddr_dev.iter().any(|s| s == "lo:-1"),
+            "lo use_tempaddr=-1 must differ from conf/all: {:?}",
+            r.ipv6_use_tempaddr_dev
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -944,10 +1142,7 @@ mod tests {
         assert_eq!(sk.tcp_inuse, Some(9));
         assert_eq!(sk.udp_inuse, Some(2));
         assert_eq!(
-            count_table_rows(&Sample::ok(
-                "Num RefCount\na 1\nb 2\n".into(),
-                "unix"
-            )),
+            count_table_rows(&Sample::ok("Num RefCount\na 1\nb 2\n".into(), "unix")),
             2
         );
         assert_eq!(
@@ -964,12 +1159,15 @@ mod tests {
         assert_eq!(proto, vec!["TCP:13".to_string(), "UDP:2".to_string()]);
         assert_eq!(
             count_igmp_ifaces(&Sample::ok(
-                "Idx\tDevice    : Count\n1\tlo        :     1      V3\n2\teth0      :     1      V3\n".into(),
+                "Idx\tDevice    : Count\n1\tlo        :     1      V3\n\t\t010000E0     1 0:00000000\t0\n2\teth0      :     1      V3\n\t\t010000E0     1 0:00000000\t0\n".into(),
                 "igmp",
             )),
             2
         );
-        let rt6 = parse_rt6_stats(&Sample::ok("0005 0004 001b 0004 0000 0000 0000\n".into(), "rt6_stats"));
-        assert_eq!(rt6.value, Some(5));
+        let rt6 = parse_rt6_stats(&Sample::ok(
+            "0005 0004 001b 0004 0000 0007 0000\n".into(),
+            "rt6_stats",
+        ));
+        assert_eq!(rt6.value, Some(7));
     }
 }

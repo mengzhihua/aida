@@ -34,6 +34,12 @@ pub struct SoftwareInfo {
     pub bpf_fs_entries: usize,
     /// `/proc/locks` 行数。空文件表示当前无锁，不是读取失败。
     pub file_locks: usize,
+    pub oops_count: Sample<u64>,
+    pub warn_count: Sample<u64>,
+    pub kexec_loaded: Sample<String>,
+    pub fscaps: Sample<String>,
+    pub uevent_seqnum: Sample<u64>,
+    pub filesystems: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -46,7 +52,11 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
             value: Some(s),
             source,
             ..
-        } => match s.split_whitespace().next().and_then(|x| x.parse::<f64>().ok()) {
+        } => match s
+            .split_whitespace()
+            .next()
+            .and_then(|x| x.parse::<f64>().ok())
+        {
             Some(v) => Sample::ok(v, source),
             None => Sample::error(source, "无法解析 uptime"),
         },
@@ -61,15 +71,22 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP")
         .or_else(|_| std::env::var("DESKTOP_SESSION"))
         .map(|v| Sample::ok(v, "env:XDG_CURRENT_DESKTOP|DESKTOP_SESSION"))
-        .unwrap_or_else(|_| {
-            Sample::missing("env:XDG_CURRENT_DESKTOP（无图形会话时正常为空）")
-        });
+        .unwrap_or_else(|_| Sample::missing("env:XDG_CURRENT_DESKTOP（无图形会话时正常为空）"));
 
     let load = parse_loadavg(&access::read_trimmed(ctx.proc_path("loadavg")));
     let boot_time_unix = parse_btime(&access::read_trimmed(ctx.proc_path("stat")));
-    let (tainted, taint_flags) = parse_taint(&access::read_trimmed(
-        ctx.proc_path("sys/kernel/tainted"),
-    ));
+    let (tainted, taint_flags) =
+        parse_taint(&access::read_trimmed(ctx.proc_path("sys/kernel/tainted")));
+
+    let mut notes = Vec::new();
+    let locks = access::read_trimmed(ctx.proc_path("locks"));
+    let file_locks =
+        if locks.access == AccessKind::PermissionDenied || locks.access == AccessKind::Error {
+            notes.push(locks.access_label());
+            0
+        } else {
+            count_lock_lines(&locks)
+        };
 
     SoftwareInfo {
         os_name: os.pretty,
@@ -105,8 +122,14 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
             } => n.len(),
             _ => 0,
         },
-        file_locks: count_lock_lines(&access::read_trimmed(ctx.proc_path("locks"))),
-        notes: Vec::new(),
+        file_locks,
+        oops_count: access::read_u64(ctx.sys_path("kernel/oops_count")),
+        warn_count: access::read_u64(ctx.sys_path("kernel/warn_count")),
+        kexec_loaded: access::read_trimmed(ctx.sys_path("kernel/kexec_loaded")),
+        fscaps: access::read_trimmed(ctx.sys_path("kernel/fscaps")),
+        uevent_seqnum: access::read_u64(ctx.sys_path("kernel/uevent_seqnum")),
+        filesystems: parse_filesystems(&access::read_trimmed(ctx.proc_path("filesystems"))),
+        notes,
     }
 }
 
@@ -141,6 +164,25 @@ pub fn count_lock_lines(sample: &Sample<String>) -> usize {
         return 0;
     };
     text.lines().filter(|l| !l.trim().is_empty()).count()
+}
+
+/// `/proc/filesystems`：只列块设备文件系统名（跳过 `nodev`）。
+pub fn parse_filesystems(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("nodev") {
+            continue;
+        }
+        out.push(t.to_string());
+        if out.len() >= 24 {
+            break;
+        }
+    }
+    out
 }
 
 fn parse_loadavg(sample: &Sample<String>) -> Load {
@@ -242,7 +284,10 @@ pub fn parse_taint(sample: &Sample<String>) -> (Sample<u64>, Vec<String>) {
         return (miss(), Vec::new());
     };
     let Ok(v) = text.trim().parse::<u64>() else {
-        return (Sample::error(sample.source.clone(), "无法解析 tainted"), Vec::new());
+        return (
+            Sample::error(sample.source.clone(), "无法解析 tainted"),
+            Vec::new(),
+        );
     };
     let flags = decode_taint(v);
     (Sample::ok(v, sample.source.clone()), flags)
@@ -341,7 +386,10 @@ fn parse_meminfo(sample: &Sample<String>) -> Mem {
     let mut swap = None;
     for line in text.lines() {
         if let Some((k, rest)) = line.split_once(':') {
-            let n = rest.split_whitespace().next().and_then(|s| s.parse::<u64>().ok());
+            let n = rest
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<u64>().ok());
             match k {
                 "MemTotal" => total = n,
                 "MemAvailable" => available = n,
@@ -421,8 +469,50 @@ mod tests {
         fs::remove_file(root.join("proc/config.gz")).unwrap();
         let missing = config_gz_sample(&ctx);
         assert_eq!(missing.access, AccessKind::NotFound);
-        assert_eq!(count_lock_lines(&Sample::ok("1: POSIX ADVISORY WRITE 1\n2: FLOCK\n".into(), "locks")), 2);
+        assert_eq!(
+            count_lock_lines(&Sample::ok(
+                "1: POSIX ADVISORY WRITE 1\n2: FLOCK\n".into(),
+                "locks"
+            )),
+            2
+        );
         assert_eq!(count_lock_lines(&Sample::missing("locks")), 0);
+        assert_eq!(
+            parse_filesystems(&Sample::ok(
+                "nodev\tsysfs\n\text4\n\txfs\nnodev\tfuse\n".into(),
+                "fs"
+            )),
+            vec!["ext4".to_string(), "xfs".to_string()]
+        );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn denied_locks_is_not_silent_zero() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-locks-deny-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc")).unwrap();
+        let locks = root.join("proc/locks");
+        fs::write(&locks, "1: POSIX ADVISORY WRITE 1\n").unwrap();
+        fs::set_permissions(&locks, fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = fs::set_permissions(&locks, fs::Permissions::from_mode(0o644));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(r.file_locks, 0);
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
+            "denied /proc/locks must not look like zero locks: {:?}",
+            r.notes
+        );
     }
 }

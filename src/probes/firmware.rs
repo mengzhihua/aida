@@ -16,6 +16,7 @@ pub struct FirmwareReport {
     pub acpi_pm_profile: Sample<String>,
     pub pstore_files: usize,
     pub firmware_timeout: Sample<u64>,
+    pub memmap_entries: usize,
     pub notes: Vec<String>,
 }
 
@@ -63,6 +64,18 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
             value: Some(n),
             ..
         } => n.len(),
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            0
+        }
+        _ => 0,
+    };
+    let memmap_entries = match access::list_dir_names(ctx.sys_path("firmware/memmap")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.iter().filter(|x| x.chars().all(|c| c.is_ascii_digit())).count(),
         _ => 0,
     };
     FirmwareReport {
@@ -76,6 +89,7 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
         acpi_pm_profile: access::read_trimmed(ctx.sys_path("firmware/acpi/pm_profile")),
         pstore_files,
         firmware_timeout: access::read_u64(ctx.sys_path("class/firmware/timeout")),
+        memmap_entries,
         notes,
     }
 }
@@ -200,8 +214,11 @@ mod tests {
         assert_eq!(r2.rng_current.value.as_deref(), Some("virtio_rng.0"));
         fs::create_dir_all(root.join("sys/class/firmware")).unwrap();
         fs::write(root.join("sys/class/firmware/timeout"), "60\n").unwrap();
+        fs::create_dir_all(root.join("sys/firmware/memmap/0")).unwrap();
+        fs::create_dir_all(root.join("sys/firmware/memmap/1")).unwrap();
         let r3 = collect(&ctx);
         assert_eq!(r3.firmware_timeout.value, Some(60));
+        assert_eq!(r3.memmap_entries, 2);
         let _ = fs::remove_dir_all(&root);
     }
 }

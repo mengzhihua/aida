@@ -80,6 +80,10 @@ pub fn collect(ctx: &ProbeCtx) -> FsReport {
             value: Some(n),
             ..
         } => n.len(),
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            0
+        }
         _ => 0,
     };
     if mounts.is_empty() && notes.is_empty() {

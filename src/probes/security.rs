@@ -18,6 +18,10 @@ pub struct SecurityReport {
     pub unprivileged_bpf_disabled: Sample<String>,
     pub modules_disabled: Sample<String>,
     pub perf_event_paranoid: Sample<String>,
+    pub protected_hardlinks: Sample<String>,
+    pub protected_symlinks: Sample<String>,
+    pub protected_fifos: Sample<String>,
+    pub protected_regular: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -45,6 +49,10 @@ pub fn collect(ctx: &ProbeCtx) -> SecurityReport {
         ),
         modules_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/modules_disabled")),
         perf_event_paranoid: access::read_trimmed(ctx.proc_path("sys/kernel/perf_event_paranoid")),
+        protected_hardlinks: access::read_trimmed(ctx.proc_path("sys/fs/protected_hardlinks")),
+        protected_symlinks: access::read_trimmed(ctx.proc_path("sys/fs/protected_symlinks")),
+        protected_fifos: access::read_trimmed(ctx.proc_path("sys/fs/protected_fifos")),
+        protected_regular: access::read_trimmed(ctx.proc_path("sys/fs/protected_regular")),
         notes,
     }
 }
@@ -103,6 +111,11 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/unprivileged_bpf_disabled"), "2\n").unwrap();
         fs::write(root.join("proc/sys/kernel/modules_disabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/perf_event_paranoid"), "2\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/fs")).unwrap();
+        fs::write(root.join("proc/sys/fs/protected_hardlinks"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/fs/protected_symlinks"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/fs/protected_fifos"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/fs/protected_regular"), "2\n").unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -117,6 +130,8 @@ mod tests {
         assert_eq!(r.apparmor_enabled.value.as_deref(), Some("Y"));
         assert_eq!(r.unprivileged_bpf_disabled.value.as_deref(), Some("2"));
         assert_eq!(r.perf_event_paranoid.value.as_deref(), Some("2"));
+        assert_eq!(r.protected_hardlinks.value.as_deref(), Some("1"));
+        assert_eq!(r.protected_regular.value.as_deref(), Some("2"));
         let _ = fs::remove_dir_all(&root);
     }
 }
