@@ -226,6 +226,9 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"tcp_min_rtt_wlen\""));
     assert!(json.contains("\"ipv6_keep_addr_on_down\""));
     assert!(json.contains("\"vfio\""));
+    assert!(json.contains("\"fc\""));
+    assert!(json.contains("\"accel\""));
+    assert!(json.contains("\"vdpa\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -601,6 +604,14 @@ fn live_snapshot_json_and_html() {
             || html.contains("vfio")
             || html.contains("keep_addr")
             || html.contains("numa_stat")
+    );
+    assert!(
+        html.contains("ra_min_hop")
+            || html.contains("numa_promote")
+            || html.contains("udp_wmem_min")
+            || html.contains("legacy_va")
+            || html.contains("vdpa")
+            || html.contains("accel")
     );
     assert!(!html.contains("<script"));
 }

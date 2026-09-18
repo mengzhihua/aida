@@ -24,6 +24,9 @@ pub struct StatusMeters {
     pub disk_wr_bps: Option<f64>,
     pub temp_c: Option<f64>,
     pub temp_key: Option<String>,
+    pub load_1: Option<f64>,
+    pub load_5: Option<f64>,
+    pub load_15: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -39,6 +42,9 @@ pub struct HistorySample {
     pub disk_wr_bps: Option<f64>,
     pub temp_c: Option<f64>,
     pub temp_key: Option<String>,
+    pub load_1: Option<f64>,
+    pub load_5: Option<f64>,
+    pub load_15: Option<f64>,
 }
 
 impl StatusMeters {
@@ -76,6 +82,9 @@ impl StatusMeters {
         let mut disk_wr = 0.0;
         let mut disk_any = false;
         for d in &snap.block.devices {
+            if d.r#type == "Device Mapper" {
+                continue;
+            }
             if let Some(v) = d.rd_bps {
                 disk_rd += v;
                 disk_any = true;
@@ -99,6 +108,9 @@ impl StatusMeters {
             disk_wr_bps: disk_any.then_some(disk_wr),
             temp_c: hottest.as_ref().map(|h| h.1),
             temp_key: hottest.map(|h| h.0),
+            load_1: snap.software.load_1.value,
+            load_5: snap.software.load_5.value,
+            load_15: snap.software.load_15.value,
         }
     }
 
@@ -115,6 +127,9 @@ impl StatusMeters {
             disk_wr_bps: self.disk_wr_bps,
             temp_c: self.temp_c,
             temp_key: self.temp_key.clone(),
+            load_1: self.load_1,
+            load_5: self.load_5,
+            load_15: self.load_15,
         }
     }
 
@@ -124,10 +139,13 @@ impl StatusMeters {
             .cpu_pct
             .map(|v| format!("CPU {v:.1}%"))
             .unwrap_or_else(|| "CPU —".into());
-        let mem = self
-            .mem_used_pct
-            .map(|v| format!("MEM {v:.0}%"))
-            .unwrap_or_else(|| "MEM —".into());
+        let mem = match (self.mem_used_pct, self.mem_used_kb, self.mem_total_kb) {
+            (Some(pct), Some(used), Some(total)) => {
+                format!("MEM {pct:.0}% {}/{}", format_mem(used), format_mem(total))
+            }
+            (Some(pct), _, _) => format!("MEM {pct:.0}%"),
+            _ => "MEM —".into(),
+        };
         let net = match (self.net_rx_bps, self.net_tx_bps) {
             (Some(rx), Some(tx)) => format!("↓{} ↑{}", format_rate(rx), format_rate(tx)),
             (Some(rx), None) => format!("↓{}", format_rate(rx)),
@@ -144,7 +162,22 @@ impl StatusMeters {
             .temp_c
             .map(|v| format!("{v:.1}°C"))
             .unwrap_or_else(|| "TEMP —".into());
-        format!("{cpu}  {mem}  {net}  {disk}  {temp}")
+        let load = match (self.load_1, self.load_5, self.load_15) {
+            (Some(a), Some(b), Some(c)) => format!("  LD {a:.2} {b:.2} {c:.2}"),
+            _ => String::new(),
+        };
+        format!("{cpu}  {mem}  {net}  {disk}  {temp}{load}")
+    }
+}
+
+pub fn format_mem(kb: u64) -> String {
+    let b = kb as f64 * 1024.0;
+    if b >= 1_073_741_824.0 {
+        format!("{:.1}G", b / 1_073_741_824.0)
+    } else if b >= 1_048_576.0 {
+        format!("{:.1}M", b / 1_048_576.0)
+    } else {
+        format!("{kb}K")
     }
 }
 
@@ -208,6 +241,9 @@ mod tests {
             disk_wr_bps: Some(12_300.0),
             temp_c: Some(45.21),
             temp_key: Some("coretemp".into()),
+            load_1: Some(0.05),
+            load_5: Some(0.06),
+            load_15: Some(0.03),
         };
         let line = m.compact_line();
         assert!(line.contains("CPU 12.3%"), "{line}");
@@ -215,11 +251,13 @@ mod tests {
             line.contains("MEM 49%") || line.contains("MEM 48%"),
             "{line}"
         );
+        assert!(line.contains("3.9M/8.0M"), "{line}");
         assert!(line.contains("↓1.2M"), "{line}");
         assert!(line.contains("↑800B"), "{line}");
         assert!(line.contains("R0B"), "{line}");
         assert!(line.contains("W12.3K"), "{line}");
         assert!(line.contains("45.2°C"), "{line}");
+        assert!(line.contains("LD 0.05 0.06 0.03"), "{line}");
     }
 
     #[test]
