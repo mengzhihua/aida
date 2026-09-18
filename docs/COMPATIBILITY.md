@@ -122,6 +122,12 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 100. **`firmware/memmap` 编号目录是 e820 段。** 不要展开每一段的 type/start（长度已够）。
 101. **`rp_filter` / `use_tempaddr` 是 per-iface。** 只读 `conf/all` 会漏掉 `eth0:1` 或 `lo:-1`。
 102. **`clockevents` 只列 `broadcast` 与 `clockeventN`。** 目录 PermissionDenied 不要当成没有时钟事件设备。
+103. **`/proc/dma` 的 `4: cascade` 在 PC 上正常。** 这是 ISA DMA 级联，不是采集错误。
+104. **空的 `/sys/class/dma` 表示没有 dmaengine 通道。** 云 VM 常见，不要当读失败。
+105. **不要写 PWM `export`/`unexport`。** 只读 `pwmchipN/npwm`。
+106. **不要读取 nvmem 的 `nvmem` 二进制属性。** 只读 `type`。
+107. **空的 `/sys/class/devlink` 表示没有设备链路。** class 存在但无条目不是失败。
+108. **`pci_bus` 的 `cpulistaffinity` 是 host bridge 的 CPU 掩码。** 不要写 `rescan`。
 
 ## 测试方案
 

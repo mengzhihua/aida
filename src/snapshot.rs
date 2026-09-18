@@ -8,9 +8,9 @@ use crate::probes::block::DiskSnap;
 use crate::probes::net::NetSnap;
 use crate::probes::rapl::RaplSnap;
 use crate::probes::{
-    ata, audio, block, buses, cgroup, clock, cpu, crypto, dmi, edac, firmware, fs, gpu, hwmon, input,
-    iomem, iommu, irq, iscsi, kvm, md, memory, modules, net, ns, numa, nvme, pci, platform, pm, power,
-    psi, rapl, scsi, security, software, sysctl, usb, virtio, zmem,
+    ata, audio, block, buses, cgroup, clock, cpu, crypto, dmi, edac, firmware, fs, gpu, hwmon,
+    input, iomem, iommu, irq, iscsi, kvm, md, memory, modules, net, ns, numa, nvme, pci, periph,
+    platform, pm, power, psi, rapl, scsi, security, software, sysctl, usb, virtio, zmem,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -53,6 +53,7 @@ pub struct HardwareSnapshot {
     pub iscsi: iscsi::IscsiReport,
     pub zmem: zmem::ZmemReport,
     pub platform: platform::PlatformReport,
+    pub periph: periph::PeriphReport,
     pub buses: buses::BusesReport,
     pub cgroup: cgroup::CgroupReport,
     pub sysctl: sysctl::SysctlReport,
@@ -151,6 +152,7 @@ impl HardwareSnapshot {
             iscsi: iscsi::collect(ctx),
             zmem: zmem::collect(ctx),
             platform: platform::collect(ctx),
+            periph: periph::collect(ctx),
             buses: buses::collect(ctx),
             cgroup: cgroup::collect(ctx),
             sysctl: sysctl::collect(ctx),

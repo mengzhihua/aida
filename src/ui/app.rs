@@ -2223,6 +2223,63 @@ impl AidaApp {
             );
         }
         ui.separator();
+        ui.strong(self.t("DMA / 模拟外设", "DMA / analog"));
+        for n in &self.snap.periph.notes {
+            ui.weak(n);
+        }
+        if !self.snap.periph.dma_isa.is_empty() {
+            kv(
+                ui,
+                "/proc/dma",
+                &self
+                    .snap
+                    .periph
+                    .dma_isa
+                    .iter()
+                    .map(|c| format!("{}:{}", c.channel, c.name))
+                    .collect::<Vec<_>>()
+                    .join("  "),
+            );
+        }
+        for d in &self.snap.periph.dmaengine {
+            kv(
+                ui,
+                &format!("dma {}", d.name),
+                &format!("in_use {}", d.in_use.display()),
+            );
+        }
+        for p in &self.snap.periph.pwm_chips {
+            kv(ui, &p.name, &format!("npwm {}", p.npwm.display()));
+        }
+        for i in &self.snap.periph.iio {
+            kv(ui, &format!("IIO {}", i.name), &i.iio_name.display());
+        }
+        for n in &self.snap.periph.nvmem {
+            kv(ui, &format!("nvmem {}", n.name), &n.typ.display());
+        }
+        for r in &self.snap.periph.regulators {
+            kv(
+                ui,
+                &format!("reg {}", r.name),
+                &format!(
+                    "{}  {}  {} uV",
+                    r.regulator_name.display(),
+                    r.state.display(),
+                    r.microvolts.display()
+                ),
+            );
+        }
+        for d in &self.snap.periph.devlinks {
+            kv(ui, &format!("devlink {}", d.name), &d.status.display());
+        }
+        for b in &self.snap.periph.pci_buses {
+            kv(
+                ui,
+                &format!("pci_bus {}", b.name),
+                &format!("cpulist {}", b.cpulist.display()),
+            );
+        }
+        ui.separator();
         ui.strong(self.t("无线 / 外设总线", "Radios / extra buses"));
         for n in &self.snap.buses.notes {
             ui.weak(n);
