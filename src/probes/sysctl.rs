@@ -72,6 +72,16 @@ pub struct SysctlReport {
     pub laptop_mode: Sample<String>,
     pub kexec_load_disabled: Sample<String>,
     pub hung_task_panic: Sample<String>,
+    pub printk_ratelimit: Sample<u64>,
+    pub printk_ratelimit_burst: Sample<u64>,
+    pub sched_cfs_bandwidth_slice_us: Sample<u64>,
+    pub oops_limit: Sample<u64>,
+    pub hardlockup_panic: Sample<String>,
+    pub softlockup_panic: Sample<String>,
+    pub oom_dump_tasks: Sample<String>,
+    pub user_reserve_kbytes: Sample<u64>,
+    pub unprivileged_userfaultfd: Sample<String>,
+    pub ngroups_max: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -182,6 +192,20 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         laptop_mode: access::read_trimmed(ctx.proc_path("sys/vm/laptop_mode")),
         kexec_load_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/kexec_load_disabled")),
         hung_task_panic: access::read_trimmed(ctx.proc_path("sys/kernel/hung_task_panic")),
+        printk_ratelimit: access::read_u64(ctx.proc_path("sys/kernel/printk_ratelimit")),
+        printk_ratelimit_burst: access::read_u64(ctx.proc_path("sys/kernel/printk_ratelimit_burst")),
+        sched_cfs_bandwidth_slice_us: access::read_u64(
+            ctx.proc_path("sys/kernel/sched_cfs_bandwidth_slice_us"),
+        ),
+        oops_limit: access::read_u64(ctx.proc_path("sys/kernel/oops_limit")),
+        hardlockup_panic: access::read_trimmed(ctx.proc_path("sys/kernel/hardlockup_panic")),
+        softlockup_panic: access::read_trimmed(ctx.proc_path("sys/kernel/softlockup_panic")),
+        oom_dump_tasks: access::read_trimmed(ctx.proc_path("sys/vm/oom_dump_tasks")),
+        user_reserve_kbytes: access::read_u64(ctx.proc_path("sys/vm/user_reserve_kbytes")),
+        unprivileged_userfaultfd: access::read_trimmed(
+            ctx.proc_path("sys/vm/unprivileged_userfaultfd"),
+        ),
+        ngroups_max: access::read_u64(ctx.proc_path("sys/kernel/ngroups_max")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -306,6 +330,14 @@ mod tests {
         fs::write(root.join("proc/sys/vm/laptop_mode"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/kexec_load_disabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/hung_task_panic"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/printk_ratelimit"), "5\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/sched_cfs_bandwidth_slice_us"), "5000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/oops_limit"), "10000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/hardlockup_panic"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/oom_dump_tasks"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/vm/user_reserve_kbytes"), "131072\n").unwrap();
+        fs::write(root.join("proc/sys/vm/unprivileged_userfaultfd"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/ngroups_max"), "65536\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
@@ -351,6 +383,14 @@ mod tests {
         assert_eq!(r.laptop_mode.value.as_deref(), Some("0"));
         assert_eq!(r.kexec_load_disabled.value.as_deref(), Some("0"));
         assert_eq!(r.hung_task_panic.value.as_deref(), Some("0"));
+        assert_eq!(r.printk_ratelimit.value, Some(5));
+        assert_eq!(r.sched_cfs_bandwidth_slice_us.value, Some(5000));
+        assert_eq!(r.oops_limit.value, Some(10_000));
+        assert_eq!(r.hardlockup_panic.value.as_deref(), Some("0"));
+        assert_eq!(r.oom_dump_tasks.value.as_deref(), Some("1"));
+        assert_eq!(r.user_reserve_kbytes.value, Some(131072));
+        assert_eq!(r.unprivileged_userfaultfd.value.as_deref(), Some("0"));
+        assert_eq!(r.ngroups_max.value, Some(65536));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

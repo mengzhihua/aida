@@ -136,6 +136,14 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 114. **`panic_on_oom=0` 是默认：OOM killer 而不 panic。** 不要当采集失败。
 115. **`/proc/net/tcp6`/`udp6`/`raw`/`udplite` 与 tcp 一样跳过表头。** IPv4-only 主机文件可能只有表头或缺失。
 116. **`xfrm_stat` 是每行 `Key Value`。** 不要用 snmp 两行组解析。
+117. **空的 ieee80211/typec/udc/dax/wmi/spi/serio/ubi 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note，不要当成空列表。
+118. **不要写 `binfmt_misc` 的 `register`。** 只读 `status`；目录在但无 status 就是未挂载。
+119. **`bpf_jit_enable` 经常不存在。** 未开 JIT 时 `NotFound`，不是采集失败。
+120. **`/proc/net/igmp6` 按接口名去重。** 不要把组播组行数当接口数。
+121. **空的 `/proc/net/ip_tables_names` 表示未加载 iptables。** 不是读失败，也不要跑 `iptables-save`。
+122. **`tcp_notsent_lowat=4294967295` 表示不限制。** 用 u64 解析。
+123. **不要读 `/proc/sys/vm/drop_caches` 或 `compact_memory`。** 它们是只写触发器。
+124. **不要转储 `/sys/kernel/notes` 二进制。**
 
 ## 测试方案
 

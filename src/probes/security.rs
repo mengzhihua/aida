@@ -16,6 +16,10 @@ pub struct SecurityReport {
     pub fips_enabled: Sample<String>,
     pub apparmor_enabled: Sample<String>,
     pub unprivileged_bpf_disabled: Sample<String>,
+    pub bpf_jit_enable: Sample<String>,
+    pub bpf_jit_harden: Sample<String>,
+    /// `/proc/sys/fs/binfmt_misc/status`；不要写 `register`。
+    pub binfmt_misc_status: Sample<String>,
     pub modules_disabled: Sample<String>,
     pub perf_event_paranoid: Sample<String>,
     pub protected_hardlinks: Sample<String>,
@@ -47,6 +51,9 @@ pub fn collect(ctx: &ProbeCtx) -> SecurityReport {
         unprivileged_bpf_disabled: access::read_trimmed(
             ctx.proc_path("sys/kernel/unprivileged_bpf_disabled"),
         ),
+        bpf_jit_enable: access::read_trimmed(ctx.proc_path("sys/net/core/bpf_jit_enable")),
+        bpf_jit_harden: access::read_trimmed(ctx.proc_path("sys/net/core/bpf_jit_harden")),
+        binfmt_misc_status: access::read_trimmed(ctx.proc_path("sys/fs/binfmt_misc/status")),
         modules_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/modules_disabled")),
         perf_event_paranoid: access::read_trimmed(ctx.proc_path("sys/kernel/perf_event_paranoid")),
         protected_hardlinks: access::read_trimmed(ctx.proc_path("sys/fs/protected_hardlinks")),
@@ -109,6 +116,11 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/dmesg_restrict"), "1\n").unwrap();
         fs::write(root.join("proc/sys/crypto/fips_enabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/unprivileged_bpf_disabled"), "2\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/core")).unwrap();
+        fs::write(root.join("proc/sys/net/core/bpf_jit_enable"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/bpf_jit_harden"), "0\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/fs/binfmt_misc")).unwrap();
+        fs::write(root.join("proc/sys/fs/binfmt_misc/status"), "enabled\n").unwrap();
         fs::write(root.join("proc/sys/kernel/modules_disabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/perf_event_paranoid"), "2\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs")).unwrap();
@@ -129,6 +141,9 @@ mod tests {
         assert_eq!(r.kptr_restrict.value.as_deref(), Some("2"));
         assert_eq!(r.apparmor_enabled.value.as_deref(), Some("Y"));
         assert_eq!(r.unprivileged_bpf_disabled.value.as_deref(), Some("2"));
+        assert_eq!(r.bpf_jit_enable.value.as_deref(), Some("1"));
+        assert_eq!(r.bpf_jit_harden.value.as_deref(), Some("0"));
+        assert_eq!(r.binfmt_misc_status.value.as_deref(), Some("enabled"));
         assert_eq!(r.perf_event_paranoid.value.as_deref(), Some("2"));
         assert_eq!(r.protected_hardlinks.value.as_deref(), Some("1"));
         assert_eq!(r.protected_regular.value.as_deref(), Some("2"));

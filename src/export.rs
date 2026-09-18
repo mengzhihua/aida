@@ -677,6 +677,24 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ib.ports
         ));
     }
+    for (label, names) in [
+        ("ieee80211", &snap.buses.ieee80211),
+        ("typec", &snap.buses.typec),
+        ("udc", &snap.buses.udc),
+        ("dax", &snap.buses.dax),
+        ("wmi", &snap.buses.wmi),
+        ("spi", &snap.buses.spi),
+        ("serio", &snap.buses.serio),
+        ("ubi", &snap.buses.ubi),
+    ] {
+        if !names.is_empty() {
+            html.push_str(&format!(
+                "<p class=\"muted\">{} {}</p>",
+                esc(label),
+                esc(&names.join(" "))
+            ));
+        }
+    }
     if !snap.buses.misc.is_empty() {
         html.push_str(&format!(
             "<p class=\"muted\">misc {}</p>",
@@ -967,7 +985,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {} raw6 {} udplite6 {} igmp6 {} busy_poll {} weight {} notsent {}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -1012,7 +1030,13 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp6_socks,
         snap.net.udp6_socks,
         snap.net.raw_socks,
-        snap.net.udplite_socks
+        snap.net.udplite_socks,
+        snap.net.raw6_socks,
+        snap.net.udplite6_socks,
+        snap.net.igmp6_ifaces,
+        snap.net.busy_poll.display(),
+        snap.net.dev_weight.display(),
+        snap.net.tcp.notsent_lowat.display()
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1051,6 +1075,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">ptype {}</p>",
             esc(&snap.net.ptypes.join(" "))
+        ));
+    }
+    if !snap.net.iptables.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">iptables {}</p>",
+            esc(&snap.net.iptables.join(" "))
+        ));
+    }
+    if !snap.net.ip6tables.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ip6tables {}</p>",
+            esc(&snap.net.ip6tables.join(" "))
         ));
     }
     for b in &snap.net.bridges {
@@ -1563,6 +1599,22 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ),
             ),
             (
+                "printk / cfs / uffd",
+                format!(
+                    "ratelimit {}/{} cfs {}us oops_limit {} hard {} soft {} oom_dump {} user_reserve {} uffd {} ngroups {}",
+                    snap.sysctl.printk_ratelimit.display(),
+                    snap.sysctl.printk_ratelimit_burst.display(),
+                    snap.sysctl.sched_cfs_bandwidth_slice_us.display(),
+                    snap.sysctl.oops_limit.display(),
+                    snap.sysctl.hardlockup_panic.display(),
+                    snap.sysctl.softlockup_panic.display(),
+                    snap.sysctl.oom_dump_tasks.display(),
+                    snap.sysctl.user_reserve_kbytes.display(),
+                    snap.sysctl.unprivileged_userfaultfd.display(),
+                    snap.sysctl.ngroups_max.display()
+                ),
+            ),
+            (
                 "keys / dumpable",
                 format!(
                     "maxkeys {} maxbytes {} cap_last {} dumpable {} autogroup {} cad {}",
@@ -1598,8 +1650,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "bpf/perf",
                 format!(
-                    "unpriv_bpf {} perf {}",
+                    "unpriv_bpf {} jit {}/{} binfmt {} perf {}",
                     snap.security.unprivileged_bpf_disabled.display(),
+                    snap.security.bpf_jit_enable.display(),
+                    snap.security.bpf_jit_harden.display(),
+                    snap.security.binfmt_misc_status.display(),
                     snap.security.perf_event_paranoid.display()
                 ),
             ),
