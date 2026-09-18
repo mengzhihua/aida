@@ -10,6 +10,9 @@ pub struct FsReport {
     pub swaps: Vec<Swap>,
     pub ext4: Vec<Ext4Fs>,
     pub xfs_stats: Sample<String>,
+    pub nfsd_threads: Sample<u64>,
+    pub nfs_volumes: usize,
+    pub fuse_conns: usize,
     pub notes: Vec<String>,
 }
 
@@ -69,6 +72,16 @@ pub fn collect(ctx: &ProbeCtx) -> FsReport {
     let swaps = parse_swaps(&access::read_trimmed(ctx.proc_path("swaps")));
     let ext4 = read_ext4(ctx);
     let xfs_stats = xfs_rw_summary(ctx);
+    let nfsd_threads = access::read_u64(ctx.proc_path("fs/nfsd/threads"));
+    let nfs_volumes = count_nfs_volumes(&access::read_trimmed(ctx.proc_path("net/nfsfs/volumes")));
+    let fuse_conns = match access::list_dir_names(ctx.sys_path("fs/fuse/connections")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.len(),
+        _ => 0,
+    };
     if mounts.is_empty() && notes.is_empty() {
         notes.push("mountinfo 为空。".into());
     }
@@ -77,8 +90,21 @@ pub fn collect(ctx: &ProbeCtx) -> FsReport {
         swaps,
         ext4,
         xfs_stats,
+        nfsd_threads,
+        nfs_volumes,
+        fuse_conns,
         notes,
     }
+}
+
+fn count_nfs_volumes(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .count()
 }
 
 pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
@@ -250,6 +276,15 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].filename, "/swapfile");
         assert_eq!(v[0].size_kb, 1048572);
+    }
+
+    #[test]
+    fn nfs_volume_rows() {
+        let n = count_nfs_volumes(&Sample::ok(
+            "NV SERVER PORT DEV      FSC\nv4 10.0.0.1 2049 0:42     no\n".into(),
+            "volumes",
+        ));
+        assert_eq!(n, 1);
     }
 
     #[test]

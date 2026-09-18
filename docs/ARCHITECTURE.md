@@ -29,7 +29,7 @@
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02 |
 | GPU | `/sys/class/drm/cardN`，PCI class `0x03` | amdgpu busy/vram、i915/xe 频率、连接器 EDID、`/proc/driver/nvidia` |
-| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；`/proc/net/netstat`；snmp6；net.core；ipv6_route；if_inet6 |
+| Net | `/sys/class/net/*/statistics` | getifaddrs；queues；sockstat；snmp；softnet；bridge/bond；conntrack；tcp congestion；`/proc/net/netstat`；snmp6；net.core；ipv6_route；if_inet6；tcp knobs；protocols |
 | USB | `/sys/bus/usb/devices`（跳过 `*:*.*` 接口节点） | `usb.ids` 名称 |
 | Input | `/proc/bus/input/devices` | handlers → keyboard/mouse/js |
 | NUMA | `/sys/devices/system/node/nodeN` | meminfo / cpulist / distance |
@@ -41,7 +41,7 @@
 | RAPL | `/sys/class/powercap/*/energy_uj` | 差分瓦特；回绕用 `max_energy_range_uj` |
 | Audio | `/proc/asound/cards` | `/sys/class/sound/cardN/id` |
 | Firmware | `/sys/firmware/efi` | SecureBoot；ACPI 表名；pm_profile；TPM；hwrng；pstore |
-| Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs`；ext4 sysfs；xfs stats |
+| Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs`；ext4 sysfs；xfs stats；nfsd；fuse connections |
 | Modules | `/proc/modules` | 按名称排序 |
 | Clock | `clocksource0/current_clocksource` | `/sys/class/rtc`；`/sys/class/ptp`；`/sys/class/pps` |
 | iomem | `/proc/iomem` | `/proc/ioports`；非 root 地址常为 0 |
@@ -52,13 +52,13 @@
 | virtio | `/sys/bus/virtio/devices` | `modalias` → `virtio_ids.h` |
 | KVM | `/dev/kvm` | `kvm_intel`/`kvm_amd` nested/EPT/NPT |
 | IOMMU | `/sys/kernel/iommu_groups` | 组内 PCI 槽位名 |
-| Block | `/sys/block`（跳过 ram/zram/分区） | diskstats 差分；`queue/*`；有 backing 的 loop；`dm-*` name/uuid |
+| Block | `/sys/block`（跳过 ram/zram/分区） | diskstats 差分；`queue/*`；有 backing 的 loop；`dm-*` name/uuid；bdi；bsg |
 | MD | `/proc/mdstat` | `/sys/block/mdN/md/{degraded,sync_action}` |
 | SCSI | `/sys/class/scsi_host` | `scsi_device` vendor/model/type |
 | iSCSI | `/sys/class/iscsi_{transport,host,session}` | 不调用 iscsiadm |
-| Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；不调用 i2cdetect |
+| Platform | watchdog / backlight / leds / i2c | ACPI/PnP 设备计数；workqueue；perf event_source；不调用 i2cdetect |
 | Buses | rfkill / bluetooth / thunderbolt / V4L / MMC / MEI / ttyS / misc / hidraw / gpio / mtd / IB | `/proc/tty/drivers`；不调用 setserial；ttyS `type=0` 跳过 |
-| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；consoles |
+| Sysctl | `/proc/sys/{fs,vm,kernel}` | file-nr；pid_max；aio；inotify；boot_id；nmi_watchdog；panic；sysrq；min_free_kbytes；consoles |
 | Cgroup | `/sys/fs/cgroup` | v2 controllers / memory.current；第一层 `.slice`/`.scope` |
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf | 不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |

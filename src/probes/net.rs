@@ -38,7 +38,25 @@ pub struct NetReport {
     pub tcp_fastopen: Sample<String>,
     pub tcp_syncookies: Sample<String>,
     pub ip_local_port_range: Sample<String>,
+    pub tcp: TcpTune,
+    pub default_qdisc: Sample<String>,
+    pub ipv6_disable: Sample<String>,
+    pub ipv6_forwarding: Sample<String>,
+    pub protocols: Vec<String>,
+    pub igmp_ifaces: usize,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TcpTune {
+    pub keepalive_time: Sample<u64>,
+    pub fin_timeout: Sample<u64>,
+    pub max_syn_backlog: Sample<u64>,
+    pub timestamps: Sample<String>,
+    pub sack: Sample<String>,
+    pub window_scaling: Sample<String>,
+    pub ecn: Sample<String>,
+    pub tw_reuse: Sample<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -181,6 +199,21 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let tcp_fastopen = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_fastopen"));
     let tcp_syncookies = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_syncookies"));
     let ip_local_port_range = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_local_port_range"));
+    let tcp = TcpTune {
+        keepalive_time: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_keepalive_time")),
+        fin_timeout: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_fin_timeout")),
+        max_syn_backlog: access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_syn_backlog")),
+        timestamps: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_timestamps")),
+        sack: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_sack")),
+        window_scaling: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_window_scaling")),
+        ecn: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_ecn")),
+        tw_reuse: access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_tw_reuse")),
+    };
+    let default_qdisc = access::read_trimmed(ctx.proc_path("sys/net/core/default_qdisc"));
+    let ipv6_disable = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_ipv6"));
+    let ipv6_forwarding = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/forwarding"));
+    let protocols = parse_protocols(&access::read_trimmed(ctx.proc_path("net/protocols")));
+    let igmp_ifaces = count_igmp_ifaces(&access::read_trimmed(ctx.proc_path("net/igmp")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -217,6 +250,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_fastopen,
                 tcp_syncookies,
                 ip_local_port_range,
+                tcp,
+                default_qdisc,
+                ipv6_disable,
+                ipv6_forwarding,
+                protocols,
+                igmp_ifaces,
                 notes,
             };
         }
@@ -361,6 +400,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_fastopen,
         tcp_syncookies,
         ip_local_port_range,
+        tcp,
+        default_qdisc,
+        ipv6_disable,
+        ipv6_forwarding,
+        protocols,
+        igmp_ifaces,
         notes,
     }
 }
@@ -516,6 +561,38 @@ fn count_data_lines(sample: &Sample<String>) -> usize {
         return 0;
     };
     text.lines().filter(|l| !l.trim().is_empty()).count()
+}
+
+/// `/proc/net/protocols`：有 socket 的协议 `NAME:count`，最多 16 条。
+pub fn parse_protocols(sample: &Sample<String>) -> Vec<String> {
+    let Some(text) = sample.value.as_deref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines().skip(1) {
+        let mut it = line.split_whitespace();
+        let Some(name) = it.next() else { continue };
+        let Some(socks) = it.nth(1).and_then(|s| s.parse::<u64>().ok()) else {
+            continue;
+        };
+        if socks == 0 {
+            continue;
+        }
+        out.push(format!("{name}:{socks}"));
+        if out.len() >= 16 {
+            break;
+        }
+    }
+    out
+}
+
+fn count_igmp_ifaces(sample: &Sample<String>) -> usize {
+    let Some(text) = sample.value.as_deref() else {
+        return 0;
+    };
+    text.lines()
+        .filter(|l| l.contains(':') && !l.starts_with("Idx"))
+        .count()
 }
 
 /// `/proc/net/netstat` 与 snmp 相同：两行一组。不调用 `netstat`。
@@ -814,6 +891,18 @@ mod tests {
             count_data_lines(&Sample::ok(
                 "00000000000000000000000000000001 01 80 10 80       lo\nfe80... 02 40 20 80   eth0\n".into(),
                 "if_inet6",
+            )),
+            2
+        );
+        let proto = parse_protocols(&Sample::ok(
+            "protocol  size sockets  memory\nTCP  1  13  0\nUNIX  1  0  0\nUDP  1  2  0\n".into(),
+            "protocols",
+        ));
+        assert_eq!(proto, vec!["TCP:13".to_string(), "UDP:2".to_string()]);
+        assert_eq!(
+            count_igmp_ifaces(&Sample::ok(
+                "Idx\tDevice    : Count\n1\tlo        :     1      V3\n2\teth0      :     1      V3\n".into(),
+                "igmp",
             )),
             2
         );
