@@ -76,7 +76,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     snap.cpu.nohz_full.value.as_deref(),
                 ) {
                     (crate::access::AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
-                    (crate::access::AccessKind::Ok, _) => "—".into(),
+                    (crate::access::AccessKind::Ok | crate::access::AccessKind::NotFound, _) => {
+                        "—".into()
+                    }
                     _ => snap.cpu.nohz_full.access_label(),
                 },
             ),
@@ -1026,7 +1028,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .unwrap_or_else(|| "—".into())
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries2 {} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {} raw6 {} udplite6 {} igmp6 {} busy_poll {} weight {} notsent {}</p>",
+        "<p class=\"muted\">IPv6 in {} out {} octets {}/{} TCP6 {} unix {} inet6 {} ipv6_route {} fastopen {} somaxconn {} ka {} sack {} syn/synack {}/{} retries {}/{} qdisc {} budget {} rp_filter {} redirects {} tcp/udp {}/{} tcp6/udp6 {}/{} raw {} udplite {} raw6 {} udplite6 {} igmp6 {} busy_poll {} weight {} notsent {}</p>",
         snap.net
             .snmp6
             .in_receives
@@ -1061,6 +1063,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp.sack.display(),
         snap.net.tcp.syn_retries.display(),
         snap.net.tcp.synack_retries.display(),
+        snap.net.tcp.retries1.display(),
         snap.net.tcp.retries2.display(),
         snap.net.default_qdisc.display(),
         snap.net.netdev_budget.display(),

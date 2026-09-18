@@ -601,6 +601,7 @@ flags\t\t: fpu hypervisor sse
         assert_eq!(info.possible.value.as_deref(), Some("0-3"));
         assert_eq!(info.present.value.as_deref(), Some("0-3"));
         assert_eq!(info.kernel_max.value, Some(63));
+        assert_eq!(info.nohz_full.access, AccessKind::NotFound);
         std::fs::write(root.join("sys/devices/system/cpu/enabled"), "0-3\n").unwrap();
         std::fs::write(root.join("sys/devices/system/cpu/nohz_full"), "\n").unwrap();
         let info = collect_with_util(&ctx, None);

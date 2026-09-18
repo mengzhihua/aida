@@ -378,7 +378,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("fastopen") || html.contains("gpio") || html.contains("nmi"));
     assert!(html.contains("protocols") || html.contains("nfsd") || html.contains("qdisc"));
     assert!(html.contains("somaxconn"));
-    assert!(html.contains("syn/synack") || html.contains("retries2"));
+    assert!(html.contains("syn/synack") || html.contains("retries"));
     assert!(html.contains("maxkeys") || html.contains("watermark") || html.contains("vtcon"));
     assert!(html.contains("shmmax") || html.contains("kexec") || html.contains("protected"));
     assert!(html.contains("pci_bus") || html.contains("/proc/dma") || html.contains("cascade"));

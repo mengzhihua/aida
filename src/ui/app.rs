@@ -572,7 +572,7 @@ impl AidaApp {
                 self.snap.cpu.nohz_full.value.as_deref(),
             ) {
                 (AccessKind::Ok, Some(s)) if !s.is_empty() => s.to_string(),
-                (AccessKind::Ok, _) => "—".into(),
+                (AccessKind::Ok | AccessKind::NotFound, _) => "—".into(),
                 _ => self.snap.cpu.nohz_full.access_label(),
             },
         );
