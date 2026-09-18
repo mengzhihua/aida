@@ -1077,18 +1077,20 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             esc(&snap.net.ptypes.join(" "))
         ));
     }
-    if !snap.net.iptables.is_empty() {
-        html.push_str(&format!(
-            "<p class=\"muted\">iptables {}</p>",
-            esc(&snap.net.iptables.join(" "))
-        ));
-    }
-    if !snap.net.ip6tables.is_empty() {
-        html.push_str(&format!(
-            "<p class=\"muted\">ip6tables {}</p>",
-            esc(&snap.net.ip6tables.join(" "))
-        ));
-    }
+    html_name_list(
+        &mut html,
+        "iptables",
+        &snap.net.iptables,
+        &snap.net.notes,
+        "ip_tables_names",
+    );
+    html_name_list(
+        &mut html,
+        "ip6tables",
+        &snap.net.ip6tables,
+        &snap.net.notes,
+        "ip6_tables_names",
+    );
     if !snap.net.connectors.is_empty() {
         html.push_str(&format!(
             "<p class=\"muted\">connector {}</p>",
@@ -1835,6 +1837,28 @@ fn access_cell(k: AccessKind) -> &'static str {
         AccessKind::NotFound => "不存在",
         AccessKind::Unsupported => "不支持",
         AccessKind::Error => "错误",
+    }
+}
+
+fn html_name_list(
+    html: &mut String,
+    label: &str,
+    names: &[String],
+    notes: &[String],
+    path_frag: &str,
+) {
+    if !names.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">{} {}</p>",
+            esc(label),
+            esc(&names.join(" "))
+        ));
+    } else if let Some(n) = notes.iter().find(|s| s.contains(path_frag)) {
+        html.push_str(&format!(
+            "<p class=\"warn\">{} {}</p>",
+            esc(label),
+            esc(n)
+        ));
     }
 }
 

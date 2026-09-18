@@ -219,8 +219,8 @@ fn live_snapshot_json_and_html() {
         "printk_ratelimit 不应是读取失败"
     );
     assert!(
-        snap.sysctl.sched_cfs_bandwidth_slice_us.value.is_some(),
-        "sched_cfs_bandwidth_slice_us 应可读"
+        snap.sysctl.sched_cfs_bandwidth_slice_us.access != aida::access::AccessKind::Error,
+        "sched_cfs_bandwidth_slice_us 不应是读取失败（无 CONFIG_CFS_BANDWIDTH 时为 NotFound）"
     );
     assert!(
         snap.net.igmp6_ifaces >= 1 || snap.net.igmp_ifaces >= 1,

@@ -316,8 +316,14 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let igmp6_ifaces = count_igmp6_ifaces(&access::read_trimmed(ctx.proc_path("net/igmp6")));
     let raw6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/raw6")));
     let udplite6_socks = count_table_rows(&access::read_trimmed(ctx.proc_path("net/udplite6")));
-    let iptables = parse_name_lines(&access::read_trimmed(ctx.proc_path("net/ip_tables_names")));
-    let ip6tables = parse_name_lines(&access::read_trimmed(ctx.proc_path("net/ip6_tables_names")));
+    let iptables = tables_from(
+        &access::read_trimmed(ctx.proc_path("net/ip_tables_names")),
+        &mut notes,
+    );
+    let ip6tables = tables_from(
+        &access::read_trimmed(ctx.proc_path("net/ip6_tables_names")),
+        &mut notes,
+    );
     let connectors = parse_connector(&access::read_trimmed(ctx.proc_path("net/connector")));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
@@ -861,6 +867,19 @@ pub fn parse_name_lines(sample: &Sample<String>) -> Vec<String> {
         .take(8)
         .map(|s| s.to_string())
         .collect()
+}
+
+/// `PermissionDenied`/`Error` 记入 notes，不要当成「未加载的空表」。
+fn tables_from(sample: &Sample<String>, notes: &mut Vec<String>) -> Vec<String> {
+    if matches!(
+        sample.access,
+        AccessKind::PermissionDenied | AccessKind::Error
+    ) {
+        notes.push(sample.access_label());
+        Vec::new()
+    } else {
+        parse_name_lines(sample)
+    }
 }
 
 /// `/proc/net/connector`：跳过表头，取 Name 列，最多 8 条。
@@ -1416,5 +1435,27 @@ mod tests {
             "rt6_stats",
         ));
         assert_eq!(rt6.value, Some(7));
+    }
+
+    #[test]
+    fn iptables_denied_is_not_unloaded() {
+        let mut notes = Vec::new();
+        let denied = tables_from(&Sample::denied("/proc/net/ip_tables_names"), &mut notes);
+        assert!(denied.is_empty());
+        assert!(
+            notes.iter().any(|n| n.contains("权限不足")),
+            "PermissionDenied must be noted, not look unloaded: {notes:?}"
+        );
+        let mut ok_notes = Vec::new();
+        let empty = tables_from(&Sample::ok(String::new(), "ip_tables_names"), &mut ok_notes);
+        assert!(empty.is_empty());
+        assert!(
+            ok_notes.is_empty(),
+            "empty Ok file is unloaded, not a read failure: {ok_notes:?}"
+        );
+        assert_eq!(
+            parse_name_lines(&Sample::ok("filter\nnat\n".into(), "ip_tables_names")),
+            vec!["filter".to_string(), "nat".to_string()]
+        );
     }
 }

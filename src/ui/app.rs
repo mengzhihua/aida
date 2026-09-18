@@ -1971,12 +1971,20 @@ impl AidaApp {
         if !self.snap.net.protocols.is_empty() {
             kv(ui, "protocols", &self.snap.net.protocols.join("  "));
         }
-        if !self.snap.net.iptables.is_empty() {
-            kv(ui, "iptables", &self.snap.net.iptables.join(" "));
-        }
-        if !self.snap.net.ip6tables.is_empty() {
-            kv(ui, "ip6tables", &self.snap.net.ip6tables.join(" "));
-        }
+        kv_name_list(
+            ui,
+            "iptables",
+            &self.snap.net.iptables,
+            &self.snap.net.notes,
+            "ip_tables_names",
+        );
+        kv_name_list(
+            ui,
+            "ip6tables",
+            &self.snap.net.ip6tables,
+            &self.snap.net.notes,
+            "ip6_tables_names",
+        );
         if !self.snap.net.connectors.is_empty() {
             kv(ui, "connector", &self.snap.net.connectors.join(" "));
         }
@@ -3220,6 +3228,20 @@ fn kb_pair(total: &crate::Sample<u64>, avail: &crate::Sample<u64>) -> String {
 fn nav_btn(ui: &mut egui::Ui, current: &mut Nav, id: Nav, label: &str) {
     if ui.selectable_label(*current == id, label).clicked() {
         *current = id;
+    }
+}
+
+fn kv_name_list(
+    ui: &mut egui::Ui,
+    label: &str,
+    names: &[String],
+    notes: &[String],
+    path_frag: &str,
+) {
+    if !names.is_empty() {
+        kv(ui, label, &names.join(" "));
+    } else if let Some(n) = notes.iter().find(|s| s.contains(path_frag)) {
+        kv(ui, label, n);
     }
 }
 
