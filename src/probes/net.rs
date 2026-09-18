@@ -224,6 +224,16 @@ pub struct NetReport {
     pub ipv6_accept_ra_rt_info_min_plen: Sample<u64>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_rt_info_min_plen_dev: Vec<String>,
+    /// 非特权进程允许用 `setsockopt` 选的拥塞算法，是 `tcp_available_congestion_control` 的子集。
+    pub tcp_allowed_congestion: Sample<String>,
+    /// PLB 空闲再哈希轮数（与 `tcp_plb_enabled` 成对）。
+    pub tcp_plb_idle_rehash_rounds: Sample<u64>,
+    pub tcp_plb_rehash_rounds: Sample<u64>,
+    /// PLB 在 RTO 后暂停的秒数。
+    pub tcp_plb_suspend_rto_sec: Sample<u64>,
+    pub ipv6_accept_ra_rt_info_max_plen: Sample<u64>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_rt_info_max_plen_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -703,6 +713,23 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_ra_rt_info_min_plen",
         ra_rt_min_all.as_deref(),
     );
+    let tcp_allowed_congestion =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_allowed_congestion_control"));
+    let tcp_plb_idle_rehash_rounds =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_plb_idle_rehash_rounds"));
+    let tcp_plb_rehash_rounds =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_plb_rehash_rounds"));
+    let tcp_plb_suspend_rto_sec =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_plb_suspend_rto_sec"));
+    let ipv6_accept_ra_rt_info_max_plen =
+        access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_rt_info_max_plen"));
+    let ra_rt_max_all = ipv6_accept_ra_rt_info_max_plen.value.map(|v| v.to_string());
+    let ipv6_accept_ra_rt_info_max_plen_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_rt_info_max_plen",
+        ra_rt_max_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -900,6 +927,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_plb_cong_thresh,
                 ipv6_accept_ra_rt_info_min_plen,
                 ipv6_accept_ra_rt_info_min_plen_dev,
+                tcp_allowed_congestion,
+                tcp_plb_idle_rehash_rounds,
+                tcp_plb_rehash_rounds,
+                tcp_plb_suspend_rto_sec,
+                ipv6_accept_ra_rt_info_max_plen,
+                ipv6_accept_ra_rt_info_max_plen_dev,
                 notes,
             };
         }
@@ -1205,6 +1238,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_plb_cong_thresh,
         ipv6_accept_ra_rt_info_min_plen,
         ipv6_accept_ra_rt_info_min_plen_dev,
+        tcp_allowed_congestion,
+        tcp_plb_idle_rehash_rounds,
+        tcp_plb_rehash_rounds,
+        tcp_plb_suspend_rto_sec,
+        ipv6_accept_ra_rt_info_max_plen,
+        ipv6_accept_ra_rt_info_max_plen_dev,
         notes,
     }
 }
@@ -2151,6 +2190,19 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/tcp_allowed_congestion_control"),
+            "reno cubic\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_plb_idle_rehash_rounds"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_plb_rehash_rounds"), "12\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_plb_suspend_rto_sec"), "60\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_rt_info_max_plen"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2316,6 +2368,11 @@ mod tests {
         assert_eq!(r.tcp_available_ulp.value.as_deref(), Some("mptcp"));
         assert_eq!(r.tcp_plb_cong_thresh.value, Some(128));
         assert_eq!(r.ipv6_accept_ra_rt_info_min_plen.value, Some(0));
+        assert_eq!(r.tcp_allowed_congestion.value.as_deref(), Some("reno cubic"));
+        assert_eq!(r.tcp_plb_idle_rehash_rounds.value, Some(3));
+        assert_eq!(r.tcp_plb_rehash_rounds.value, Some(12));
+        assert_eq!(r.tcp_plb_suspend_rto_sec.value, Some(60));
+        assert_eq!(r.ipv6_accept_ra_rt_info_max_plen.value, Some(0));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2426,6 +2483,16 @@ mod tests {
             "16\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_rt_info_max_plen"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_rt_info_max_plen"),
+            "64\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2532,6 +2599,14 @@ mod tests {
                 .any(|s| s == "lo:16"),
             "lo accept_ra_rt_info_min_plen=16 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_rt_info_min_plen_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_rt_info_max_plen.value, Some(0));
+        assert!(
+            r.ipv6_accept_ra_rt_info_max_plen_dev
+                .iter()
+                .any(|s| s == "lo:64"),
+            "lo accept_ra_rt_info_max_plen=64 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_rt_info_max_plen_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
