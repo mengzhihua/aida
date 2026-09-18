@@ -245,7 +245,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 223. **`tcp_available_ulp` 是可用的 TCP ULP 名（常为 `mptcp`）。** 空或缺失不是失败。
 224. **`tcp_plb_cong_thresh` 是 PLB 拥塞阈值。** 与 `tcp_plb_enabled` 成对。
 225. **`accept_ra_rt_info_min_plen` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
-226. **空的 counter / drm_dp_aux_dev / mhi 表示没有对应硬件。** MHI 先看 `bus/mhi/devices`，没有再看 `class/mhi`。`PermissionDenied` 仍写 note。
+226. **空的 counter / drm_dp_aux_dev / mhi 表示没有对应硬件。** Counter 先看 `bus/counter/devices`，没有再看 `class/counter`。MHI 先看 `bus/mhi/devices`，没有再看 `class/mhi`。`PermissionDenied` 仍写 note。
 227. **`nr_hugepages_mempolicy=0` 表示 hugepage 计数不按 NUMA mempolicy 节点拆。** 不是采集失败。
 228. **空的 ipmi / usb_role / i3c 表示没有对应硬件。** IPMI 合并 `class/ipmi` 与 `class/ipmi_bmc`，两边都缺失才 leftover。I3C 先看 `bus/i3c/devices`，没有再看 `class/i3c`。`PermissionDenied` 仍写 note。
 229. **`tcp_allowed_congestion_control` 是非特权进程可 `setsockopt` 的拥塞算法。** 是 `tcp_available_congestion_control` 的子集，不要混。
