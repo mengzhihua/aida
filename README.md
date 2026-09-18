@@ -57,7 +57,7 @@ ls dist/
 | --- | --- |
 | `aida-cli-<ver>-<arch>-musl` 或 `-gnu` | 无 GUI 采集/基准。优先 musl 静态，没有 musl 工具链则退回 glibc |
 | `AIDA_Linux-<ver>-<arch>.AppImage` | 桌面 GUI + CLI。容器无 FUSE 时加 `APPIMAGE_EXTRACT_AND_RUN=1` |
-| `SHA256SUMS` | 上述产物的 sha256，拷走后可 `sha256sum -c` |
+| `SHA256SUMS` | 本次成功产物的 sha256（AppImage 失败时不把旧包写进去），拷走后可 `sha256sum -c` |
 
 ```bash
 # 服务器 / CI
