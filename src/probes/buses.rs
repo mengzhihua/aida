@@ -506,13 +506,7 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let nbd = list_optional_names(
-        ctx.sys_path("class/nbd"),
-        8,
-        "nbd",
-        &mut notes,
-        &mut missing,
-    );
+    let nbd = list_block_prefixed(ctx, "nbd", 16, "nbd", &mut notes, &mut missing);
     let vfio = list_optional_names(
         ctx.sys_path("class/vfio"),
         8,
@@ -798,6 +792,52 @@ fn list_misc_device(
     }
     missing.push(misc_name);
     Vec::new()
+}
+
+/// NBD 挂在通用 block class（`class/block/nbdN`），没有独立的 `class/nbd`。
+/// 先看 `class/block`，没有再看 `block`；只保留 `nbd`+数字（不要 `nbd0p1`）。
+/// 能列出 block 目录但没有 nbd 节点时返回空列表，不要当成 class 缺失。
+/// 两边目录都 Missing 才记 leftover；权限不足写 note。
+fn list_block_prefixed(
+    ctx: &ProbeCtx,
+    prefix: &'static str,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    match dir_list(ctx.sys_path("class/block")) {
+        DirList::Names(n) => return filter_prefix_disks(n, prefix, cap),
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+        DirList::Missing => {}
+    }
+    match dir_list(ctx.sys_path("block")) {
+        DirList::Names(n) => filter_prefix_disks(n, prefix, cap),
+        DirList::Failed(l) => {
+            notes.push(l);
+            Vec::new()
+        }
+        DirList::Missing => {
+            missing.push(label);
+            Vec::new()
+        }
+    }
+}
+
+fn filter_prefix_disks(names: Vec<String>, prefix: &str, cap: usize) -> Vec<String> {
+    let mut n: Vec<String> = names
+        .into_iter()
+        .filter(|name| {
+            name.strip_prefix(prefix)
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+        })
+        .collect();
+    n.sort();
+    n.truncate(cap);
+    n
 }
 
 fn read_rfkill(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<RfkillDev> {
@@ -1271,7 +1311,8 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/graphics/fb0")).unwrap();
         fs::create_dir_all(root.join("sys/class/cec/cec0")).unwrap();
         fs::create_dir_all(root.join("sys/class/media/media0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/nbd/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/nbd0p1")).unwrap();
         fs::create_dir_all(root.join("sys/class/vfio/vfio0")).unwrap();
         fs::create_dir_all(root.join("sys/class/mdev/mdev0")).unwrap();
         fs::create_dir_all(root.join("sys/class/vhost/vhost0")).unwrap();
@@ -1527,6 +1568,31 @@ mod tests {
         assert!(
             r.notes.iter().all(|n| !n.contains("fpga")),
             "fpga_manager/bridge must not be reported missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn nbd_from_block_without_class_nbd() {
+        let root = std::env::temp_dir().join(format!("aida-nbd-block-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/block/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/nbd0p1")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/vda")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.nbd, vec!["nbd0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "nbd"))),
+            "class/block nbd0 must not be leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

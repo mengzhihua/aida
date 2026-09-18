@@ -207,7 +207,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 185. **`enhanced_dad` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 186. **`tcp_fastopen_blackhole_timeout_sec=0` 表示不因 TFO 黑洞关闭 fastopen。** 不要 dump `tcp_fastopen_key`。
 187. **`stat_interval` 是 vmstat 更新间隔（秒）。** 不是采集失败。
-188. **空的 cec / media / nbd 表示没有对应硬件。** `PermissionDenied` 仍写 note。不要把 `class/media` 当成 V4L（那是 `video4linux`）。
+188. **空的 cec / media 表示没有对应硬件。** `PermissionDenied` 仍写 note。不要把 `class/media` 当成 V4L（那是 `video4linux`）。NBD 在 `class/block/nbdN`（回退 `sys/block/nbdN`），没有独立的 `class/nbd`；空列表表示未加载 nbd，不要把缺失 `class/nbd` 写成 leftover。`nbd0` 是整盘，`nbd0p1` 才是分区。
 189. **`accept_ra_mtu` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 190. **`printk_delay=0` 表示 printk 后不加毫秒延迟。** 不是采集失败。
 191. **`hugetlb_optimize_vmemmap=0` 表示不压缩 hugetlb 页的 vmemmap。** `1` 才优化。
