@@ -207,17 +207,17 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 185. **`enhanced_dad` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 186. **`tcp_fastopen_blackhole_timeout_sec=0` 表示不因 TFO 黑洞关闭 fastopen。** 不要 dump `tcp_fastopen_key`。
 187. **`stat_interval` 是 vmstat 更新间隔（秒）。** 不是采集失败。
-188. **空的 cec / media / nbd 表示没有对应硬件。** `PermissionDenied` 仍写 note。不要把 `class/media` 当成 V4L（那是 `video4linux`）。
+188. **空的 cec / media 表示没有对应硬件。** `PermissionDenied` 仍写 note。不要把 `class/media` 当成 V4L（那是 `video4linux`）。NBD 在 `class/block/nbdN`（回退 `sys/block/nbdN`），没有独立的 `class/nbd`；空列表表示未加载 nbd，不要把缺失 `class/nbd` 写成 leftover。`nbd0` 是整盘，`nbd0p1` 才是分区。
 189. **`accept_ra_mtu` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 190. **`printk_delay=0` 表示 printk 后不加毫秒延迟。** 不是采集失败。
 191. **`hugetlb_optimize_vmemmap=0` 表示不压缩 hugetlb 页的 vmemmap。** `1` 才优化。
 192. **`tcp_max_reordering` 是允许的乱序上限。** `tcp_reordering` 是初始/当前度量，两者不要混。
 193. **`udp_early_demux` 与 `tcp_early_demux` / `ip_early_demux` 成对。** `1` 表示开启 UDP 早分流。
 194. **不要 dump `vm.mmap_rnd_bits` / `mmap_rnd_compat_bits`。** 非 root 常为 `PermissionDenied`，属于 ASLR 熵配置而不是普通状态。
-195. **空的 vfio / mdev / vhost 表示没有对应硬件。** `PermissionDenied` 仍写 note。
+195. **空的 vfio / mdev / vhost 表示没有对应硬件。** VFIO 合并 `class/vfio`（legacy group）与 `class/vfio-dev`（cdev/IOMMUFD），两边都缺失才 leftover。mdev 先看 `bus/mdev/devices`，没有再看 `class/mdev`。vhost 是 misc（`class/misc/vhost-*` 与 `/dev/vhost-*`），没有独立 `class/vhost`。`PermissionDenied` 仍写 note。
 196. **`keep_addr_on_down` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
 197. **`percpu_pagelist_high_fraction=0` 表示使用内核默认高水位。** 不是把 per-cpu 列表清空。
-198. **`ping_group_range` 的 min>max（常见 `1 0`）表示无特权进程不能 ping。** 不是采集失败。
+198. **`ping_group_range` 的任意 min>max（不只是常见 `1 0`）表示无特权进程不能 ping。** 不是采集失败。
 199. **`numa_stat=1` 表示采集 NUMA VM 计数。** `0` 关闭以换性能。
 200. **不要 dump `net.core.netdev_rss_key` 或 IPv6 `stable_secret`。** 前者是 RSS 密钥，后者非 root 常无权限。
 201. **`tcp_min_rtt_wlen` 是 min RTT 滑动窗口（秒）。** 不是超时。

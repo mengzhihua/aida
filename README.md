@@ -2,7 +2,7 @@
 
 开源 Linux 硬件检测与监控工具，对标 Windows [AIDA64](https://www.aida64.com/) 的常用能力：硬件信息、传感器监控、微基准、系统软件信息、报告导出。
 
-**第三十一轮** 补齐 perf callchain 深度、percpu pagelist 高水位、NUMA VM 统计、TCP min-RTT/MTU probe/TSO RTT、UDP rmem_min、ping 组范围、ICMP ratemask、IPv6 idgen_delay/ip6frag_time/keep_addr_on_down，以及 vfio / mdev / vhost leftover class。不 dump `netdev_rss_key` / `stable_secret` / `mmap_rnd_bits` / `tcp_fastopen_key`。
+**第三十二轮** 修正 VFIO/mdev/vhost 真实 ABI，任意倒序 `ping_group_range` 都标成无特权 ping；新增 CPU/内存/网络/磁盘/温度 JSONL 记录，以及窗口内 / 置顶状态栏（对标 macOS iStat Menus）。不 dump `netdev_rss_key` / `stable_secret` / `mmap_rnd_bits` / `tcp_fastopen_key`。
 
 | 模块 | 状态 |
 | --- | --- |
@@ -21,11 +21,11 @@
 | 文件系统 / 模块 / 时钟 | mountinfo + statvfs；ext4 sysfs；nfsd/fuse；modules；clocksource + RTC + PTP + clockevents |
 | PSI / IRQ / taint / LSM / sysctl / cgroup / 安全 | pressure、interrupts、sysfs irq、lockdown/kptr、file-nr、aio/inotify、boot_id、panic/sysrq、keys、SysV IPC、fs.protected、sched_rt/OOM/deadline、printk/cfs/uffd、bpf_jit/binfmt_misc、dentry-state、inode-state、pty、io_uring、dirty_bytes/overcommit_kbytes、pipe-user-pages、core_pipe_limit/printk_devkmsg/delayacct/acct、zone_reclaim/mount-max、RNG write_wakeup/urandom_reseed、memfd_noexec、soft_watchdog、watchdog_cpumask、warn_limit、kexec_load_limit_panic/reboot、hung_task_warnings/check_count/interval/all_cpu_backtrace、max_rcu_stall_to_panic、panic_print、panic_on_io_nmi/unrecovered_nmi、oops_all_cpu_backtrace、hardlockup/softlockup_all_cpu_backtrace、print-fatal-signals、bpf_stats_enabled、core_sort_vma、compaction_proactiveness、page_lock_unfairness、min_slab_ratio/min_unmapped_ratio、extfrag_threshold、stat_interval、io_delay_type、printk_delay、max_lock_depth、perf_event_mlock_kb/max_stack/max_contexts、hugetlb_optimize_vmemmap、percpu_pagelist_high_fraction、numa_stat、split_lock_mitigate、key-users、seccomp actions_avail、cgroup v1 enabled |
 | ATA / MD / SCSI / iSCSI | ata_port；mdstat；scsi_host + scsi_device；iscsi_transport（不调用 iscsiadm）；dm name/uuid；BDI/BSG |
-| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi；scsi_generic/wwan/ppp/phy；remoteproc/extcon/tee/mdio_bus；spi_master/i2c-dev/nvme-subsystem/w1；macvtap/tun/nvme-generic/nvme-fabrics；iscsi_endpoint/iface/connection/flashnode；bus/container；nd/dma_heap；cxl（bus/devices）/devfreq/fpga_manager/bridge/region/gnss；rpmsg/devcoredump；scsi_disk/scsi_tape/graphics；cec/media/nbd；vfio/mdev/vhost；wakeup 源计数 |
+| 平台 / 总线 | watchdog/LED/I2C；rfkill/蓝牙/雷电/V4L/MMC/MEI；ttyS；misc；HID；GPIO/MTD/IB；MSR；vtconsole；`bus/platform/devices`；ieee80211/typec/udc/dax/wmi/spi/serio/ubi；scsi_generic/wwan/ppp/phy；remoteproc/extcon/tee/mdio_bus；spi_master/i2c-dev/nvme-subsystem/w1；macvtap/tun/nvme-generic/nvme-fabrics；iscsi_endpoint/iface/connection/flashnode；bus/container；nd/dma_heap；cxl（bus/devices）/devfreq/fpga_manager/bridge/region/gnss；rpmsg/devcoredump；scsi_disk/scsi_tape/graphics；cec/media；nbd（`class/block`）；vfio（`class/vfio`+`vfio-dev`）/mdev（`bus/mdev`）/vhost（misc+`/dev`）；wakeup 源计数 |
 | DMA / PWM / IIO / nvmem / regulator / pci_bus | `/proc/dma`；`class/dma`；pwmchip npwm；IIO name；nvmem type；regulator 电压；devlink status；pci_bus cpulist |
 | 磁盘 I/O / 分区 / 队列 / loop | diskstats 差分 + queue 参数；有 backing_file 的 loop |
 | crypto / 命名空间 | `/proc/crypto`；`/proc/self/ns` + `max_*_namespaces` |
-| 传感器告警 | hwmon 阈值，越限写 JSONL |
+| 传感器告警 / 记录 / 状态栏 | hwmon 阈值 JSONL；指标历史 `$AIDA_RECORD_LOG` / `history.jsonl`；窗口内状态条 + 可选置顶条（对标 iStat Menus，不引入托盘 crate） |
 | 权限 / 提权 / GUI / 基准 / 导出 / AppImage | 同前几轮 |
 
 技术选型：**Rust + egui**，采集路径优先内核文件，不调用 `dmidecode`、`lspci`、`nvme-cli`、`smartctl`、`lscpu`。
@@ -34,7 +34,7 @@
 
 ```
                   ┌──────────── GUI (egui) ────────────┐
-                  │  树形菜单 / 详情表 / 折线图 / 导出  │
+                  │  树形菜单 / iStat 状态栏 / 详情表 / 折线图 / 导出  │
                   └───────────────┬────────────────────┘
                                   │ HardwareSnapshot
 ┌──────── CLI ────────┐           │

@@ -190,10 +190,7 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[DiskSnap]>, dt_sec: f64)
             name,
             size_bytes: size,
             rotational,
-            model: first_existing(&[
-                dir.join("device/model"),
-                dir.join("device/name"),
-            ]),
+            model: first_existing(&[dir.join("device/model"), dir.join("device/name")]),
             vendor: access::read_trimmed(dir.join("device/vendor")),
             serial: access::read_trimmed(dir.join("serial")),
             queue_scheduler: access::read_trimmed(dir.join("queue/scheduler")),
@@ -448,8 +445,17 @@ fn first_existing(paths: &[std::path::PathBuf]) -> Sample<String> {
 }
 
 fn is_partition(name: &str) -> bool {
-    if name.starts_with("nvme") || name.starts_with("mmcblk") || name.starts_with("loop") {
-        return name.contains('p') && name.rsplit('p').next().map(|s| s.chars().all(|c| c.is_ascii_digit())).unwrap_or(false);
+    if name.starts_with("nvme")
+        || name.starts_with("mmcblk")
+        || name.starts_with("loop")
+        || name.starts_with("nbd")
+    {
+        return name.contains('p')
+            && name
+                .rsplit('p')
+                .next()
+                .map(|s| s.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false);
     }
     // sda1, vda2, xvda3
     let mut chars = name.chars().rev();
@@ -467,6 +473,8 @@ fn is_partition(name: &str) -> bool {
 fn classify(name: &str, rotational: Option<bool>) -> String {
     if name.starts_with("nvme") {
         "NVMe".into()
+    } else if name.starts_with("nbd") {
+        "NBD".into()
     } else if name.starts_with("vd") || name.starts_with("xvd") {
         "Virtio / Xen 虚拟盘".into()
     } else if name.starts_with("md") {
@@ -494,6 +502,8 @@ mod tests {
         assert!(!is_partition("sda"));
         assert!(is_partition("nvme0n1p1"));
         assert!(!is_partition("nvme0n1"));
+        assert!(!is_partition("nbd0"));
+        assert!(is_partition("nbd0p1"));
     }
 
     #[test]
@@ -533,7 +543,10 @@ mod tests {
         assert_eq!(r.devices[0].rd_bps, Some(100.0 * 512.0));
         assert_eq!(r.devices[0].physical_block_size.value, Some(512));
         assert_eq!(r.devices[0].nr_requests.value, Some(256));
-        assert_eq!(r.devices[0].write_cache.value.as_deref(), Some("write through"));
+        assert_eq!(
+            r.devices[0].write_cache.value.as_deref(),
+            Some("write through")
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -560,7 +573,10 @@ mod tests {
         assert_eq!(r.devices.len(), 1);
         assert_eq!(r.devices[0].partitions.len(), 1);
         assert_eq!(r.devices[0].partitions[0].name, "vda1");
-        assert_eq!(r.devices[0].partitions[0].size_bytes.value, Some(1024 * 512));
+        assert_eq!(
+            r.devices[0].partitions[0].size_bytes.value,
+            Some(1024 * 512)
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -588,7 +604,10 @@ mod tests {
         assert!(r.devices.is_empty());
         assert_eq!(r.loops.len(), 1);
         assert_eq!(r.loops[0].name, "loop1");
-        assert_eq!(r.loops[0].backing_file.value.as_deref(), Some("/tmp/disk.img"));
+        assert_eq!(
+            r.loops[0].backing_file.value.as_deref(),
+            Some("/tmp/disk.img")
+        );
         assert_eq!(r.loops[0].size_bytes.value, Some(2048 * 512));
         assert!(r.notes.iter().any(|n| n.contains("loop")));
         let _ = std::fs::remove_dir_all(&root);

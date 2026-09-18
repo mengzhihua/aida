@@ -1234,10 +1234,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.ipv6_idgen_delay.display(),
         snap.net.ipv6_ip6frag_time.display(),
         snap.net.ipv6_keep_addr_on_down.display(),
-        match snap.net.ping_group_range.value.as_deref() {
-            Some("1\t0") | Some("1 0") => "1 0 无特权ping".into(),
-            _ => snap.net.ping_group_range.display(),
-        },
+        crate::probes::net::ping_group_range_display(&snap.net.ping_group_range),
         snap.net.icmp_ratemask.display()
     ));
     if !snap.net.rp_filter_dev.is_empty() {

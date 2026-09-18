@@ -506,34 +506,28 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let nbd = list_optional_names(
-        ctx.sys_path("class/nbd"),
-        8,
-        "nbd",
-        &mut notes,
-        &mut missing,
-    );
-    let vfio = list_optional_names(
-        ctx.sys_path("class/vfio"),
+    let nbd = list_block_prefixed(ctx, "nbd", 16, "nbd", &mut notes, &mut missing);
+    // 旧 VFIO group class 是 `class/vfio`；cdev/IOMMUFD 是 `class/vfio-dev`。两边都缺失才 leftover。
+    let vfio = list_prefixed_classes(
+        ctx,
+        &[("class/vfio", "vfio"), ("class/vfio-dev", "vfio-dev")],
         8,
         "vfio",
         &mut notes,
         &mut missing,
     );
-    let mdev = list_optional_names(
-        ctx.sys_path("class/mdev"),
+    // mdev 真实 ABI 是 bus；没有独立 `class/mdev` 时不要当成缺失。
+    let mdev = list_alt_dirs(
+        ctx,
+        "bus/mdev/devices",
+        "class/mdev",
         8,
         "mdev",
         &mut notes,
         &mut missing,
     );
-    let vhost = list_optional_names(
-        ctx.sys_path("class/vhost"),
-        8,
-        "vhost",
-        &mut notes,
-        &mut missing,
-    );
+    // vhost-net/vsock/vdpa 注册为 misc + /dev 节点，没有 `class/vhost`。
+    let vhost = list_misc_prefix(ctx, "vhost-", 8, "vhost", &mut notes, &mut missing);
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -763,6 +757,57 @@ fn list_prefixed_classes(
     out
 }
 
+/// vhost-net/vsock/vdpa 注册为 misc（`class/misc/vhost-*`）和 `/dev/vhost-*`，没有 `class/vhost`。
+/// 列出 misc 与 /dev 里匹配前缀的名字；权限不足写 note，不要当成缺失。两边都没有才 leftover。
+fn list_misc_prefix(
+    ctx: &ProbeCtx,
+    prefix: &'static str,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut saw_misc = false;
+    match dir_list(ctx.sys_path("class/misc")) {
+        DirList::Names(n) => {
+            saw_misc = true;
+            for name in n {
+                if name.starts_with(prefix) {
+                    out.push(name);
+                }
+            }
+        }
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+        DirList::Missing => {}
+    }
+    match dir_list(ctx.dev_path("")) {
+        DirList::Names(n) => {
+            for name in n {
+                if name.starts_with(prefix) && !out.iter().any(|e| e == &name) {
+                    out.push(name);
+                }
+            }
+        }
+        DirList::Failed(l) => {
+            if !saw_misc {
+                notes.push(l);
+                return Vec::new();
+            }
+        }
+        DirList::Missing => {}
+    }
+    out.sort();
+    out.truncate(cap);
+    if out.is_empty() {
+        missing.push(label);
+    }
+    out
+}
+
 /// TUN / nvme-fabrics 注册为 misc 设备，没有独立 `/sys/class/{tun,nvme-fabrics}`。
 /// 先看 `class/misc/<name>`，没有再看对应 `/dev` 节点；权限不足写 note，不要当成缺失。
 fn list_misc_device(
@@ -798,6 +843,52 @@ fn list_misc_device(
     }
     missing.push(misc_name);
     Vec::new()
+}
+
+/// NBD 挂在通用 block class（`class/block/nbdN`），没有独立的 `class/nbd`。
+/// 先看 `class/block`，没有再看 `block`；只保留 `nbd`+数字（不要 `nbd0p1`）。
+/// 能列出 block 目录但没有 nbd 节点时返回空列表，不要当成 class 缺失。
+/// 两边目录都 Missing 才记 leftover；权限不足写 note。
+fn list_block_prefixed(
+    ctx: &ProbeCtx,
+    prefix: &'static str,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    match dir_list(ctx.sys_path("class/block")) {
+        DirList::Names(n) => return filter_prefix_disks(n, prefix, cap),
+        DirList::Failed(l) => {
+            notes.push(l);
+            return Vec::new();
+        }
+        DirList::Missing => {}
+    }
+    match dir_list(ctx.sys_path("block")) {
+        DirList::Names(n) => filter_prefix_disks(n, prefix, cap),
+        DirList::Failed(l) => {
+            notes.push(l);
+            Vec::new()
+        }
+        DirList::Missing => {
+            missing.push(label);
+            Vec::new()
+        }
+    }
+}
+
+fn filter_prefix_disks(names: Vec<String>, prefix: &str, cap: usize) -> Vec<String> {
+    let mut n: Vec<String> = names
+        .into_iter()
+        .filter(|name| {
+            name.strip_prefix(prefix)
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+        })
+        .collect();
+    n.sort();
+    n.truncate(cap);
+    n
 }
 
 fn read_rfkill(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<RfkillDev> {
@@ -1271,10 +1362,12 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/graphics/fb0")).unwrap();
         fs::create_dir_all(root.join("sys/class/cec/cec0")).unwrap();
         fs::create_dir_all(root.join("sys/class/media/media0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/nbd/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/nbd0p1")).unwrap();
         fs::create_dir_all(root.join("sys/class/vfio/vfio0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/mdev/mdev0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/vhost/vhost0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/vfio-dev/vfio1")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/mdev/devices/mdev0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/misc/vhost-net")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1337,9 +1430,12 @@ mod tests {
         assert_eq!(r.cec, vec!["cec0".to_string()]);
         assert_eq!(r.media, vec!["media0".to_string()]);
         assert_eq!(r.nbd, vec!["nbd0".to_string()]);
-        assert_eq!(r.vfio, vec!["vfio0".to_string()]);
+        assert_eq!(
+            r.vfio,
+            vec!["vfio-dev/vfio1".to_string(), "vfio/vfio0".to_string()]
+        );
         assert_eq!(r.mdev, vec!["mdev0".to_string()]);
-        assert_eq!(r.vhost, vec!["vhost0".to_string()]);
+        assert_eq!(r.vhost, vec!["vhost-net".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -1533,6 +1629,31 @@ mod tests {
     }
 
     #[test]
+    fn nbd_from_block_without_class_nbd() {
+        let root = std::env::temp_dir().join(format!("aida-nbd-block-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/block/nbd0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/nbd0p1")).unwrap();
+        fs::create_dir_all(root.join("sys/class/block/vda")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.nbd, vec!["nbd0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "nbd"))),
+            "class/block nbd0 must not be leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn refresh_devcoredump_picks_up_and_drops_nodes() {
         let root = std::env::temp_dir().join(format!("aida-devcd-{}", std::process::id()));
         fs::create_dir_all(root.join("sys/class")).unwrap();
@@ -1567,6 +1688,132 @@ mod tests {
             r.notes.iter().any(|n| leftover_note(n)
                 .is_some_and(|inner| inner.split('/').any(|s| s == "devcoredump"))),
             "removed class should return to leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vfio_from_vfio_dev_without_legacy_class() {
+        let root = std::env::temp_dir().join(format!("aida-vfio-dev-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/vfio-dev/vfio0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.vfio, vec!["vfio-dev/vfio0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "vfio"))),
+            "present vfio-dev must not leftover vfio: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn mdev_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-mdev-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/mdev/devices/83b8f4f2-509f-4275-a0a0-000000000001"))
+            .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(
+            r.mdev,
+            vec!["83b8f4f2-509f-4275-a0a0-000000000001".to_string()]
+        );
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "mdev"))),
+            "bus/mdev must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vhost_from_misc_without_class_vhost() {
+        let root = std::env::temp_dir().join(format!("aida-vhost-misc-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/misc/vhost-net")).unwrap();
+        fs::create_dir_all(root.join("sys/class/misc/vhost-vsock")).unwrap();
+        fs::create_dir_all(root.join("sys/class/vhost/ignored")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(
+            r.vhost,
+            vec!["vhost-net".to_string(), "vhost-vsock".to_string()]
+        );
+        assert!(
+            r.notes.iter().all(
+                |n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "vhost"))
+            ),
+            "misc vhost-* must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vhost_from_dev_node_without_misc() {
+        let root = std::env::temp_dir().join(format!("aida-vhost-dev-{}", std::process::id()));
+        fs::create_dir_all(root.join("dev")).unwrap();
+        fs::write(root.join("dev/vhost-vdpa"), b"").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.vhost, vec!["vhost-vdpa".to_string()]);
+        assert!(
+            r.notes.iter().all(
+                |n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "vhost"))
+            ),
+            "/dev/vhost-* must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fake_class_vhost_still_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-vhost-fake-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/vhost/vhost0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.vhost.is_empty());
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| leftover_note(n)
+                    .is_some_and(|inner| inner.split('/').any(|s| s == "vhost"))),
+            "class/vhost is not the ABI and should leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
