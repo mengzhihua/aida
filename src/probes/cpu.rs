@@ -27,6 +27,8 @@ pub struct CpuInfo {
     pub smt_control: Sample<String>,
     pub isolated: Sample<String>,
     pub online: Sample<String>,
+    /// 空文件表示没有离线 CPU，不是读失败。
+    pub offline: Sample<String>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
@@ -239,6 +241,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
     let smt_control = access::read_trimmed(ctx.sys_path("devices/system/cpu/smt/control"));
     let isolated = access::read_trimmed(ctx.sys_path("devices/system/cpu/isolated"));
     let online = access::read_trimmed(ctx.sys_path("devices/system/cpu/online"));
+    let offline = access::read_trimmed(ctx.sys_path("devices/system/cpu/offline"));
     if smt_control
         .value
         .as_deref()
@@ -266,6 +269,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         smt_control,
         isolated,
         online,
+        offline,
         logical,
         caches,
         utilization_pct,
@@ -567,6 +571,12 @@ flags\t\t: fpu hypervisor sse
             parse_schedstat_cpus(&access::read_trimmed(ctx.proc_path("schedstat"))),
             2
         );
+        std::fs::write(root.join("sys/devices/system/cpu/online"), "0-3\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/offline"), "\n").unwrap();
+        let info = collect_with_util(&ctx, None);
+        assert_eq!(info.online.value.as_deref(), Some("0-3"));
+        assert_eq!(info.offline.access, AccessKind::Ok);
+        assert!(info.offline.value.is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

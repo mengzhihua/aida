@@ -17,6 +17,8 @@ pub struct FirmwareReport {
     pub pstore_files: usize,
     pub firmware_timeout: Sample<u64>,
     pub memmap_entries: usize,
+    /// `/sys/firmware/devicetree/base/model`；x86 上通常不存在。
+    pub dt_model: Sample<String>,
     pub notes: Vec<String>,
 }
 
@@ -90,8 +92,18 @@ pub fn collect(ctx: &ProbeCtx) -> FirmwareReport {
         pstore_files,
         firmware_timeout: access::read_u64(ctx.sys_path("class/firmware/timeout")),
         memmap_entries,
+        dt_model: read_dt_model(ctx),
         notes,
     }
+}
+
+/// 先 `sysfs` 再 `/proc/device-tree`。x86 上两者都不存在是正常的。
+fn read_dt_model(ctx: &ProbeCtx) -> Sample<String> {
+    let sys = access::read_trimmed(ctx.sys_path("firmware/devicetree/base/model"));
+    if sys.access != AccessKind::NotFound {
+        return sys;
+    }
+    access::read_trimmed(ctx.proc_path("device-tree/model"))
 }
 
 fn read_secure_boot(ctx: &ProbeCtx) -> Sample<String> {
@@ -219,6 +231,10 @@ mod tests {
         let r3 = collect(&ctx);
         assert_eq!(r3.firmware_timeout.value, Some(60));
         assert_eq!(r3.memmap_entries, 2);
+        fs::create_dir_all(root.join("sys/firmware/devicetree/base")).unwrap();
+        fs::write(root.join("sys/firmware/devicetree/base/model"), "Test Board\n").unwrap();
+        let r4 = collect(&ctx);
+        assert_eq!(r4.dt_model.value.as_deref(), Some("Test Board"));
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -78,6 +78,15 @@ pub struct NetReport {
     pub iptables: Vec<String>,
     pub ip6tables: Vec<String>,
     pub connectors: Vec<String>,
+    pub ipv6_accept_ra: Sample<String>,
+    pub ipv6_autoconf: Sample<String>,
+    pub ipv6_hop_limit: Sample<u64>,
+    pub conntrack_tcp_established: Sample<u64>,
+    pub conntrack_buckets: Sample<u64>,
+    pub tcp_max_tw_buckets: Sample<u64>,
+    pub busy_read: Sample<u64>,
+    pub icmp_ratelimit: Sample<u64>,
+    pub ip_default_ttl: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -325,6 +334,19 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         &mut notes,
     );
     let connectors = parse_connector(&access::read_trimmed(ctx.proc_path("net/connector")));
+    let ipv6_accept_ra =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra"));
+    let ipv6_autoconf = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/autoconf"));
+    let ipv6_hop_limit = access::read_u64(ctx.proc_path("sys/net/ipv6/conf/all/hop_limit"));
+    let conntrack_tcp_established = access::read_u64(
+        ctx.proc_path("sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
+    );
+    let conntrack_buckets =
+        access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_buckets"));
+    let tcp_max_tw_buckets = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_tw_buckets"));
+    let busy_read = access::read_u64(ctx.proc_path("sys/net/core/busy_read"));
+    let icmp_ratelimit = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_ratelimit"));
+    let ip_default_ttl = access::read_u64(ctx.proc_path("sys/net/ipv4/ip_default_ttl"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -400,6 +422,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 iptables,
                 ip6tables,
                 connectors,
+                ipv6_accept_ra,
+                ipv6_autoconf,
+                ipv6_hop_limit,
+                conntrack_tcp_established,
+                conntrack_buckets,
+                tcp_max_tw_buckets,
+                busy_read,
+                icmp_ratelimit,
+                ip_default_ttl,
                 notes,
             };
         }
@@ -583,6 +614,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         iptables,
         ip6tables,
         connectors,
+        ipv6_accept_ra,
+        ipv6_autoconf,
+        ipv6_hop_limit,
+        conntrack_tcp_established,
+        conntrack_buckets,
+        tcp_max_tw_buckets,
+        busy_read,
+        icmp_ratelimit,
+        ip_default_ttl,
         notes,
     }
 }
@@ -1289,6 +1329,24 @@ mod tests {
         .unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_adv_win_scale"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/tcp_moderate_rcvbuf"), "1\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv6/conf/all")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_ra"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/autoconf"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/hop_limit"), "64\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established"),
+            "432000\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/netfilter/nf_conntrack_buckets"),
+            "65536\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_max_tw_buckets"), "65536\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/busy_read"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_ratelimit"), "1000\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_default_ttl"), "64\n").unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -1342,6 +1400,15 @@ mod tests {
         assert_eq!(r.connectors, vec!["cn_proc".to_string()]);
         assert_eq!(r.tcp.adv_win_scale.value, Some(1));
         assert_eq!(r.tcp.moderate_rcvbuf.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_accept_ra.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_autoconf.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_hop_limit.value, Some(64));
+        assert_eq!(r.conntrack_tcp_established.value, Some(432000));
+        assert_eq!(r.conntrack_buckets.value, Some(65536));
+        assert_eq!(r.tcp_max_tw_buckets.value, Some(65536));
+        assert_eq!(r.busy_read.value, Some(0));
+        assert_eq!(r.icmp_ratelimit.value, Some(1000));
+        assert_eq!(r.ip_default_ttl.value, Some(64));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));

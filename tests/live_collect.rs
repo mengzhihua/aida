@@ -197,6 +197,12 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"key_users\""));
     assert!(json.contains("\"dentry_nr\""));
     assert!(json.contains("\"connectors\""));
+    assert!(json.contains("\"pty_max\""));
+    assert!(json.contains("\"io_uring_disabled\""));
+    assert!(json.contains("\"ipv6_accept_ra\""));
+    assert!(json.contains("\"scsi_generic\""));
+    assert!(json.contains("\"dt_model\""));
+    assert!(json.contains("\"ostype\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -237,6 +243,23 @@ fn live_snapshot_json_and_html() {
     assert!(
         snap.sysctl.dentry_nr.value.is_some(),
         "dentry-state 应可读"
+    );
+    assert!(
+        snap.sysctl.pty_max.value.is_some(),
+        "pty/max 应可读"
+    );
+    assert!(
+        snap.sysctl.io_uring_disabled.access != aida::access::AccessKind::Error,
+        "io_uring_disabled 不应是读取失败"
+    );
+    assert!(
+        snap.cpu.offline.access != aida::access::AccessKind::Error,
+        "cpu offline 不应是读取失败（空文件表示无离线 CPU）"
+    );
+    assert!(
+        snap.software.ostype.value.as_deref() == Some("Linux")
+            || snap.software.ostype.access != aida::access::AccessKind::Error,
+        "ostype 应为 Linux 或至少不是读取失败"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -315,6 +338,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("sched_rt") || html.contains("tcp6") || html.contains("xfrm"));
     assert!(html.contains("igmp6") || html.contains("printk") || html.contains("binfmt") || html.contains("ieee80211"));
     assert!(html.contains("byteorder") || html.contains("dentry") || html.contains("key-users") || html.contains("connector"));
+    assert!(html.contains("pty") || html.contains("io_uring") || html.contains("accept_ra") || html.contains("ostype"));
     assert!(!html.contains("<script"));
 }
 

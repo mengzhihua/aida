@@ -96,6 +96,20 @@ pub struct SysctlReport {
     pub key_users: usize,
     pub vsyscall32: Sample<String>,
     pub ldisc_autoload: Sample<String>,
+    /// `inode-state` 第 1 列 nr_inodes，第 2 列 nr_free_inodes。
+    pub inode_inuse: Sample<u64>,
+    pub inode_free: Sample<u64>,
+    pub pty_max: Sample<u64>,
+    pub pty_nr: Sample<u64>,
+    /// 与 shmmax 一样，64 位上常接近 `u64::MAX`。
+    pub shmall: Sample<String>,
+    pub msgmnb: Sample<u64>,
+    pub msgmni: Sample<u64>,
+    pub overflowgid: Sample<u64>,
+    /// `0` 允许；`1` 仅特权；`2` 完全禁止。
+    pub io_uring_disabled: Sample<String>,
+    /// `-1` 表示未绑定用户组。
+    pub io_uring_group: Sample<i64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -240,6 +254,22 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         key_users: count_data_lines(&access::read_trimmed(ctx.proc_path("key-users"))),
         vsyscall32: access::read_trimmed(ctx.proc_path("sys/abi/vsyscall32")),
         ldisc_autoload: access::read_trimmed(ctx.proc_path("sys/dev/tty/ldisc_autoload")),
+        inode_inuse: parse_state_nth(
+            &access::read_trimmed(ctx.proc_path("sys/fs/inode-state")),
+            0,
+        ),
+        inode_free: parse_state_nth(
+            &access::read_trimmed(ctx.proc_path("sys/fs/inode-state")),
+            1,
+        ),
+        pty_max: access::read_u64(ctx.proc_path("sys/kernel/pty/max")),
+        pty_nr: access::read_u64(ctx.proc_path("sys/kernel/pty/nr")),
+        shmall: access::read_trimmed(ctx.proc_path("sys/kernel/shmall")),
+        msgmnb: access::read_u64(ctx.proc_path("sys/kernel/msgmnb")),
+        msgmni: access::read_u64(ctx.proc_path("sys/kernel/msgmni")),
+        overflowgid: access::read_u64(ctx.proc_path("sys/fs/overflowgid")),
+        io_uring_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/io_uring_disabled")),
+        io_uring_group: access::read_i64(ctx.proc_path("sys/kernel/io_uring_group")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -413,6 +443,16 @@ mod tests {
         fs::write(root.join("proc/sys/abi/vsyscall32"), "1\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/dev/tty")).unwrap();
         fs::write(root.join("proc/sys/dev/tty/ldisc_autoload"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/fs/inode-state"), "80 12 45 0 0 0 0\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/kernel/pty")).unwrap();
+        fs::write(root.join("proc/sys/kernel/pty/max"), "4096\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/pty/nr"), "3\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/shmall"), "18446744073692774399\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/msgmnb"), "16384\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/msgmni"), "32000\n").unwrap();
+        fs::write(root.join("proc/sys/fs/overflowgid"), "65534\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/io_uring_disabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/io_uring_group"), "-1\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
@@ -476,6 +516,16 @@ mod tests {
         assert_eq!(r.key_users, 2);
         assert_eq!(r.vsyscall32.value.as_deref(), Some("1"));
         assert_eq!(r.ldisc_autoload.value.as_deref(), Some("1"));
+        assert_eq!(r.inode_inuse.value, Some(80));
+        assert_eq!(r.inode_free.value, Some(12));
+        assert_eq!(r.pty_max.value, Some(4096));
+        assert_eq!(r.pty_nr.value, Some(3));
+        assert_eq!(r.shmall.value.as_deref(), Some("18446744073692774399"));
+        assert_eq!(r.msgmnb.value, Some(16384));
+        assert_eq!(r.msgmni.value, Some(32000));
+        assert_eq!(r.overflowgid.value, Some(65534));
+        assert_eq!(r.io_uring_disabled.value.as_deref(), Some("0"));
+        assert_eq!(r.io_uring_group.value, Some(-1));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

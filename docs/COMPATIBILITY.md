@@ -150,6 +150,13 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 128. **不要读 `/sys/kernel/vmcoreinfo` 当文本。** 那是二进制地址范围。
 129. **`/proc/net/connector` 跳过表头。** 只取 Name 列。
 130. **`sched_cfs_bandwidth_slice_us` 在未开 `CONFIG_CFS_BANDWIDTH` 时不存在。** `NotFound` 不是采集失败。
+131. **空的 `/sys/devices/system/cpu/offline` 表示没有离线 CPU。** 不是读失败。
+132. **`inode-state` 第一列是 nr_inodes，第二列 nr_free_inodes。** 不要把整行当单个整数。
+133. **`io_uring_disabled`：`0` 允许，`1` 仅特权，`2` 全关。** `io_uring_group=-1` 表示未绑定组，用有符号解析。不要写这些 sysctl。
+134. **`shmall` 与 shmmax 一样在 64 位上常接近 `u64::MAX`。** 用字符串保留。
+135. **空的 scsi_generic/wwan/ppp/phy 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+136. **无 device-tree `model` 在 x86/云主机上常见。** 先读 sysfs 再读 `/proc/device-tree`，不要当采集失败。
+137. **`nf_conntrack_tcp_timeout_established` 单位是秒。** 未加载 conntrack 时 `NotFound`。
 
 ## 测试方案
 
