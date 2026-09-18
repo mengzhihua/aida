@@ -154,6 +154,19 @@ pub struct SysctlReport {
     /// panic 附加信息位图，保留原文。
     pub panic_print: Sample<String>,
     pub panic_on_io_nmi: Sample<String>,
+    pub hung_task_all_cpu_backtrace: Sample<String>,
+    pub panic_on_unrecovered_nmi: Sample<String>,
+    pub oops_all_cpu_backtrace: Sample<String>,
+    pub compaction_proactiveness: Sample<u64>,
+    pub page_lock_unfairness: Sample<u64>,
+    pub sched_deadline_period_max_us: Sample<u64>,
+    pub sched_deadline_period_min_us: Sample<u64>,
+    pub hardlockup_all_cpu_backtrace: Sample<String>,
+    pub print_fatal_signals: Sample<String>,
+    pub bpf_stats_enabled: Sample<String>,
+    pub core_sort_vma: Sample<String>,
+    pub min_slab_ratio: Sample<u64>,
+    pub min_unmapped_ratio: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -364,6 +377,33 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         ),
         panic_print: access::read_trimmed(ctx.proc_path("sys/kernel/panic_print")),
         panic_on_io_nmi: access::read_trimmed(ctx.proc_path("sys/kernel/panic_on_io_nmi")),
+        hung_task_all_cpu_backtrace: access::read_trimmed(
+            ctx.proc_path("sys/kernel/hung_task_all_cpu_backtrace"),
+        ),
+        panic_on_unrecovered_nmi: access::read_trimmed(
+            ctx.proc_path("sys/kernel/panic_on_unrecovered_nmi"),
+        ),
+        oops_all_cpu_backtrace: access::read_trimmed(
+            ctx.proc_path("sys/kernel/oops_all_cpu_backtrace"),
+        ),
+        compaction_proactiveness: access::read_u64(
+            ctx.proc_path("sys/vm/compaction_proactiveness"),
+        ),
+        page_lock_unfairness: access::read_u64(ctx.proc_path("sys/vm/page_lock_unfairness")),
+        sched_deadline_period_max_us: access::read_u64(
+            ctx.proc_path("sys/kernel/sched_deadline_period_max_us"),
+        ),
+        sched_deadline_period_min_us: access::read_u64(
+            ctx.proc_path("sys/kernel/sched_deadline_period_min_us"),
+        ),
+        hardlockup_all_cpu_backtrace: access::read_trimmed(
+            ctx.proc_path("sys/kernel/hardlockup_all_cpu_backtrace"),
+        ),
+        print_fatal_signals: access::read_trimmed(ctx.proc_path("sys/kernel/print-fatal-signals")),
+        bpf_stats_enabled: access::read_trimmed(ctx.proc_path("sys/kernel/bpf_stats_enabled")),
+        core_sort_vma: access::read_trimmed(ctx.proc_path("sys/kernel/core_sort_vma")),
+        min_slab_ratio: access::read_u64(ctx.proc_path("sys/vm/min_slab_ratio")),
+        min_unmapped_ratio: access::read_u64(ctx.proc_path("sys/vm/min_unmapped_ratio")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -652,6 +692,35 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/panic_print"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/panic_on_io_nmi"), "0\n").unwrap();
         fs::write(
+            root.join("proc/sys/kernel/hung_task_all_cpu_backtrace"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/kernel/panic_on_unrecovered_nmi"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/oops_all_cpu_backtrace"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/compaction_proactiveness"), "20\n").unwrap();
+        fs::write(root.join("proc/sys/vm/page_lock_unfairness"), "5\n").unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/sched_deadline_period_max_us"),
+            "4194304\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/sched_deadline_period_min_us"),
+            "100\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/hardlockup_all_cpu_backtrace"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/kernel/print-fatal-signals"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/bpf_stats_enabled"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/core_sort_vma"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/min_slab_ratio"), "5\n").unwrap();
+        fs::write(root.join("proc/sys/vm/min_unmapped_ratio"), "1\n").unwrap();
+        fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
         )
@@ -760,6 +829,19 @@ mod tests {
         assert_eq!(r.max_rcu_stall_to_panic.value, Some(0));
         assert_eq!(r.panic_print.value.as_deref(), Some("0"));
         assert_eq!(r.panic_on_io_nmi.value.as_deref(), Some("0"));
+        assert_eq!(r.hung_task_all_cpu_backtrace.value.as_deref(), Some("0"));
+        assert_eq!(r.panic_on_unrecovered_nmi.value.as_deref(), Some("0"));
+        assert_eq!(r.oops_all_cpu_backtrace.value.as_deref(), Some("0"));
+        assert_eq!(r.compaction_proactiveness.value, Some(20));
+        assert_eq!(r.page_lock_unfairness.value, Some(5));
+        assert_eq!(r.sched_deadline_period_max_us.value, Some(4_194_304));
+        assert_eq!(r.sched_deadline_period_min_us.value, Some(100));
+        assert_eq!(r.hardlockup_all_cpu_backtrace.value.as_deref(), Some("0"));
+        assert_eq!(r.print_fatal_signals.value.as_deref(), Some("1"));
+        assert_eq!(r.bpf_stats_enabled.value.as_deref(), Some("0"));
+        assert_eq!(r.core_sort_vma.value.as_deref(), Some("0"));
+        assert_eq!(r.min_slab_ratio.value, Some(5));
+        assert_eq!(r.min_unmapped_ratio.value, Some(1));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

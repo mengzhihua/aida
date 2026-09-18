@@ -140,6 +140,25 @@ pub struct NetReport {
     /// 默认 `2147483647`（INT_MAX）表示不额外收紧。
     pub tcp_challenge_ack_limit: Sample<u64>,
     pub ip_dynaddr: Sample<String>,
+    pub tcp_thin_linear_timeouts: Sample<String>,
+    pub tcp_limit_output_bytes: Sample<u64>,
+    pub tcp_comp_sack_nr: Sample<u64>,
+    pub ip_forward_update_priority: Sample<String>,
+    pub fib_notify_on_flag_change: Sample<u64>,
+    pub icmp_echo_enable_probe: Sample<String>,
+    pub tcp_fwmark_accept: Sample<String>,
+    pub ipv6_ndisc_notify: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_ndisc_notify_dev: Vec<String>,
+    pub tcp_early_demux: Sample<String>,
+    pub ip_early_demux: Sample<String>,
+    pub tcp_comp_sack_delay_ns: Sample<u64>,
+    pub tcp_comp_sack_slack_ns: Sample<u64>,
+    pub tcp_app_win: Sample<u64>,
+    pub ipv6_force_mld_version: Sample<String>,
+    pub ipv6_accept_ra_pinfo: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_pinfo_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -472,6 +491,43 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let tcp_challenge_ack_limit =
         access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_challenge_ack_limit"));
     let ip_dynaddr = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_dynaddr"));
+    let tcp_thin_linear_timeouts =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_thin_linear_timeouts"));
+    let tcp_limit_output_bytes =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_limit_output_bytes"));
+    let tcp_comp_sack_nr = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_comp_sack_nr"));
+    let ip_forward_update_priority =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_forward_update_priority"));
+    let fib_notify_on_flag_change =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/fib_notify_on_flag_change"));
+    let icmp_echo_enable_probe =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/icmp_echo_enable_probe"));
+    let tcp_fwmark_accept = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_fwmark_accept"));
+    let ipv6_ndisc_notify =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/ndisc_notify"));
+    let ipv6_ndisc_notify_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "ndisc_notify",
+        ipv6_ndisc_notify.value.as_deref(),
+    );
+    let tcp_early_demux = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_early_demux"));
+    let ip_early_demux = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_early_demux"));
+    let tcp_comp_sack_delay_ns =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_comp_sack_delay_ns"));
+    let tcp_comp_sack_slack_ns =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_comp_sack_slack_ns"));
+    let tcp_app_win = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_app_win"));
+    let ipv6_force_mld_version =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/force_mld_version"));
+    let ipv6_accept_ra_pinfo =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_pinfo"));
+    let ipv6_accept_ra_pinfo_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_pinfo",
+        ipv6_accept_ra_pinfo.value.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -601,6 +657,23 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_no_metrics_save,
                 tcp_challenge_ack_limit,
                 ip_dynaddr,
+                tcp_thin_linear_timeouts,
+                tcp_limit_output_bytes,
+                tcp_comp_sack_nr,
+                ip_forward_update_priority,
+                fib_notify_on_flag_change,
+                icmp_echo_enable_probe,
+                tcp_fwmark_accept,
+                ipv6_ndisc_notify,
+                ipv6_ndisc_notify_dev,
+                tcp_early_demux,
+                ip_early_demux,
+                tcp_comp_sack_delay_ns,
+                tcp_comp_sack_slack_ns,
+                tcp_app_win,
+                ipv6_force_mld_version,
+                ipv6_accept_ra_pinfo,
+                ipv6_accept_ra_pinfo_dev,
                 notes,
             };
         }
@@ -838,6 +911,23 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_no_metrics_save,
         tcp_challenge_ack_limit,
         ip_dynaddr,
+        tcp_thin_linear_timeouts,
+        tcp_limit_output_bytes,
+        tcp_comp_sack_nr,
+        ip_forward_update_priority,
+        fib_notify_on_flag_change,
+        icmp_echo_enable_probe,
+        tcp_fwmark_accept,
+        ipv6_ndisc_notify,
+        ipv6_ndisc_notify_dev,
+        tcp_early_demux,
+        ip_early_demux,
+        tcp_comp_sack_delay_ns,
+        tcp_comp_sack_slack_ns,
+        tcp_app_win,
+        ipv6_force_mld_version,
+        ipv6_accept_ra_pinfo,
+        ipv6_accept_ra_pinfo_dev,
         notes,
     }
 }
@@ -1656,6 +1746,53 @@ mod tests {
         .unwrap();
         fs::write(root.join("proc/sys/net/ipv4/ip_dynaddr"), "0\n").unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/tcp_thin_linear_timeouts"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_limit_output_bytes"),
+            "1048576\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_comp_sack_nr"), "44\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/ip_forward_update_priority"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/fib_notify_on_flag_change"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/icmp_echo_enable_probe"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_fwmark_accept"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/ndisc_notify"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_early_demux"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_early_demux"), "1\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_comp_sack_delay_ns"),
+            "1000000\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/tcp_comp_sack_slack_ns"),
+            "100000\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_app_win"), "31\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/force_mld_version"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_pinfo"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1761,6 +1898,21 @@ mod tests {
         assert_eq!(r.tcp_no_metrics_save.value.as_deref(), Some("0"));
         assert_eq!(r.tcp_challenge_ack_limit.value, Some(2_147_483_647));
         assert_eq!(r.ip_dynaddr.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_thin_linear_timeouts.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_limit_output_bytes.value, Some(1_048_576));
+        assert_eq!(r.tcp_comp_sack_nr.value, Some(44));
+        assert_eq!(r.ip_forward_update_priority.value.as_deref(), Some("1"));
+        assert_eq!(r.fib_notify_on_flag_change.value, Some(0));
+        assert_eq!(r.icmp_echo_enable_probe.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_fwmark_accept.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_ndisc_notify.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_early_demux.value.as_deref(), Some("1"));
+        assert_eq!(r.ip_early_demux.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_comp_sack_delay_ns.value, Some(1_000_000));
+        assert_eq!(r.tcp_comp_sack_slack_ns.value, Some(100_000));
+        assert_eq!(r.tcp_app_win.value, Some(31));
+        assert_eq!(r.ipv6_force_mld_version.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_ra_pinfo.value.as_deref(), Some("1"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -1815,6 +1967,18 @@ mod tests {
         .unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/all/dad_transmits"), "1\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv6/conf/lo/dad_transmits"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/ndisc_notify"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/lo/ndisc_notify"), "1\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_pinfo"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_pinfo"),
+            "0\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -1869,6 +2033,18 @@ mod tests {
             r.ipv6_dad_transmits_dev.iter().any(|s| s == "lo:0"),
             "lo dad_transmits=0 must differ from conf/all: {:?}",
             r.ipv6_dad_transmits_dev
+        );
+        assert_eq!(r.ipv6_ndisc_notify.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_ndisc_notify_dev.iter().any(|s| s == "lo:1"),
+            "lo ndisc_notify=1 must differ from conf/all: {:?}",
+            r.ipv6_ndisc_notify_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_pinfo.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_accept_ra_pinfo_dev.iter().any(|s| s == "lo:0"),
+            "lo accept_ra_pinfo=0 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_pinfo_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
