@@ -202,6 +202,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 180. **`bpf_stats_enabled=0` 表示不采集 BPF 运行统计。** 不是采集失败。
 181. **`core_sort_vma=0` 表示 core dump VMA 按插入顺序。** `1` 按地址排序。
 182. **`min_slab_ratio` / `min_unmapped_ratio` 是 zone reclaim 百分比阈值。** 不是采集失败。
+183. **GUI `refresh_live` 必须更新 `buses.devcoredump`。** 这是设备崩溃后才出现、读完或超时即消失的瞬时 class；不要为此重扫整份 buses。不更新会让界面和后续导出停在启动清单。
 
 ## 测试方案
 

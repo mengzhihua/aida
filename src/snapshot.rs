@@ -202,6 +202,8 @@ impl HardwareSnapshot {
         self.sysctl = sysctl::collect(ctx);
         self.cgroup = cgroup::collect(ctx);
         self.security = security::collect(ctx);
+        // devcoredump 是崩溃后才出现、读完/超时即消失的瞬时 class，不能停在启动清单。
+        buses::refresh_devcoredump(&mut self.buses, ctx);
         self.collected_at_unix_ms = unix_ms();
     }
 }
@@ -275,6 +277,57 @@ mod tests {
             0.8,
         );
         assert_eq!(snap.cpu.cpuidle_governor.value.as_deref(), Some("teo"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_live_updates_devcoredump() {
+        let root = std::env::temp_dir().join(format!("aida-snap-devcd-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("sys/class")).unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(
+            root.join("proc/stat"),
+            "cpu  1 0 0 1 0 0 0 0 0 0\ncpu0 1 0 0 1 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/cpuinfo"),
+            "processor\t: 0\nmodel name\t: Test\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut snap = HardwareSnapshot::collect_cpu_sample(&ctx, false);
+        assert!(snap.buses.devcoredump.is_empty());
+        std::fs::create_dir_all(root.join("sys/class/devcoredump/devcd0")).unwrap();
+        let mut prev_stat = None;
+        let mut prev_net = None;
+        let mut prev_disk = None;
+        let mut prev_rapl = None;
+        snap.refresh_live(
+            &ctx,
+            &mut prev_stat,
+            &mut prev_net,
+            &mut prev_disk,
+            &mut prev_rapl,
+            0.8,
+        );
+        assert_eq!(snap.buses.devcoredump, vec!["devcd0".to_string()]);
+        std::fs::remove_dir_all(root.join("sys/class/devcoredump")).unwrap();
+        snap.refresh_live(
+            &ctx,
+            &mut prev_stat,
+            &mut prev_net,
+            &mut prev_disk,
+            &mut prev_rapl,
+            0.8,
+        );
+        assert!(snap.buses.devcoredump.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

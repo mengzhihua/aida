@@ -59,6 +59,7 @@ pub struct BusesReport {
     pub fpga: Vec<String>,
     pub gnss: Vec<String>,
     pub rpmsg: Vec<String>,
+    /// 设备崩溃转储是瞬时节点；GUI `refresh_live` 会单独更新这一项。
     pub devcoredump: Vec<String>,
     pub notes: Vec<String>,
 }
@@ -520,6 +521,52 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         rpmsg,
         devcoredump,
         notes,
+    }
+}
+
+/// 只刷新瞬时的 `class/devcoredump`，不重扫整份 buses。
+/// 权限/leftover note 同步改写，避免 GUI 一直显示启动时的空列表或已消失的 `devcdN`。
+pub fn refresh_devcoredump(report: &mut BusesReport, ctx: &ProbeCtx) {
+    let mut extra = Vec::new();
+    let mut missing = Vec::new();
+    report.devcoredump = list_optional_names(
+        ctx.sys_path("class/devcoredump"),
+        8,
+        "devcoredump",
+        &mut extra,
+        &mut missing,
+    );
+    report
+        .notes
+        .retain(|n| leftover_note(n).is_some() || !n.contains("devcoredump"));
+    set_leftover_label(&mut report.notes, "devcoredump", !missing.is_empty());
+    report.notes.extend(extra);
+}
+
+const LEFTOVER_SUFFIX: &str = "（云主机/无对应硬件时常见）。";
+
+fn leftover_note(n: &str) -> Option<&str> {
+    n.strip_prefix("无 ")?.strip_suffix(LEFTOVER_SUFFIX)
+}
+
+fn set_leftover_label(notes: &mut Vec<String>, label: &str, missing: bool) {
+    if let Some(idx) = notes.iter().position(|n| leftover_note(n).is_some()) {
+        let inner = leftover_note(&notes[idx]).unwrap_or("").to_string();
+        let mut labels: Vec<String> = inner
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != label)
+            .map(str::to_string)
+            .collect();
+        if missing {
+            labels.push(label.to_string());
+        }
+        if labels.is_empty() {
+            notes.remove(idx);
+        } else {
+            notes[idx] = format!("无 {}{LEFTOVER_SUFFIX}", labels.join("/"));
+        }
+    } else if missing {
+        notes.push(format!("无 {label}{LEFTOVER_SUFFIX}"));
     }
 }
 
@@ -1381,6 +1428,46 @@ mod tests {
         assert!(
             r.notes.iter().all(|n| !n.contains("fpga")),
             "fpga_manager/bridge must not be reported missing: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_devcoredump_picks_up_and_drops_nodes() {
+        let root = std::env::temp_dir().join(format!("aida-devcd-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        assert!(r.devcoredump.is_empty());
+        assert!(
+            r.notes.iter().any(|n| leftover_note(n)
+                .is_some_and(|inner| inner.split('/').any(|s| s == "devcoredump"))),
+            "missing class should be leftover: {:?}",
+            r.notes
+        );
+        fs::create_dir_all(root.join("sys/class/devcoredump/devcd0")).unwrap();
+        refresh_devcoredump(&mut r, &ctx);
+        assert_eq!(r.devcoredump, vec!["devcd0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n)
+                .is_none_or(|inner| inner.split('/').all(|s| s != "devcoredump"))),
+            "present class must not stay leftover: {:?}",
+            r.notes
+        );
+        fs::remove_dir_all(root.join("sys/class/devcoredump")).unwrap();
+        refresh_devcoredump(&mut r, &ctx);
+        assert!(r.devcoredump.is_empty());
+        assert!(
+            r.notes.iter().any(|n| leftover_note(n)
+                .is_some_and(|inner| inner.split('/').any(|s| s == "devcoredump"))),
+            "removed class should return to leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

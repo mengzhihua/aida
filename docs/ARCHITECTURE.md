@@ -18,7 +18,7 @@
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + zram/zswap + power + pm + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量 + sysctl + cgroup + security，避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
+4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + zram/zswap + power + pm + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量 + sysctl + cgroup + security + `buses.devcoredump`（瞬时 class，不重扫整份 buses），避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
 
 ## 各 probe 内核接口
 
