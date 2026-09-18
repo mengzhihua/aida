@@ -35,6 +35,10 @@ pub struct BusesReport {
     pub wwan: Vec<String>,
     pub ppp: Vec<String>,
     pub phy: Vec<String>,
+    pub remoteproc: Vec<String>,
+    pub extcon: Vec<String>,
+    pub tee: Vec<String>,
+    pub mdio_bus: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -222,6 +226,22 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
     let wwan = list_optional_names(ctx.sys_path("class/wwan"), 8, "wwan", &mut notes, &mut missing);
     let ppp = list_optional_names(ctx.sys_path("class/ppp"), 8, "ppp", &mut notes, &mut missing);
     let phy = list_optional_names(ctx.sys_path("class/phy"), 8, "phy", &mut notes, &mut missing);
+    let remoteproc = list_optional_names(
+        ctx.sys_path("class/remoteproc"),
+        8,
+        "remoteproc",
+        &mut notes,
+        &mut missing,
+    );
+    let extcon = list_optional_names(ctx.sys_path("class/extcon"), 8, "extcon", &mut notes, &mut missing);
+    let tee = list_optional_names(ctx.sys_path("class/tee"), 8, "tee", &mut notes, &mut missing);
+    let mdio_bus = list_optional_names(
+        ctx.sys_path("class/mdio_bus"),
+        8,
+        "mdio_bus",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -255,6 +275,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         wwan,
         ppp,
         phy,
+        remoteproc,
+        extcon,
+        tee,
+        mdio_bus,
         notes,
     }
 }
@@ -720,6 +744,8 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/ieee80211/phy0")).unwrap();
         fs::create_dir_all(root.join("sys/class/scsi_generic/sg0")).unwrap();
         fs::create_dir_all(root.join("sys/class/phy/eth0-phy")).unwrap();
+        fs::create_dir_all(root.join("sys/class/remoteproc/remoteproc0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/extcon/extcon0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -748,6 +774,8 @@ mod tests {
         assert_eq!(r.ieee80211, vec!["phy0".to_string()]);
         assert_eq!(r.scsi_generic, vec!["sg0".to_string()]);
         assert_eq!(r.phy, vec!["eth0-phy".to_string()]);
+        assert_eq!(r.remoteproc, vec!["remoteproc0".to_string()]);
+        assert_eq!(r.extcon, vec!["extcon0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(

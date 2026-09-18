@@ -29,6 +29,10 @@ pub struct CpuInfo {
     pub online: Sample<String>,
     /// 空文件表示没有离线 CPU，不是读失败。
     pub offline: Sample<String>,
+    pub possible: Sample<String>,
+    pub present: Sample<String>,
+    /// 内核编译时的最大 CPU 下标（通常是 `NR_CPUS-1`），不是在线数量。
+    pub kernel_max: Sample<u64>,
     pub logical: Vec<LogicalCpu>,
     pub caches: Vec<CpuCache>,
     /// 两次 /proc/stat 之间的整机利用率（0-100）。首次采样为 None。
@@ -242,6 +246,9 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
     let isolated = access::read_trimmed(ctx.sys_path("devices/system/cpu/isolated"));
     let online = access::read_trimmed(ctx.sys_path("devices/system/cpu/online"));
     let offline = access::read_trimmed(ctx.sys_path("devices/system/cpu/offline"));
+    let possible = access::read_trimmed(ctx.sys_path("devices/system/cpu/possible"));
+    let present = access::read_trimmed(ctx.sys_path("devices/system/cpu/present"));
+    let kernel_max = access::read_u64(ctx.sys_path("devices/system/cpu/kernel_max"));
     if smt_control
         .value
         .as_deref()
@@ -270,6 +277,9 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         isolated,
         online,
         offline,
+        possible,
+        present,
+        kernel_max,
         logical,
         caches,
         utilization_pct,
@@ -573,10 +583,16 @@ flags\t\t: fpu hypervisor sse
         );
         std::fs::write(root.join("sys/devices/system/cpu/online"), "0-3\n").unwrap();
         std::fs::write(root.join("sys/devices/system/cpu/offline"), "\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/possible"), "0-3\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/present"), "0-3\n").unwrap();
+        std::fs::write(root.join("sys/devices/system/cpu/kernel_max"), "63\n").unwrap();
         let info = collect_with_util(&ctx, None);
         assert_eq!(info.online.value.as_deref(), Some("0-3"));
         assert_eq!(info.offline.access, AccessKind::Ok);
         assert!(info.offline.value.is_none());
+        assert_eq!(info.possible.value.as_deref(), Some("0-3"));
+        assert_eq!(info.present.value.as_deref(), Some("0-3"));
+        assert_eq!(info.kernel_max.value, Some(63));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

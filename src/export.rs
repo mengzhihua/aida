@@ -65,6 +65,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     _ => snap.cpu.offline.access_label(),
                 },
             ),
+            ("possible", snap.cpu.possible.display()),
+            ("present", snap.cpu.present.display()),
+            ("kernel_max", snap.cpu.kernel_max.display()),
             ("KVM", snap.kvm.device.display()),
             ("nested", snap.kvm.nested.display()),
             ("microcode", snap.cpu.microcode.display()),
@@ -492,7 +495,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
 
     section(&mut html, "平台");
     html.push_str(&format!(
-        "<p class=\"muted\">ACPI {} PnP {} MSR {} platform {} workqueue {} events {}</p>",
+        "<p class=\"muted\">ACPI {} PnP {} MSR {} platform {} wakeup_sources {} workqueue {} events {}</p>",
         snap.platform.acpi_devices,
         snap.platform.pnp_devices,
         snap.platform.msr_devices,
@@ -501,6 +504,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         } else {
             snap.platform.platform_devices.join(" ")
         }),
+        snap.platform.wakeup_sources,
         esc(&snap.platform.workqueues.join(" ")),
         esc(&snap.platform.event_sources.join(" "))
     ));
@@ -703,6 +707,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("wwan", &snap.buses.wwan),
         ("ppp", &snap.buses.ppp),
         ("phy", &snap.buses.phy),
+        ("remoteproc", &snap.buses.remoteproc),
+        ("extcon", &snap.buses.extcon),
+        ("tee", &snap.buses.tee),
+        ("mdio_bus", &snap.buses.mdio_bus),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1056,11 +1064,23 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.tcp.notsent_lowat.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
+        "<p class=\"muted\">tcp_mem {} udp_mem {} orphans {} dsack {} autocorking {} rps {}</p>",
+        snap.net.tcp_mem.display(),
+        snap.net.udp_mem.display(),
+        snap.net.tcp_max_orphans.display(),
+        snap.net.tcp_dsack.display(),
+        snap.net.tcp_autocorking.display(),
+        snap.net.rps_sock_flow_entries.display()
+    ));
+    html.push_str(&format!(
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
         snap.net.ip_default_ttl.display(),
+        snap.net.ipv6_accept_dad.display(),
+        snap.net.ipv6_addr_gen_mode.display(),
+        snap.net.ip6frag_high_thresh.display(),
         snap.net.conntrack_tcp_established.display(),
         snap.net.conntrack_buckets.display(),
         snap.net.tcp_max_tw_buckets.display(),
@@ -1619,10 +1639,11 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "nmi/watchdog",
                 format!(
-                    "nmi {} wd {} thresh {} panic {} sysrq {} min_free {} hung {}",
+                    "nmi {} wd {} thresh {} unknown_nmi_panic {} panic {} sysrq {} min_free {} hung {}",
                     snap.sysctl.nmi_watchdog.display(),
                     snap.sysctl.watchdog.display(),
                     snap.sysctl.watchdog_thresh.display(),
+                    snap.sysctl.unknown_nmi_panic.display(),
                     snap.sysctl.panic.display(),
                     snap.sysctl.sysrq.display(),
                     snap.sysctl.min_free_kbytes.display(),
@@ -1737,10 +1758,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "vm",
                 format!(
-                    "swappiness {} overcommit {} watermark {} dirty_expire {}",
+                    "swappiness {} overcommit {} overcommit_kbytes {} dirty_bytes {}/{} watermark {} boost {} pipe_pages {}/{} compact_unevict {} dirty_expire {}",
                     snap.sysctl.swappiness.display(),
                     snap.sysctl.overcommit_memory.display(),
+                    snap.sysctl.overcommit_kbytes.display(),
+                    snap.sysctl.dirty_bytes.display(),
+                    snap.sysctl.dirty_background_bytes.display(),
                     snap.sysctl.watermark_scale_factor.display(),
+                    snap.sysctl.watermark_boost_factor.display(),
+                    snap.sysctl.pipe_user_pages_soft.display(),
+                    snap.sysctl.pipe_user_pages_hard.display(),
+                    snap.sysctl.compact_unevictable_allowed.display(),
                     snap.sysctl.dirty_expire_centisecs.display()
                 ),
             ),

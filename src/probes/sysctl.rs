@@ -110,6 +110,16 @@ pub struct SysctlReport {
     pub io_uring_disabled: Sample<String>,
     /// `-1` 表示未绑定用户组。
     pub io_uring_group: Sample<i64>,
+    /// `0` 表示改用 `dirty_ratio`。
+    pub dirty_bytes: Sample<u64>,
+    pub dirty_background_bytes: Sample<u64>,
+    /// `0` 表示改用 `overcommit_ratio`。
+    pub overcommit_kbytes: Sample<u64>,
+    pub pipe_user_pages_soft: Sample<u64>,
+    pub pipe_user_pages_hard: Sample<u64>,
+    pub compact_unevictable_allowed: Sample<String>,
+    pub watermark_boost_factor: Sample<u64>,
+    pub unknown_nmi_panic: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -266,6 +276,16 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         overflowgid: access::read_u64(ctx.proc_path("sys/fs/overflowgid")),
         io_uring_disabled: access::read_trimmed(ctx.proc_path("sys/kernel/io_uring_disabled")),
         io_uring_group: access::read_i64(ctx.proc_path("sys/kernel/io_uring_group")),
+        dirty_bytes: access::read_u64(ctx.proc_path("sys/vm/dirty_bytes")),
+        dirty_background_bytes: access::read_u64(ctx.proc_path("sys/vm/dirty_background_bytes")),
+        overcommit_kbytes: access::read_u64(ctx.proc_path("sys/vm/overcommit_kbytes")),
+        pipe_user_pages_soft: access::read_u64(ctx.proc_path("sys/fs/pipe-user-pages-soft")),
+        pipe_user_pages_hard: access::read_u64(ctx.proc_path("sys/fs/pipe-user-pages-hard")),
+        compact_unevictable_allowed: access::read_trimmed(
+            ctx.proc_path("sys/vm/compact_unevictable_allowed"),
+        ),
+        watermark_boost_factor: access::read_u64(ctx.proc_path("sys/vm/watermark_boost_factor")),
+        unknown_nmi_panic: access::read_trimmed(ctx.proc_path("sys/kernel/unknown_nmi_panic")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -477,6 +497,14 @@ mod tests {
         fs::write(root.join("proc/sys/fs/overflowgid"), "65534\n").unwrap();
         fs::write(root.join("proc/sys/kernel/io_uring_disabled"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/io_uring_group"), "-1\n").unwrap();
+        fs::write(root.join("proc/sys/vm/dirty_bytes"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/dirty_background_bytes"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/overcommit_kbytes"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/fs/pipe-user-pages-soft"), "16384\n").unwrap();
+        fs::write(root.join("proc/sys/fs/pipe-user-pages-hard"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/vm/compact_unevictable_allowed"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/vm/watermark_boost_factor"), "15000\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/unknown_nmi_panic"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmax"), "18446744073692774399\n").unwrap();
         fs::write(root.join("proc/sys/kernel/shmmni"), "4096\n").unwrap();
         fs::create_dir_all(root.join("proc/sys/fs/mqueue")).unwrap();
@@ -550,6 +578,14 @@ mod tests {
         assert_eq!(r.overflowgid.value, Some(65534));
         assert_eq!(r.io_uring_disabled.value.as_deref(), Some("0"));
         assert_eq!(r.io_uring_group.value, Some(-1));
+        assert_eq!(r.dirty_bytes.value, Some(0));
+        assert_eq!(r.dirty_background_bytes.value, Some(0));
+        assert_eq!(r.overcommit_kbytes.value, Some(0));
+        assert_eq!(r.pipe_user_pages_soft.value, Some(16384));
+        assert_eq!(r.pipe_user_pages_hard.value, Some(0));
+        assert_eq!(r.compact_unevictable_allowed.value.as_deref(), Some("1"));
+        assert_eq!(r.watermark_boost_factor.value, Some(15000));
+        assert_eq!(r.unknown_nmi_panic.value.as_deref(), Some("0"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));

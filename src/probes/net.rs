@@ -87,6 +87,17 @@ pub struct NetReport {
     pub busy_read: Sample<u64>,
     pub icmp_ratelimit: Sample<u64>,
     pub ip_default_ttl: Sample<u64>,
+    /// 三个页数：min / pressure / max。
+    pub tcp_mem: Sample<String>,
+    pub udp_mem: Sample<String>,
+    pub tcp_max_orphans: Sample<u64>,
+    pub tcp_dsack: Sample<String>,
+    pub tcp_autocorking: Sample<String>,
+    pub ipv6_accept_dad: Sample<String>,
+    /// `0` EUI64，`1` none，`2` stable-privacy，`3` random。
+    pub ipv6_addr_gen_mode: Sample<String>,
+    pub ip6frag_high_thresh: Sample<u64>,
+    pub rps_sock_flow_entries: Sample<u64>,
     pub notes: Vec<String>,
 }
 
@@ -347,6 +358,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let busy_read = access::read_u64(ctx.proc_path("sys/net/core/busy_read"));
     let icmp_ratelimit = access::read_u64(ctx.proc_path("sys/net/ipv4/icmp_ratelimit"));
     let ip_default_ttl = access::read_u64(ctx.proc_path("sys/net/ipv4/ip_default_ttl"));
+    let tcp_mem = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_mem"));
+    let udp_mem = access::read_trimmed(ctx.proc_path("sys/net/ipv4/udp_mem"));
+    let tcp_max_orphans = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_max_orphans"));
+    let tcp_dsack = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_dsack"));
+    let tcp_autocorking = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_autocorking"));
+    let ipv6_accept_dad =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_dad"));
+    let ipv6_addr_gen_mode =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/addr_gen_mode"));
+    let ip6frag_high_thresh = access::read_u64(ctx.proc_path("sys/net/ipv6/ip6frag_high_thresh"));
+    let rps_sock_flow_entries =
+        access::read_u64(ctx.proc_path("sys/net/core/rps_sock_flow_entries"));
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -431,6 +454,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 busy_read,
                 icmp_ratelimit,
                 ip_default_ttl,
+                tcp_mem,
+                udp_mem,
+                tcp_max_orphans,
+                tcp_dsack,
+                tcp_autocorking,
+                ipv6_accept_dad,
+                ipv6_addr_gen_mode,
+                ip6frag_high_thresh,
+                rps_sock_flow_entries,
                 notes,
             };
         }
@@ -623,6 +655,15 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         busy_read,
         icmp_ratelimit,
         ip_default_ttl,
+        tcp_mem,
+        udp_mem,
+        tcp_max_orphans,
+        tcp_dsack,
+        tcp_autocorking,
+        ipv6_accept_dad,
+        ipv6_addr_gen_mode,
+        ip6frag_high_thresh,
+        rps_sock_flow_entries,
         notes,
     }
 }
@@ -1348,6 +1389,23 @@ mod tests {
         fs::write(root.join("proc/sys/net/ipv4/icmp_ratelimit"), "1000\n").unwrap();
         fs::write(root.join("proc/sys/net/ipv4/ip_default_ttl"), "64\n").unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv4/tcp_mem"),
+            "181818\t242425\t363636\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv4/udp_mem"),
+            "363636\t484848\t727272\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_max_orphans"), "16384\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_dsack"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_autocorking"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/accept_dad"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/conf/all/addr_gen_mode"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv6/ip6frag_high_thresh"), "4194304\n").unwrap();
+        fs::write(root.join("proc/sys/net/core/rps_sock_flow_entries"), "32768\n").unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -1409,6 +1467,15 @@ mod tests {
         assert_eq!(r.busy_read.value, Some(0));
         assert_eq!(r.icmp_ratelimit.value, Some(1000));
         assert_eq!(r.ip_default_ttl.value, Some(64));
+        assert_eq!(r.tcp_mem.value.as_deref(), Some("181818\t242425\t363636"));
+        assert_eq!(r.udp_mem.value.as_deref(), Some("363636\t484848\t727272"));
+        assert_eq!(r.tcp_max_orphans.value, Some(16384));
+        assert_eq!(r.tcp_dsack.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_autocorking.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_accept_dad.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_addr_gen_mode.value.as_deref(), Some("0"));
+        assert_eq!(r.ip6frag_high_thresh.value, Some(4_194_304));
+        assert_eq!(r.rps_sock_flow_entries.value, Some(32768));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));

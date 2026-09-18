@@ -17,6 +17,8 @@ pub struct PlatformReport {
     pub msr_devices: usize,
     pub vtconsoles: Vec<VtConsole>,
     pub platform_devices: Vec<String>,
+    /// `/sys/class/wakeup` 条目数。不要展开每个 wakeupN。
+    pub wakeup_sources: usize,
     pub notes: Vec<String>,
 }
 
@@ -133,6 +135,18 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         }
         _ => Vec::new(),
     };
+    let wakeup_sources = match access::list_dir_names(ctx.sys_path("class/wakeup")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(n),
+            ..
+        } => n.len(),
+        s if s.access == AccessKind::PermissionDenied || s.access == AccessKind::Error => {
+            notes.push(s.access_label());
+            0
+        }
+        _ => 0,
+    };
     PlatformReport {
         watchdogs,
         backlights,
@@ -145,6 +159,7 @@ pub fn collect(ctx: &ProbeCtx) -> PlatformReport {
         msr_devices,
         vtconsoles,
         platform_devices,
+        wakeup_sources,
         notes,
     }
 }
@@ -349,6 +364,8 @@ mod tests {
         fs::write(vt.join("bind"), "1\n").unwrap();
         fs::create_dir_all(root.join("sys/bus/platform/devices/pcspkr")).unwrap();
         fs::create_dir_all(root.join("sys/bus/platform/devices/rtc_cmos")).unwrap();
+        fs::create_dir_all(root.join("sys/class/wakeup/wakeup0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/wakeup/wakeup1")).unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -379,6 +396,7 @@ mod tests {
             r.platform_devices,
             vec!["pcspkr".to_string(), "rtc_cmos".to_string()]
         );
+        assert_eq!(r.wakeup_sources, 2);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -436,6 +454,33 @@ mod tests {
                 .iter()
                 .any(|n| n.contains("权限") || n.contains("失败")),
             "denied class/msr must not look like zero devices: {:?}",
+            r.notes
+        );
+    }
+
+    #[test]
+    fn denied_wakeup_is_not_silent_zero() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aida-plat-wakeup-{}", std::process::id()));
+        let wu = root.join("sys/class/wakeup");
+        fs::create_dir_all(&wu).unwrap();
+        fs::set_permissions(&wu, fs::Permissions::from_mode(0o000)).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = fs::set_permissions(&wu, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(r.wakeup_sources, 0);
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.contains("权限") || n.contains("失败")),
+            "denied class/wakeup must not look like zero sources: {:?}",
             r.notes
         );
     }

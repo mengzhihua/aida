@@ -203,6 +203,12 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"scsi_generic\""));
     assert!(json.contains("\"dt_model\""));
     assert!(json.contains("\"ostype\""));
+    assert!(json.contains("\"kernel_max\""));
+    assert!(json.contains("\"dirty_bytes\""));
+    assert!(json.contains("\"tcp_mem\""));
+    assert!(json.contains("\"ipv6_addr_gen_mode\""));
+    assert!(json.contains("\"remoteproc\""));
+    assert!(json.contains("\"wakeup_sources\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -260,6 +266,22 @@ fn live_snapshot_json_and_html() {
         snap.software.ostype.value.as_deref() == Some("Linux")
             || snap.software.ostype.access != aida::access::AccessKind::Error,
         "ostype 应为 Linux 或至少不是读取失败"
+    );
+    assert!(
+        snap.sysctl.dirty_bytes.access != aida::access::AccessKind::Error,
+        "dirty_bytes 不应是读取失败（0 表示改用 dirty_ratio）"
+    );
+    assert!(
+        snap.sysctl.overcommit_kbytes.access != aida::access::AccessKind::Error,
+        "overcommit_kbytes 不应是读取失败（0 表示改用 overcommit_ratio）"
+    );
+    assert!(
+        snap.cpu.possible.access != aida::access::AccessKind::Error,
+        "cpu possible 不应是读取失败"
+    );
+    assert!(
+        snap.net.tcp_mem.access != aida::access::AccessKind::Error,
+        "tcp_mem 不应是读取失败（三个页数 token）"
     );
     assert!(
         snap.software.kexec_loaded.access != aida::access::AccessKind::Error,
@@ -339,6 +361,7 @@ fn live_snapshot_json_and_html() {
     assert!(html.contains("igmp6") || html.contains("printk") || html.contains("binfmt") || html.contains("ieee80211"));
     assert!(html.contains("byteorder") || html.contains("dentry") || html.contains("key-users") || html.contains("connector"));
     assert!(html.contains("pty") || html.contains("io_uring") || html.contains("accept_ra") || html.contains("ostype"));
+    assert!(html.contains("tcp_mem") || html.contains("dirty_bytes") || html.contains("addr_gen") || html.contains("remoteproc") || html.contains("wakeup_sources"));
     assert!(!html.contains("<script"));
 }
 

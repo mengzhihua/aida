@@ -157,6 +157,14 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 135. **空的 scsi_generic/wwan/ppp/phy 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
 136. **无 device-tree `model` 在 x86/云主机上常见。** 先读 sysfs 再读 `/proc/device-tree`，不要当采集失败。字符串属性以 NUL 结尾，导出前要去掉。
 137. **`nf_conntrack_tcp_timeout_established` 单位是秒。** 未加载 conntrack 时 `NotFound`。
+138. **`dirty_bytes=0` 表示改用 `dirty_ratio`。** `dirty_background_bytes=0` 同理。不要把 0 当成采集失败。
+139. **`overcommit_kbytes=0` 表示改用 `overcommit_ratio`。**
+140. **空的 remoteproc/extcon/tee/mdio_bus 表示没有对应硬件。** 云 VM 常见；`PermissionDenied` 仍写 note。
+141. **`tcp_mem` / `udp_mem` 是三个页数（min / pressure / max）。** 保留整行字符串，不要拆成单个整数。
+142. **IPv6 `addr_gen_mode`：`0` EUI64，`1` none，`2` stable-privacy，`3` random。**
+143. **`pipe-user-pages-hard=0` 表示不限制。** soft 默认常为 16384 页。
+144. **`kernel_max` 是内核编译时的最大 CPU 下标，不是在线数量。** `possible`/`present` 是掩码列表。
+145. **`/sys/class/wakeup` 只计数。** 不要展开每个 `wakeupN`。`PermissionDenied` 必须写 note。
 
 ## 测试方案
 
