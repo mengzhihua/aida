@@ -1,6 +1,6 @@
 # 打包与提权
 
-每一轮开发结束都要打出可直接使用的安装包：
+`package.sh` 开始时清掉 `dist/` 里上一版的 CLI / AppImage / tar.gz，避免 `SHA256SUMS` 和自测扫到旧二进制。`make-bundle.sh` / `smoke-dist.sh` 只认当前 `Cargo.toml` 版本号。
 
 ```bash
 ./scripts/package.sh

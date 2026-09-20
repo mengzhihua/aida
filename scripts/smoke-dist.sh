@@ -75,9 +75,9 @@ PY
 }
 
 shopt -s nullglob
-cli=("$OUT_DIR"/aida-cli-[0-9]*)
-app=("$OUT_DIR"/AIDA_Linux-*.AppImage)
-tarball=("$OUT_DIR"/aida-linux-*.tar.gz)
+cli=("$OUT_DIR"/aida-cli-${VERSION}-*)
+app=("$OUT_DIR"/AIDA_Linux-${VERSION}-*.AppImage)
+tarball=("$OUT_DIR"/aida-linux-${VERSION}-*.tar.gz)
 shopt -u nullglob
 
 if ((${#cli[@]})); then
