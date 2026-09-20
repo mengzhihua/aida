@@ -232,6 +232,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"uio\""));
     assert!(json.contains("\"auxiliary\""));
     assert!(json.contains("\"usbmon\""));
+    assert!(json.contains("\"counter\""));
+    assert!(json.contains("\"drm_dp_aux_dev\""));
+    assert!(json.contains("\"mhi\""));
+    assert!(json.contains("\"tcp_stdurg\""));
+    assert!(json.contains("\"nr_hugepages_mempolicy\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
@@ -623,6 +628,14 @@ fn live_snapshot_json_and_html() {
             || html.contains("usbmon")
             || html.contains("zonelist")
             || html.contains("auto_msgmni")
+    );
+    assert!(
+        html.contains("stdurg")
+            || html.contains("signed_win")
+            || html.contains("counter")
+            || html.contains("drm_dp_aux")
+            || html.contains("hugepages_mempolicy")
+            || html.contains("ra_rt_min_plen")
     );
     assert!(!html.contains("<script"));
 }
