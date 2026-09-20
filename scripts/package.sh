@@ -54,5 +54,7 @@ if [[ "$appimage_ok" -eq 1 ]]; then
   echo "AppImage: $OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
   echo "          APPIMAGE_EXTRACT_AND_RUN=1 $OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage collect"
 fi
-echo "本机安装: ./scripts/install.sh"
+echo "本机安装: 解压 tar.gz 后 ./install.sh   （Ubuntu apt / CentOS dnf|yum，不需要 cargo）"
+echo "          源码树也可 ./scripts/install.sh --deps"
+echo "体检:     dist/aida-cli doctor"
 echo "校验:     (cd $OUT_DIR && sha256sum -c SHA256SUMS)"

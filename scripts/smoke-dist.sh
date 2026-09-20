@@ -74,6 +74,28 @@ PY
   ok "$bin bench --quick"
 }
 
+smoke_doctor() {
+  local bin="$1"
+  local prefix="$2"
+  local txt="$WORK/${prefix}-doctor.txt"
+  local js="$WORK/${prefix}-doctor.json"
+  "$bin" doctor >"$txt"
+  grep -q "family=" "$txt" || fail "$bin doctor 没有 family="
+  grep -qE "apt-get|dnf|yum|zypper|pacman|apk |musl|glibc" "$txt" \
+    || fail "$bin doctor 没有发行版安装提示"
+  "$bin" doctor --json >"$js"
+  python3 - "$js" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+assert "family" in d, d.keys()
+assert d["family"] in ("debian", "rhel", "suse", "arch", "alpine", "unknown"), d["family"]
+assert isinstance(d.get("hints"), list) and d["hints"], d
+assert "gui_libs" in d
+PY
+  ok "$bin doctor + --json family=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["family"])' "$js")"
+}
+
 shopt -s nullglob
 cli=("$OUT_DIR"/aida-cli-${VERSION}-*)
 app=("$OUT_DIR"/AIDA_Linux-${VERSION}-*.AppImage)
@@ -87,6 +109,7 @@ if ((${#cli[@]})); then
   expect_version "$bin"
   smoke_collect "$bin" cli
   smoke_bench "$bin" cli
+  smoke_doctor "$bin" cli
   if command -v file >/dev/null; then
     if [[ "$bin" == *-musl ]]; then
       file "$bin" | grep -qi 'static' || fail "$bin 文件名是 musl 但不是静态链接"
@@ -118,11 +141,22 @@ if ((${#tarball[@]})); then
   echo "$listing" | grep -q README.md || fail "$tar 缺少 README.md"
   echo "$listing" | grep -q run-collect.sh || fail "$tar 缺少 run-collect.sh"
   echo "$listing" | grep -q run-gui.sh || fail "$tar 缺少 run-gui.sh"
+  echo "$listing" | grep -q install.sh || fail "$tar 缺少 install.sh"
+  echo "$listing" | grep -q os-family.sh || fail "$tar 缺少 os-family.sh"
+  echo "$listing" | grep -q run-doctor.sh || fail "$tar 缺少 run-doctor.sh"
+  echo "$listing" | grep -q packaging/aida.desktop || fail "$tar 缺少 packaging/aida.desktop"
   tar -xzf "$tar" -C "$WORK"
   bundle="$WORK/aida-linux-${VERSION}-${ARCH}"
   [[ -d "$bundle" ]] || fail "解压后没有 $bundle"
   [[ -x "$bundle/run-collect.sh" ]] || fail "没有 run-collect.sh"
   [[ -x "$bundle/run-gui.sh" ]] || fail "没有 run-gui.sh"
+  [[ -x "$bundle/install.sh" ]] || fail "没有 install.sh"
+  [[ -x "$bundle/run-doctor.sh" ]] || fail "没有 run-doctor.sh"
+  "$bundle/install.sh" --help >/dev/null
+  grep -q "CentOS" "$bundle/INSTALL.txt" || fail "INSTALL.txt 未提到 CentOS"
+  grep -q "Ubuntu" "$bundle/INSTALL.txt" || fail "INSTALL.txt 未提到 Ubuntu"
+  "$bundle/run-doctor.sh" >"$WORK/bundle-doctor.txt"
+  grep -q "family=" "$WORK/bundle-doctor.txt" || fail "run-doctor.sh 没有 family="
   "$bundle/run-collect.sh" --json "$WORK/bundle.json" --html "$WORK/bundle.html" >/dev/null
   python3 - "$WORK/bundle.json" "$VERSION" <<'PY'
 import json, sys
@@ -133,6 +167,16 @@ assert d["app"] == "aida" and d["version"] == ver
 assert d.get("cpu", {}).get("logical_cpus", 0) >= 1
 PY
   grep -qi "aida" "$WORK/bundle.html" || fail "bundle HTML 不含 AIDA"
+  grep -qi "ID_LIKE" "$WORK/bundle.html" || fail "bundle HTML 不含 ID_LIKE"
+  SMOKE_PREFIX="$WORK/install-prefix"
+  mkdir -p "$SMOKE_PREFIX"
+  PREFIX="$SMOKE_PREFIX" "$bundle/install.sh" >/dev/null
+  [[ -x "$SMOKE_PREFIX/bin/aida" ]] || fail "install.sh 没有装出 bin/aida"
+  [[ -x "$SMOKE_PREFIX/bin/aida-cli" ]] || fail "install.sh 没有装出 bin/aida-cli"
+  got="$("$SMOKE_PREFIX/bin/aida" version)"
+  [[ "$got" == "aida $VERSION" ]] || fail "安装后 aida version 是 '$got'"
+  "$SMOKE_PREFIX/bin/aida" doctor >/dev/null
+  ok "install.sh --prefix 后 aida doctor"
   if [[ -f "$bundle/SHA256SUMS" ]]; then
     (cd "$bundle" && sha256sum -c SHA256SUMS) >/dev/null
     ok "bundle SHA256SUMS"

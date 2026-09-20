@@ -27,6 +27,26 @@ echo "==> cargo build --release --features gui  (version $VERSION)"
 cd "$ROOT"
 cargo build --release --features gui
 
+# 记下本机 GUI 二进制需要的最高 GLIBC_x.y，随包装进 tar，给 CentOS 用户看。
+glibc_gui="$(python3 - "$ROOT/target/release/aida" <<'PY'
+import re, sys
+data = open(sys.argv[1], "rb").read()
+best = (0, 0, 0)
+for m in re.finditer(rb"GLIBC_(\d+)\.(\d+)(?:\.(\d+))?", data):
+    t = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+    if t > best:
+        best = t
+if best == (0, 0, 0):
+    sys.exit(0)
+a, b, c = best
+print(f"{a}.{b}" if c == 0 else f"{a}.{b}.{c}")
+PY
+)"
+if [[ -n "${glibc_gui:-}" ]]; then
+  printf '%s\n' "$glibc_gui" >"$OUT_DIR/GLIBC_GUI"
+  echo "==> GUI 需要 glibc $glibc_gui  (写入 $OUT_DIR/GLIBC_GUI)"
+fi
+
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/icons/hicolor/scalable/apps" \

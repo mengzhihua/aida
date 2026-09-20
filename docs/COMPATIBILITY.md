@@ -2,7 +2,7 @@
 
 ## 发行版差异
 
-| 点 | Debian/Ubuntu | Fedora/RHEL | Arch | 容器 / 部分云主机 |
+| 点 | Debian/Ubuntu | Fedora/RHEL/CentOS | Arch | 容器 / 部分云主机 |
 | --- | --- | --- | --- | --- |
 | DMI sysfs | 有（裸机/KVM） | 同左 | 同左 | 经常整棵 `/sys/class/dmi` 不存在 |
 | `product_serial` 权限 | udev 常设 0400 | 同左 | 同左 | — |
@@ -12,7 +12,9 @@
 | NUMA sysfs | 多路服务器有 nodeN | 同 | 同 | 单节点或未启用 NUMA 只有 node0 |
 | hwmon 驱动 | 需 `linux-modules-extra` 或自己加载 coretemp/k10temp | 内核包较全 | 较全 | 虚拟机常无 |
 | NVMe 节点权限 | `root:disk` 0660 | 同左 | 同左 | 无 NVMe 时走 virtio `vd*` |
-| 桌面 | GNOME 下 `pkexec` 保 DISPLAY 比裸 `sudo` 稳 | 同 | 同 | 无 GUI |
+| 桌面 | GNOME 下 `pkexec` 保 DISPLAY 比裸 `sudo` 稳 | 同；CentOS 7 无新 glibc，GUI AppImage 请改 musl CLI | 同 | 无 GUI |
+| 包管理 / GUI 库 | `apt-get`：`libxkbcommon-x11-0 libegl1 libgl1 pkexec` | `dnf` 或 `yum`：`libxkbcommon-x11 mesa-libEGL mesa-libGL polkit` | `pacman`：`libxkbcommon mesa polkit` | 无桌面库时 `aida doctor` 提示缺失 |
+| glibc vs musl CLI | 24.04 可跑当前 AppImage（GLIBC 2.39）；22.04/20.04 用 musl CLI | CentOS 7=2.17、8=2.28、9=2.34：采集用 musl 静态 CLI | 同左（新 rolling 通常够 GUI） | 容器用 musl CLI |
 | DRM | `amdgpu`/`i915` 节点较稳 | 同，另有 `xe` | 同 | 常无 `/sys/class/drm` |
 | NVIDIA procfs | 专有驱动才有 `/proc/driver/nvidia` | 同 | 同 | 云主机几乎没有 |
 
@@ -265,6 +267,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 243. **`accept_redirects`（IPv6）只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 忽略 ICMPv6 重定向。
 244. **`drop_unsolicited_na` 只列出与 `conf/all` 不同的接口。** `1` 丢掉未经请求的 Neighbor Advertisement。
 245. **`firmware_config/force_sysfs_fallback=0` 表示不强制 sysfs 固件回退。** `ignore_sysfs_fallback=0` 表示仍允许该回退。`real-root-dev=0` 表示未声明 initramfs 根设备。
+246. **桌面 AppImage 跟着构建机 glibc 走（Ubuntu 24.04 常见 `GLIBC_2.39`）。** CentOS 7（2.17）/ Rocky 8（2.28）/ Ubuntu 22.04（2.35）上 GUI 可能 `GLIBC_2.xx not found`。这不是采集失败；用包内 musl 静态 `aida-cli`。先跑 `aida doctor`（读 `os-release` 的 `ID`/`ID_LIKE`，不调用 `lsb_release`/`ldd`）。
+247. **`install.sh` 不需要 cargo。** 解压 tar 后 `./install.sh`；`--deps` 按 family 走 `apt-get` 或 `dnf`/`yum`。源码树默认装 `dist/` 成品，只有 `--from-source` 才 `cargo build`。
+248. **`ID_LIKE` 用来分 Debian 系和 RHEL/CentOS 系。** Ubuntu 的 `ID=ubuntu ID_LIKE=debian`；CentOS 的 `ID=centos ID_LIKE=rhel fedora`。不要用 `PRETTY_NAME` 字符串猜包管理器。
 
 ## 测试方案
 

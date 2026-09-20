@@ -4,15 +4,15 @@
 
 采集只走内核文件（`/proc` `/sys` `/dev`）和少量 ioctl，**不调用** `dmidecode`、`lspci`、`smartctl`、`nvme-cli`、`lshw`。GUI 与 CLI 共用同一套快照。
 
-**不需要安装 Rust。** 每个 PR 和每次发版都会打出可直接运行的包。
+**不需要安装 Rust。** Ubuntu / Debian / CentOS / RHEL / Rocky / Fedora 解开 tar 就能用。每个 PR 和每次发版都会打出可直接运行的包。
 
 ## 下载即用
 
 | 包 | 给谁 | 怎么跑 |
 | --- | --- | --- |
-| `aida-linux-<ver>-<arch>.tar.gz` | 拷到 U 盘 / 另一台机器 | 解压后看里面的 `INSTALL.txt` |
-| `AIDA_Linux-<ver>-<arch>.AppImage` | 桌面（GUI + CLI） | `chmod +x` 后直接跑 |
-| `aida-cli-<ver>-<arch>-musl`（或 `-gnu`） | 服务器 / 无显示器 | `chmod +x` 后 `./aida-cli collect` |
+| `aida-linux-<ver>-<arch>.tar.gz` | 拷到 U 盘 / 另一台机器 | 解压后 `./install.sh` 或看 `INSTALL.txt` |
+| `AIDA_Linux-<ver>-<arch>.AppImage` | 较新 glibc 桌面（GUI + CLI） | `chmod +x` 后直接跑 |
+| `aida-cli-<ver>-<arch>-musl`（或 `-gnu`） | **所有发行版** 服务器 / 无显示器 / 旧 glibc | `chmod +x` 后 `./aida-cli collect` |
 
 去哪下：
 
@@ -20,14 +20,36 @@
 2. **每个 PR / 每次开发**：Actions 工作流 [package](https://github.com/mengzhihua/aida/actions/workflows/package.yml) → 最新成功的 run → Artifact **`aida-linux`**
 
 ```bash
-# 桌面（容器或无 FUSE 时加 APPIMAGE_EXTRACT_AND_RUN=1）
-chmod +x AIDA_Linux-*.AppImage
-APPIMAGE_EXTRACT_AND_RUN=1 ./AIDA_Linux-*.AppImage gui
+tar -xzf aida-linux-*.tar.gz
+cd aida-linux-*
+chmod +x install.sh aida-cli
+./aida-cli doctor                 # 识别 Ubuntu vs CentOS，给出 apt 或 dnf/yum
+./install.sh                      # 装到 ~/.local，不需要 cargo
+./install.sh --deps               # 再装 GUI 运行库
 
-# 服务器采集
-chmod +x aida-cli-*-musl
-./aida-cli-*-musl collect --html report.html
-./aida-cli-*-musl bench --quick
+# 不安装也可以
+./run-collect.sh --html report.html          # CentOS 7 也能采集（musl 静态）
+APPIMAGE_EXTRACT_AND_RUN=1 ./run-gui.sh      # 桌面；旧 glibc 不行时用上一行
+```
+
+### 发行版怎么选包
+
+| 系统 | 采集 / 报告 | 桌面 GUI |
+| --- | --- | --- |
+| Ubuntu 24.04、Debian 13、Fedora 新版本 | musl CLI 或 AppImage | AppImage（构建机 glibc，常见 **2.39**） |
+| Ubuntu 22.04 / 20.04、Rocky/Alma 8–9、CentOS Stream | musl CLI | 若 `aida doctor` 提示 glibc 偏低，只用 CLI |
+| CentOS 7（glibc 2.17） | **musl CLI** | AppImage 起不来，这是预期 |
+
+GUI 运行库（`./install.sh --deps` 会按 `ID`/`ID_LIKE` 选命令）：
+
+```bash
+# Debian / Ubuntu / Mint
+sudo apt-get install -y libxkbcommon-x11-0 libegl1 libgl1 pkexec
+
+# CentOS / RHEL / Rocky / Alma / Fedora
+sudo dnf install -y libxkbcommon-x11 mesa-libEGL mesa-libGL polkit
+# 没有 dnf 时（CentOS 7）：
+sudo yum install -y libxkbcommon-x11 mesa-libEGL mesa-libGL polkit
 ```
 
 本机从源码打出同样的包：
@@ -42,6 +64,7 @@ ls -lh dist/
 
 | 你想做的事 | 命令 |
 | --- | --- |
+| 本机发行版 / glibc / GUI 库体检 | `aida doctor`（`--json` 可脚本化） |
 | 桌面界面 | `aida gui` |
 | 采集 JSON | `aida collect` |
 | HTML 报告 | `aida collect --html aida-report.html` |
@@ -51,7 +74,7 @@ ls -lh dist/
 
 无图形会话（没有 `DISPLAY` / `WAYLAND_DISPLAY`）时，裸跑 `aida` 会变成 `collect`。
 
-GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。musl CLI 无此依赖。
+GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。musl CLI 无此依赖，旧发行版请用它。
 
 ## 能做什么
 
@@ -69,16 +92,21 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 
 ## 从源码安装（开发机）
 
-需要 **Rust 1.88+**。无显示器请编 CLI（`--no-default-features`）。
+普通用户请走上面的 tar.gz，**不要先装 Rust**。开发机需要 **Rust 1.88+**。无显示器请编 CLI（`--no-default-features`）。
 
 ```bash
 cargo build --release
 ./target/release/aida --help
 ./target/release/aida gui          # 需要 X11 或 Wayland
+./target/release/aida doctor
 
-# 装到用户目录（桌面文件 + 图标）
+# 优先装 dist/ 成品（不强制 cargo）：
+./scripts/package.sh
 ./scripts/install.sh
-# 或：PREFIX=/usr/local sudo ./scripts/install.sh
+./scripts/install.sh --deps
+# 开发机现场编译 GUI：
+./scripts/install.sh --from-source
+# 系统级：sudo ./scripts/install.sh --prefix /usr
 ```
 
 只要采集 CLI：
@@ -117,10 +145,11 @@ PolicyKit 策略：`packaging/polkit/com.aida.linux.policy`。细节见 [docs/PA
 
 见 [docs/PACKAGING.md](docs/PACKAGING.md)。要点：
 
-- **桌面版用 glibc AppImage**，不要把 egui/glow 链到 musl
-- **CLI 可 musl 静态**，适合救援盘和容器
+- **桌面版用 glibc AppImage**，不要把 egui/glow 链到 musl；目标 glibc 见包内 `GLIBC_GUI`
+- **CLI 可 musl 静态**，这是 CentOS / 旧 Ubuntu 的开箱采集路径
 - 版本号只来自 `Cargo.toml`
 - **每一轮开发都要打出可直接使用的包**：本地 `./scripts/package.sh`；CI 每个 PR 上传 Artifact `aida-linux`
+- 用户安装：解压后 `./install.sh`（`--deps` 按 os-release 走 apt 或 dnf/yum）
 
 ## 采集架构
 
@@ -164,6 +193,7 @@ cargo test --no-default-features --lib
 | `src/ui/app.rs` | egui |
 | `src/record.rs` / `src/alerts.rs` | 状态栏历史、阈值告警 |
 | `src/elevate.rs` | pkexec / sudo |
-| `scripts/` `packaging/` | AppImage、CLI、安装包、桌面文件、polkit |
+| `src/doctor.rs` | 发行版 family / glibc / GUI `.so`，给出 apt 或 dnf/yum |
+| `scripts/` `packaging/` | AppImage、CLI、`install.sh`、桌面文件、polkit |
 
 许可证：MIT。

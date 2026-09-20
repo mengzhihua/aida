@@ -3205,6 +3205,8 @@ impl AidaApp {
         ui.heading(self.t("操作系统", "OS"));
         kv(ui, "OS", &self.snap.software.os_name.display());
         kv(ui, "ID", &self.snap.software.os_id.display());
+        kv(ui, "ID_LIKE", &self.snap.software.os_like.display());
+        kv(ui, "VERSION_ID", &self.snap.software.os_version.display());
         kv(
             ui,
             self.t("内核", "Kernel"),

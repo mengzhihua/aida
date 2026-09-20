@@ -5,6 +5,7 @@
 //! - [`snapshot`] 一次完整快照
 //! - [`export`] JSON/HTML
 //! - [`bench`] CPU / 内存 / 磁盘（buffered + O_DIRECT）
+//! - [`doctor`] 发行版 / glibc / GUI 库体检（apt 与 dnf/yum）
 //! - [`elevate`] pkexec/sudo 提权重启
 //! - [`alerts`] hwmon 阈值告警与 JSONL 日志
 //! - [`record`] CPU/内存/网络/磁盘/温度 JSONL 历史（对标 iStat Menus）
@@ -12,6 +13,7 @@
 pub mod access;
 pub mod alerts;
 pub mod bench;
+pub mod doctor;
 pub mod elevate;
 pub mod export;
 pub mod probes;

@@ -9,11 +9,11 @@ ls -lh dist/
 
 | 产物 | 脚本 | 说明 |
 | --- | --- | --- |
-| `dist/aida-linux-<ver>-<arch>.tar.gz` | `scripts/make-bundle.sh` | 解压即用：CLI + AppImage + `INSTALL.txt` + `run-gui.sh` |
+| `dist/aida-linux-<ver>-<arch>.tar.gz` | `scripts/make-bundle.sh` | 解压即用：CLI + AppImage + `install.sh` + `INSTALL.txt` + `run-gui.sh` / `run-doctor.sh` |
 | `dist/aida-cli-<ver>-<arch>-musl` 或 `-gnu` | `scripts/build-cli.sh` | 无 GUI。有 musl 工具链则静态，否则 glibc `--no-default-features` |
-| `dist/AIDA_Linux-<ver>-<arch>.AppImage` | `scripts/build-appimage.sh` | GUI + CLI。版本取自 `Cargo.toml` |
+| `dist/AIDA_Linux-<ver>-<arch>.AppImage` | `scripts/build-appimage.sh` | GUI + CLI。版本取自 `Cargo.toml`；写出 `dist/GLIBC_GUI` |
 | `dist/SHA256SUMS` | `scripts/make-bundle.sh` | 上述产物的 sha256 |
-| `~/.local/bin/aida`（可选） | `scripts/install.sh` | 本机安装桌面文件与图标；菜单 `Exec` 写成绝对路径 |
+| `~/.local/bin/aida`（可选） | `install.sh` / `scripts/install.sh` | **不需要 cargo**：从 tar 或 `dist/` 拷贝 CLI/AppImage；`--deps` 按发行版装 GUI 库 |
 
 GitHub Actions：`.github/workflows/package.yml` 在**每个 PR** 和 tag 上传 Artifact `aida-linux`（tar.gz + 二进制 + SHA256SUMS），并对成品跑 `scripts/smoke-dist.sh`（version / JSON / HTML / bench / 校验和 / 解压 tar）。`package.sh` 打完包也会跑同一套自测。
 
@@ -58,20 +58,39 @@ GUI 在运行时 `dlopen` `libxkbcommon-x11`。打包机请安装：
 
 ```bash
 # Debian/Ubuntu
-sudo apt install libxkbcommon-x11-0 libegl1 libgl1
+sudo apt-get install -y libxkbcommon-x11-0 libegl1 libgl1
+# CentOS / RHEL / Rocky / Fedora
+sudo dnf install -y libxkbcommon-x11 mesa-libEGL mesa-libGL || \
+  sudo yum install -y libxkbcommon-x11 mesa-libEGL mesa-libGL
 ```
 
-脚本会把能找到的这些 `.so` 打进 AppImage。构建机缺库时，`collect`/`bench` 仍可用，GUI 需目标桌面自带该库。
+脚本会把能找到的这些 `.so` 打进 AppImage。构建机缺库时，`collect`/`bench` 仍可用，GUI 需目标桌面自带该库。`build-appimage.sh` 会扫描 GUI ELF 里最高的 `GLIBC_*` 符号，写入 `dist/GLIBC_GUI`（当前 GitHub `ubuntu-latest` / Ubuntu 24.04 常见 **2.39**）。低于该版本的发行版（CentOS 7=2.17、Rocky 8=2.28、Ubuntu 22.04=2.35）请用 musl CLI，不要指望 AppImage。
 
-安装系统图标/策略（deb/rpm 或 `PREFIX=/usr`）：
+## 用户安装（开箱，无 Rust）
+
+tar.gz 里带 `install.sh` 和 `os-family.sh`，读 `/etc/os-release` 的 `ID` / `ID_LIKE`：
+
+| family | 系统 | `--deps` |
+| --- | --- | --- |
+| debian | Ubuntu、Debian、Mint | `apt-get`：`libxkbcommon-x11-0 libegl1 libgl1 pkexec` |
+| rhel | CentOS、RHEL、Rocky、Alma、Fedora | `dnf`，没有则 `yum`：`libxkbcommon-x11 mesa-libEGL mesa-libGL polkit` |
+| suse | openSUSE / SLES | `zypper` |
+| arch | Arch / Manjaro | `pacman` |
 
 ```bash
-sudo PREFIX=/usr ./scripts/install.sh
-# 或手工：
-sudo install -m 0644 packaging/polkit/com.aida.linux.policy \
-  /usr/share/polkit-1/actions/
-sudo install -m 0755 target/release/aida /usr/bin/aida
+# 解压 Release / Artifact 后
+./aida-cli doctor
+./install.sh                  # → ~/.local/bin/aida （采集走 musl CLI，gui 走 AppImage）
+./install.sh --deps
+sudo ./install.sh --prefix /usr
+
+# 源码树：先 package 再装；开发机才需要 --from-source
+./scripts/package.sh
+./scripts/install.sh
+./scripts/install.sh --from-source
 ```
+
+`aida doctor` 不调用 `lsb_release` / `ldd` / `hostnamectl`。
 
 ## 采集 CLI 静态链接
 
@@ -92,4 +111,4 @@ cargo build --release --no-default-features --target x86_64-unknown-linux-musl
 | `sudo -E aida gui` | 无 pkexec；必须 `-E` 保留 DISPLAY |
 | `sudo aida collect` | 无显示器的服务器 |
 
-pkexec 不在 PATH 时（只装了 `polkitd` 未装 `pkexec` 包）会退到 sudo，无 TTY 会失败。Debian/Ubuntu：`apt install pkexec`。
+pkexec 不在 PATH 时（只装了 `polkitd` 未装 `pkexec` 包）会退到 sudo，无 TTY 会失败。Debian/Ubuntu：`apt-get install pkexec`。RHEL 系：`dnf install polkit`（提供 `pkexec`）。
