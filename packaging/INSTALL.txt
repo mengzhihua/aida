@@ -1,19 +1,36 @@
-AIDA Linux — 解压即可用，不需要安装 Rust。
+AIDA Linux — 解压即可用，不需要 Rust，也不需要先装开发工具。
 
-桌面（GUI）：
-  chmod +x run-gui.sh
-  ./run-gui.sh
-  # 等价于：
-  APPIMAGE_EXTRACT_AND_RUN=1 ./AIDA_Linux.AppImage gui
+本包装了 musl 静态采集 CLI（CentOS / Ubuntu / Debian / Rocky / Fedora 都能跑）
+和一份 glibc 桌面 AppImage（构建机 glibc 见 GLIBC_GUI，常见为 2.39）。
 
-服务器 / 无显示器：
-  chmod +x run-collect.sh aida-cli
-  ./run-collect.sh --html report.html
-  ./aida-cli bench --quick
-  ./aida-cli version
+0) 先体检（推荐）
+  chmod +x aida-cli run-doctor.sh
+  ./run-doctor.sh
+  # 会读 /etc/os-release，告诉你走 apt 还是 dnf/yum，以及本机 glibc 能不能开 GUI。
 
-本机装进菜单（需要已有 cargo 的开发机，不是这个 tar）：
-  源码树里运行 ./scripts/install.sh
+1) 本机安装到菜单 / PATH（Ubuntu 与 CentOS 同一条命令）
+  chmod +x install.sh aida-cli
+  ./install.sh                 # 拷到 ~/.local ，不需要 cargo
+  ./install.sh --deps          # 再装 GUI 运行库
+  # Debian/Ubuntu:  apt-get 装 libxkbcommon-x11-0 libegl1 libgl1 pkexec
+  # CentOS/RHEL/Rocky/Fedora: dnf 或 yum 装 libxkbcommon-x11 mesa-libEGL mesa-libGL polkit
+  # 系统级: sudo ./install.sh --prefix /usr
 
-校验：
+2) 不安装，解压目录里直接跑
+  桌面（GUI）：
+    chmod +x run-gui.sh
+    ./run-gui.sh
+    # 无 FUSE 时脚本已默认 APPIMAGE_EXTRACT_AND_RUN=1
+
+  服务器 / 无显示器 / 旧发行版（CentOS 7 也能采集）：
+    chmod +x run-collect.sh aida-cli
+    ./run-collect.sh --html report.html
+    ./aida-cli doctor
+    ./aida-cli bench --quick
+    ./aida-cli version
+
+3) 校验
   sha256sum -c SHA256SUMS
+
+若 GUI 报 GLIBC_2.xx not found：这是 AppImage 在比构建机更旧的 glibc 上的限制，
+不是采集失败。请用 aida-cli（静态 musl）。详细兼容说明见 README。

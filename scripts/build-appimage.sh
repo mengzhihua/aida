@@ -27,6 +27,45 @@ echo "==> cargo build --release --features gui  (version $VERSION)"
 cd "$ROOT"
 cargo build --release --features gui
 
+scan_glibc_max() {
+  python3 - "$@" <<'PY'
+import os, re, sys
+
+best = (0, 0, 0)
+
+def scan(path):
+    global best
+    try:
+        with open(path, "rb") as f:
+            data = f.read(4)
+            if data != b"\x7fELF":
+                return
+            f.seek(0)
+            data = f.read()
+    except OSError:
+        return
+    for m in re.finditer(rb"GLIBC_(\d+)\.(\d+)(?:\.(\d+))?", data):
+        t = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+        if t > best:
+            best = t
+
+def walk(p):
+    if os.path.isfile(p):
+        scan(p)
+        return
+    for root, _dirs, files in os.walk(p):
+        for name in files:
+            scan(os.path.join(root, name))
+
+for p in sys.argv[1:]:
+    walk(p)
+if best == (0, 0, 0):
+    sys.exit(0)
+a, b, c = best
+print(f"{a}.{b}" if c == 0 else f"{a}.{b}.{c}")
+PY
+}
+
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
@@ -86,6 +125,13 @@ done
   --icon-file "$APPDIR/aida.svg" \
   "${EXTRA_LIBS[@]}" \
   --output appimage
+
+# 主程序 + linuxdeploy 打进去的 .so 一起扫描，避免 GLIBC_GUI 低报。
+glibc_gui="$(scan_glibc_max "$APPDIR")"
+if [[ -n "${glibc_gui:-}" ]]; then
+  printf '%s\n' "$glibc_gui" >"$OUT_DIR/GLIBC_GUI"
+  echo "==> AppDir GUI 需要 glibc $glibc_gui  (写入 $OUT_DIR/GLIBC_GUI)"
+fi
 
 dest="$OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
 shopt -s nullglob

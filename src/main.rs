@@ -25,6 +25,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("collect") => cmd_collect(&args[1..]),
+        Some("doctor") => cmd_doctor(&args[1..]),
         Some("bench") => cmd_bench(&args[1..]),
         Some("gui") => cmd_gui(),
         Some("elevate") => cmd_elevate(&args[1..]),
@@ -59,6 +60,7 @@ AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmi
   aida                              有图形会话则 GUI，否则打印 JSON
   aida gui                          桌面界面（状态栏 / 传感器折线 / 导出）
   aida collect [--json FILE] [--html FILE]
+  aida doctor [--json]
   aida bench [--quick] [--cpu] [--memory] [--disk] [--no-direct]
   aida elevate [gui|collect|bench ...]   pkexec，没有则 sudo -E
   aida version
@@ -70,7 +72,7 @@ AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmi
 权限: 缺权限标 permission_denied，不填假数据。DMI 序列号 / NVMe SMART 通常要
 root 或 disk 组。桌面提权用 `aida elevate gui`，不要对 GUI 裸 sudo 以免丢掉 DISPLAY。
 
-打包: ./scripts/package.sh     本机安装: ./scripts/install.sh
+打包: 解压 tar.gz 后 ./install.sh（Ubuntu/Debian 与 CentOS/RHEL 都能装）。源码 ./scripts/package.sh
 详见 README.md 与 docs/PACKAGING.md。",
         env!("CARGO_PKG_VERSION")
     );
@@ -136,6 +138,42 @@ fn cmd_collect(args: &[String]) -> ExitCode {
             }
             eprintln!("HTML -> {}", p.display());
         }
+        ExitCode::SUCCESS
+    }
+}
+
+fn cmd_doctor(args: &[String]) -> ExitCode {
+    let mut json = false;
+    for a in args {
+        match a.as_str() {
+            "--json" => json = true,
+            "-h" | "--help" => {
+                eprintln!(
+                    "aida doctor [--json]   检查发行版、glibc、GUI 库，给出 apt/dnf/yum 安装命令"
+                );
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("未知参数: {other}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let ctx = ProbeCtx::live();
+    let report = aida::doctor::collect(&ctx);
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(s) => {
+                println!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        print!("{}", aida::doctor::format_text(&report));
         ExitCode::SUCCESS
     }
 }

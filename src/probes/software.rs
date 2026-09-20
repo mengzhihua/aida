@@ -8,6 +8,8 @@ use crate::access::{self, AccessKind, ProbeCtx, Sample};
 pub struct SoftwareInfo {
     pub os_name: Sample<String>,
     pub os_id: Sample<String>,
+    /// `/etc/os-release` 的 `ID_LIKE`（如 ubuntu→debian，centos→rhel fedora）。
+    pub os_like: Sample<String>,
     pub os_version: Sample<String>,
     pub kernel_release: Sample<String>,
     pub ostype: Sample<String>,
@@ -95,6 +97,7 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
     SoftwareInfo {
         os_name: os.pretty,
         os_id: os.id,
+        os_like: os.id_like,
         os_version: os.version,
         kernel_release: access::read_trimmed(ctx.proc_path("sys/kernel/osrelease")),
         ostype: access::read_trimmed(ctx.proc_path("sys/kernel/ostype")),
@@ -341,27 +344,30 @@ pub fn decode_taint(v: u64) -> Vec<String> {
         .collect()
 }
 
-struct OsRelease {
-    pretty: Sample<String>,
-    id: Sample<String>,
-    version: Sample<String>,
+pub(crate) struct OsRelease {
+    pub pretty: Sample<String>,
+    pub id: Sample<String>,
+    pub id_like: Sample<String>,
+    pub version: Sample<String>,
 }
 
 fn parse_os_release(sample: &Sample<String>) -> OsRelease {
+    parse_os_release_fields(sample)
+}
+
+/// 解析 os-release。`ID_LIKE` 用来区分 Debian 系和 RHEL/CentOS 系。
+pub(crate) fn parse_os_release_fields(sample: &Sample<String>) -> OsRelease {
     let source = sample.source.clone();
+    let miss = |hint: Option<String>| Sample {
+        value: None,
+        access: sample.access,
+        source: source.clone(),
+        hint,
+    };
     let fail = |access: AccessKind, hint: Option<String>| OsRelease {
-        pretty: Sample {
-            value: None,
-            access,
-            source: source.clone(),
-            hint: hint.clone(),
-        },
-        id: Sample {
-            value: None,
-            access,
-            source: source.clone(),
-            hint: hint.clone(),
-        },
+        pretty: miss(hint.clone()),
+        id: miss(hint.clone()),
+        id_like: miss(hint.clone()),
         version: Sample {
             value: None,
             access,
@@ -375,6 +381,7 @@ fn parse_os_release(sample: &Sample<String>) -> OsRelease {
     };
     let mut pretty = None;
     let mut id = None;
+    let mut id_like = None;
     let mut version = None;
     for line in text.lines() {
         if let Some((k, v)) = line.split_once('=') {
@@ -382,6 +389,7 @@ fn parse_os_release(sample: &Sample<String>) -> OsRelease {
             match k {
                 "PRETTY_NAME" => pretty = Some(v),
                 "ID" => id = Some(v),
+                "ID_LIKE" => id_like = Some(v),
                 "VERSION_ID" => version = Some(v),
                 _ => {}
             }
@@ -394,9 +402,57 @@ fn parse_os_release(sample: &Sample<String>) -> OsRelease {
         id: id
             .map(|v| Sample::ok(v, source.clone()))
             .unwrap_or_else(|| Sample::missing(source.clone())),
+        id_like: id_like
+            .map(|v| Sample::ok(v, source.clone()))
+            .unwrap_or_else(|| Sample::missing(source.clone())),
         version: version
             .map(|v| Sample::ok(v, source.clone()))
             .unwrap_or_else(|| Sample::missing(source)),
+    }
+}
+
+/// ubuntu/debian → debian；centos/rhel/rocky/fedora → rhel。
+pub fn distro_family(id: &str, like: &str) -> &'static str {
+    let blob = format!("{id} {like}").to_ascii_lowercase();
+    let hit = |names: &[&str]| {
+        blob.split(|c: char| c.is_ascii_whitespace() || c == ',')
+            .any(|s| names.iter().any(|n| *n == s))
+    };
+    if hit(&[
+        "debian",
+        "ubuntu",
+        "linuxmint",
+        "pop",
+        "raspbian",
+        "elementary",
+        "kali",
+    ]) {
+        "debian"
+    } else if hit(&[
+        "rhel",
+        "centos",
+        "fedora",
+        "rocky",
+        "alma",
+        "almalinux",
+        "ol",
+        "amzn",
+        "scientific",
+        "redhat",
+        "anolis",
+        "opencloudos",
+        "kylin",
+        "uos",
+    ]) {
+        "rhel"
+    } else if hit(&["suse", "opensuse", "sles", "opensuse-leap", "opensuse-tumbleweed"]) {
+        "suse"
+    } else if hit(&["arch", "manjaro", "endeavouros", "archlinux"]) {
+        "arch"
+    } else if hit(&["alpine"]) {
+        "alpine"
+    } else {
+        "unknown"
     }
 }
 
@@ -464,6 +520,22 @@ mod tests {
         let os = parse_os_release(&s);
         assert_eq!(os.pretty.value.as_deref(), Some("Ubuntu 24.04.4 LTS"));
         assert_eq!(os.id.value.as_deref(), Some("ubuntu"));
+        assert_eq!(os.id_like.value, None);
+    }
+
+    #[test]
+    fn os_release_centos_id_like() {
+        let s = Sample::ok(
+            "NAME=\"CentOS Linux\"\nID=\"centos\"\nID_LIKE=\"rhel fedora\"\nVERSION_ID=\"7\"\nPRETTY_NAME=\"CentOS Linux 7 (Core)\"\n".into(),
+            "/etc/os-release",
+        );
+        let os = parse_os_release(&s);
+        assert_eq!(os.id.value.as_deref(), Some("centos"));
+        assert_eq!(os.id_like.value.as_deref(), Some("rhel fedora"));
+        assert_eq!(distro_family("centos", "rhel fedora"), "rhel");
+        assert_eq!(distro_family("ubuntu", "debian"), "debian");
+        assert_eq!(distro_family("debian", ""), "debian");
+        assert_eq!(distro_family("rocky", "rhel centos fedora"), "rhel");
     }
 
     #[test]

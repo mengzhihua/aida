@@ -1858,6 +1858,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         &mut html,
         &[
             ("操作系统", snap.software.os_name.display()),
+            ("ID", snap.software.os_id.display()),
+            ("ID_LIKE", snap.software.os_like.display()),
+            ("VERSION_ID", snap.software.os_version.display()),
             ("内核", snap.software.kernel_release.display()),
             ("ostype", snap.software.ostype.display()),
             ("主机名", snap.software.hostname.display()),
