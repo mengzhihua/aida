@@ -161,6 +161,13 @@ if ((${#tarball[@]})); then
   [[ -x "$bundle/install.sh" ]] || fail "没有 install.sh"
   [[ -x "$bundle/run-doctor.sh" ]] || fail "没有 run-doctor.sh"
   "$bundle/install.sh" --help >/dev/null
+  set +e
+  "$bundle/install.sh" --prefix= >/dev/null 2>"$WORK/prefix-empty.err"
+  st=$?
+  set -e
+  [[ "$st" -eq 2 ]] || fail "install.sh --prefix= 应退出 2，实际 $st"
+  grep -q "需要目录" "$WORK/prefix-empty.err" || fail "install.sh --prefix= 应拒绝空前缀"
+  ok "install.sh 拒绝空 --prefix="
   grep -q "CentOS" "$bundle/INSTALL.txt" || fail "INSTALL.txt 未提到 CentOS"
   grep -q "Ubuntu" "$bundle/INSTALL.txt" || fail "INSTALL.txt 未提到 Ubuntu"
   "$bundle/run-doctor.sh" >"$WORK/bundle-doctor.txt"

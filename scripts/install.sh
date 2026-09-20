@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --prefix=*)
       PREFIX="${1#--prefix=}"
+      [[ -n "$PREFIX" ]] || { echo "--prefix 需要目录" >&2; exit 2; }
       shift
       ;;
     --deps) WANT_DEPS=1; shift ;;
