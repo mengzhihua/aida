@@ -31,16 +31,31 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
+HEAD="$(git rev-parse HEAD)"
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-  echo "local tag ${TAG} already exists"
+  TARGET="$(git rev-list -n 1 "refs/tags/${TAG}")"
+  if [[ "$TARGET" != "$HEAD" ]]; then
+    echo "local tag ${TAG} points at ${TARGET:0:12}, not HEAD ${HEAD:0:12}." >&2
+    echo "delete it first: git tag -d ${TAG}" >&2
+    exit 1
+  fi
+  echo "local tag ${TAG} already at HEAD"
 else
   git tag -a "$TAG" -m "AIDA Linux ${VERSION}"
   echo "created ${TAG} at $(git rev-parse --short HEAD)"
 fi
 
 if [[ "$PUSH" -eq 1 ]]; then
-  if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
-    echo "origin already has ${TAG}; not pushing"
+  REMOTE="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+  if [[ -z "$REMOTE" ]]; then
+    REMOTE="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')"
+  fi
+  if [[ -n "$REMOTE" ]]; then
+    if [[ "$REMOTE" != "$HEAD" ]]; then
+      echo "origin ${TAG} points at ${REMOTE:0:12}, not HEAD ${HEAD:0:12}; not pushing." >&2
+      exit 1
+    fi
+    echo "origin already has ${TAG} at HEAD; not pushing"
     exit 0
   fi
   git push origin "$TAG"

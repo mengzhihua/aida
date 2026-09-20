@@ -274,7 +274,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 250. **`tcp_fack=0` 表示 FACK 关闭。** 现代内核常与 SACK 合并，键仍在。`tcp_low_latency=0` 表示不走低延迟小包路径（偏吞吐）。
 251. **`drop_unicast_in_l2_multicast` / `force_tllao` 只列出与 `conf/all` 不同的接口。** `1` 分别表示丢掉 L2 组播里的单播、NS 强制带目标链路层地址。不要用 `default` 顶替已有 iface。
 252. **`sched_schedstats=0` 表示不额外导出调度统计。** 无 `CONFIG_SCHEDSTATS` 时为 NotFound，不是失败。`traceoff_on_warning=0` 表示 WARN 时不关掉 tracing；无 tracing 时 NotFound。
-253. **无问题的版本自动发 GitHub Release。** 合并到 `main` / 栈顶且还没有 `v$VERSION` tag 时，`package.yml` 先跑 `cargo test` 和成品 smoke，通过才打 tag 并挂 tar.gz / AppImage / musl CLI。不要用 `gh release create` 挂未经自测的文件。`./scripts/release.sh --push` 只推 tag。
+253. **无问题的版本自动发 GitHub Release。** 合并到 `main` / 栈顶且还没有 `v$VERSION` tag 时，`package.yml` 先跑 `cargo test` 和成品 smoke，通过才打 tag（指向当前 SHA，不是默认 `main`）并挂 tar.gz / AppImage / musl CLI。main 与栈顶发版共用一把锁，已有 tag 不覆盖。不要用 `gh release create` 挂未经自测的文件。`./scripts/release.sh --push` 只推指向 HEAD 的 tag。
 
 ## 测试方案
 
