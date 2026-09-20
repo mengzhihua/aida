@@ -2794,8 +2794,8 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
     let mut sections = Vec::new();
 
     let mut cpu = vec![
-        pair("型号", snap.cpu.model_name.display()),
-        pair("厂商", snap.cpu.vendor.display()),
+        pair("型号", snap.cpu.model_name.compact()),
+        pair("厂商", snap.cpu.vendor.compact()),
         pair("逻辑 CPU", snap.cpu.logical_cpus.to_string()),
         pair("封装数", snap.cpu.physical_packages.to_string()),
         pair(
@@ -2809,11 +2809,11 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             "SMT",
             format!(
                 "active {} control {}",
-                snap.cpu.smt_active.display(),
-                snap.cpu.smt_control.display()
+                snap.cpu.smt_active.compact(),
+                snap.cpu.smt_control.compact()
             ),
         ),
-        pair("microcode", snap.cpu.microcode.display()),
+        pair("microcode", snap.cpu.microcode.compact()),
     ];
     for p in snap.dmi.processors.iter().take(8) {
         cpu.push(pair(
@@ -2857,8 +2857,8 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             "BIOS",
             format!(
                 "{} {}  rom {}  rel {}",
-                snap.dmi.bios_vendor.display(),
-                snap.dmi.bios_version.display(),
+                snap.dmi.bios_vendor.compact(),
+                snap.dmi.bios_version.compact(),
                 snap.dmi
                     .bios_rom_kb
                     .map(|n| format!("{n} KiB"))
@@ -2866,23 +2866,23 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 snap.dmi.bios_release.as_deref().unwrap_or("—")
             ),
         ),
-        pair("厂商", snap.dmi.sys_vendor.display()),
-        pair("产品", snap.dmi.product_name.display()),
+        pair("厂商", snap.dmi.sys_vendor.compact()),
+        pair("产品", snap.dmi.product_name.compact()),
         pair(
             "主板",
             format!(
                 "{} {}",
-                snap.dmi.board_vendor.display(),
-                snap.dmi.board_name.display()
+                snap.dmi.board_vendor.compact(),
+                snap.dmi.board_name.compact()
             ),
         ),
-        pair("序列号", snap.dmi.product_serial.display()),
+        pair("序列号", snap.dmi.product_serial.compact()),
         pair(
             "固件",
             format!(
                 "{}  Secure Boot {}",
-                snap.firmware.interface.display(),
-                snap.firmware.secure_boot.display()
+                snap.firmware.interface.compact(),
+                snap.firmware.secure_boot.compact()
             ),
         ),
     ];
@@ -2930,7 +2930,7 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                     kb_html(&snap.memory.swap_free_kb)
                 ),
             ),
-            pair("THP", snap.memory.thp_enabled.display()),
+            pair("THP", snap.memory.thp_enabled.compact()),
         ],
     });
 
@@ -2944,12 +2944,12 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             format!(
                 "{}  PCI {}  {}%  VBIOS {}",
                 g.driver,
-                g.pci_slot.display(),
+                g.pci_slot.compact(),
                 g.busy_percent
                     .value
                     .map(|v| v.to_string())
-                    .unwrap_or_else(|| g.busy_percent.access_label()),
-                g.vbios.display()
+                    .unwrap_or_else(|| g.busy_percent.compact()),
+                g.vbios.compact()
             ),
         ));
     }
@@ -2973,18 +2973,18 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 format!("{name}/{}", ch.label),
                 ch.value
                     .map(|v| format!("{v:.1} {}", ch.unit))
-                    .unwrap_or_else(|| ch.raw.access_label()),
+                    .unwrap_or_else(|| ch.raw.compact()),
             ));
             temps += 1;
         }
     }
     for z in snap.sensors.thermal_zones.iter().take(8) {
         sensors.push(pair(
-            format!("thermal {}", z.r#type.display()),
+            format!("thermal {}", z.r#type.compact()),
             z.temp_c
                 .value
                 .map(|v| format!("{v:.1} °C"))
-                .unwrap_or_else(|| z.temp_c.access_label()),
+                .unwrap_or_else(|| z.temp_c.compact()),
         ));
     }
     if sensors.is_empty() {
@@ -3001,8 +3001,8 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             &p.name,
             format!(
                 "{}  {}  {}%",
-                p.kind.display(),
-                p.status.display(),
+                p.kind.compact(),
+                p.status.compact(),
                 p.capacity_pct
                     .value
                     .map(|n| n.to_string())
@@ -3030,12 +3030,12 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             &d.name,
             format!(
                 "{}  {}  {}",
-                d.model.display(),
+                d.model.compact(),
                 d.size_bytes
                     .value
                     .map(format_bytes)
-                    .unwrap_or_else(|| d.size_bytes.access_label()),
-                d.queue_scheduler.display()
+                    .unwrap_or_else(|| d.size_bytes.compact()),
+                d.queue_scheduler.compact()
             ),
         ));
     }
@@ -3044,9 +3044,9 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             &c.name,
             format!(
                 "{}  fw {}  {}",
-                c.model.display(),
-                c.firmware.display(),
-                c.serial.display()
+                c.model.compact(),
+                c.firmware.compact(),
+                c.serial.compact()
             ),
         ));
     }
@@ -3064,9 +3064,9 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             &i.name,
             format!(
                 "{}  {}  mtu {}  {}",
-                i.operstate.display(),
-                i.driver.display(),
-                i.mtu.display(),
+                i.operstate.compact(),
+                i.driver.compact(),
+                i.mtu.compact(),
                 if i.addresses.is_empty() {
                     "—".into()
                 } else {
@@ -3075,7 +3075,7 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             ),
         ));
     }
-    net.push(pair("tcp_congestion", snap.net.tcp_congestion.display()));
+    net.push(pair("tcp_congestion", snap.net.tcp_congestion.compact()));
     sections.push(ReportSection {
         title: "网络".into(),
         rows: net,
@@ -3089,7 +3089,7 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 "{} {}  {}",
                 d.vendor_name.as_deref().unwrap_or(&d.vendor_id),
                 d.device_name.as_deref().unwrap_or(&d.device_id),
-                d.driver.display()
+                d.driver.compact()
             ),
         ));
     }
@@ -3112,7 +3112,7 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                     .as_deref()
                     .or(d.product.value.as_deref())
                     .unwrap_or("—"),
-                d.speed.display()
+                d.speed.compact()
             ),
         ));
     }
@@ -3125,22 +3125,22 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
     });
 
     let mut os = vec![
-        pair("OS", snap.software.os_name.display()),
-        pair("ID", snap.software.os_id.display()),
-        pair("内核", snap.software.kernel_release.display()),
-        pair("hostname", snap.software.hostname.display()),
+        pair("OS", snap.software.os_name.compact()),
+        pair("ID", snap.software.os_id.compact()),
+        pair("内核", snap.software.kernel_release.compact()),
+        pair("hostname", snap.software.hostname.compact()),
         pair(
             "loadavg",
             format!(
                 "{} {} {}",
-                snap.software.load_1.display(),
-                snap.software.load_5.display(),
-                snap.software.load_15.display()
+                snap.software.load_1.compact(),
+                snap.software.load_5.compact(),
+                snap.software.load_15.compact()
             ),
         ),
-        pair("arch", snap.sysctl.kernel_arch.display()),
-        pair("lockdown", snap.security.lockdown.display()),
-        pair("KVM", snap.kvm.device.display()),
+        pair("arch", snap.sysctl.kernel_arch.compact()),
+        pair("lockdown", snap.security.lockdown.compact()),
+        pair("KVM", snap.kvm.device.compact()),
     ];
     if let Some(n) = snap.buses.notes.iter().find(|s| s.starts_with("无 ")) {
         os.push(pair("leftover", n.clone()));
@@ -3193,5 +3193,19 @@ mod tests {
         assert_eq!(ReportFormat::parse("markdown"), Some(ReportFormat::Markdown));
         assert_eq!(ReportFormat::parse("htm"), Some(ReportFormat::Html));
         assert_eq!(ReportFormat::parse("xml"), None);
+    }
+
+    #[test]
+    fn text_summary_omits_sample_hints() {
+        let snap = crate::snapshot::HardwareSnapshot::collect(&crate::access::ProbeCtx::default());
+        let text = to_text(&snap);
+        assert!(text.contains("AIDA Linux 硬件报告"));
+        assert!(!text.contains("容器或精简虚拟机"));
+        let csv = to_csv(&snap);
+        assert!(csv.starts_with("section,key,value"));
+        assert!(!csv.contains("容器或精简虚拟机"));
+        let md = to_markdown(&snap);
+        assert!(md.contains("# AIDA Linux 硬件报告"));
+        assert!(!md.contains("容器或精简虚拟机"));
     }
 }
