@@ -488,7 +488,7 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
             } else {
                 None
             };
-            let speed_mts = type17_speed_mts(buf, i, length, 0x15, 0x56);
+            let speed_mts = type17_speed_mts(buf, i, length, 0x15, 0x54);
             let manufacturer = if length > 0x17 {
                 smbios_str(&rec.strings, buf[i + 0x17])
             } else {
@@ -522,7 +522,7 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
             } else {
                 None
             };
-            let configured_mts = type17_speed_mts(buf, i, length, 0x20, 0x5A);
+            let configured_mts = type17_speed_mts(buf, i, length, 0x20, 0x58);
             return Some(MemoryDevice {
                 locator,
                 bank,
@@ -577,8 +577,14 @@ fn bios_extras(buf: &[u8], rec: &SmbiosRecord) -> (Option<u64>, Option<String>) 
     let rom = buf[i + 0x09];
     let bios_rom_kb = if rom == 0xFF {
         if length >= 0x1A {
+            // DSP0134 Extended BIOS ROM Size：bits 13:0 数值，bits 15:14 单位 00b=MiB、01b=GiB。
             let ext = word(buf, i, 0x18) as u64;
-            if ext == 0 { None } else { Some(ext * 1024) }
+            let amount = ext & 0x3FFF;
+            match ext >> 14 {
+                0 if amount != 0 => Some(amount * 1024),
+                1 if amount != 0 => Some(amount * 1024 * 1024),
+                _ => None,
+            }
         } else {
             None
         }
@@ -616,28 +622,10 @@ fn processor_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ProcessorDevice>
     let status = buf[i + 0x18];
     let populated = status & 0x40 != 0;
     let enabled = (status & 0x07) == 0x01;
-    let cores = if length >= 0x2C {
-        let c = word(buf, i, 0x2A);
-        if c == 0 { None } else { Some(c) }
-    } else if length > 0x23 {
-        match buf[i + 0x23] {
-            0 | 0xFF => None,
-            n => Some(n as u16),
-        }
-    } else {
-        None
-    };
-    let threads = if length >= 0x30 {
-        let t = word(buf, i, 0x2E);
-        if t == 0 { None } else { Some(t) }
-    } else if length > 0x25 {
-        match buf[i + 0x25] {
-            0 | 0xFF => None,
-            n => Some(n as u16),
-        }
-    } else {
-        None
-    };
+    // Core Count / Thread Count：BYTE `0xFF` 才读 3.0 WORD（`0x2A` / `0x2E`）。
+    // 长度够长但 BYTE 仍有效时，WORD 可能是 0（保留），不能当未知。
+    let cores = type4_count(buf, i, length, 0x23, 0x2A, 0x2C);
+    let threads = type4_count(buf, i, length, 0x25, 0x2E, 0x30);
     Some(ProcessorDevice {
         socket: smbios_str(&rec.strings, buf[i + 0x04]),
         manufacturer: if length > 0x07 {
@@ -657,6 +645,30 @@ fn processor_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ProcessorDevice>
         populated,
         enabled,
     })
+}
+
+fn type4_count(
+    buf: &[u8],
+    i: usize,
+    length: usize,
+    byte_off: usize,
+    word_off: usize,
+    word_len: usize,
+) -> Option<u16> {
+    if length <= byte_off {
+        return None;
+    }
+    match buf[i + byte_off] {
+        0 => None,
+        0xFF => {
+            if length < word_len {
+                return None;
+            }
+            let n = word(buf, i, word_off);
+            if n == 0 { None } else { Some(n) }
+        }
+        n => Some(n as u16),
+    }
 }
 
 fn cache_size_kb(raw: u16, ext: Option<u32>) -> Option<u64> {
@@ -766,22 +778,43 @@ fn slot_type_name(t: u8) -> &'static str {
     match t {
         0x03 => "ISA",
         0x06 => "PCI",
-        0x09 => "AGP",
+        0x09 => "Proprietary",
+        0x0F => "AGP",
         0xA5 => "PCI Express",
         0xA6 => "PCIe x1",
         0xA7 => "PCIe x2",
         0xA8 => "PCIe x4",
         0xA9 => "PCIe x8",
         0xAA => "PCIe x16",
-        0xAB => "PCIe x32",
-        0xB8 => "PCIe 3 x16",
-        0xBE => "PCIe 4 x16",
-        0xD1 => "PCIe 5 x16",
+        0xAB => "PCIe Gen 2",
+        0xAC => "PCIe Gen 2 x1",
+        0xAD => "PCIe Gen 2 x2",
+        0xAE => "PCIe Gen 2 x4",
+        0xAF => "PCIe Gen 2 x8",
+        0xB0 => "PCIe Gen 2 x16",
+        0xB1 => "PCIe Gen 3",
+        0xB2 => "PCIe Gen 3 x1",
+        0xB3 => "PCIe Gen 3 x2",
+        0xB4 => "PCIe Gen 3 x4",
+        0xB5 => "PCIe Gen 3 x8",
+        0xB6 => "PCIe Gen 3 x16",
+        0xB8 => "PCIe Gen 4",
+        0xB9 => "PCIe Gen 4 x1",
+        0xBA => "PCIe Gen 4 x2",
+        0xBB => "PCIe Gen 4 x4",
+        0xBC => "PCIe Gen 4 x8",
+        0xBD => "PCIe Gen 4 x16",
+        0xBE => "PCIe Gen 5",
+        0xBF => "PCIe Gen 5 x1",
+        0xC0 => "PCIe Gen 5 x2",
+        0xC1 => "PCIe Gen 5 x4",
+        0xC2 => "PCIe Gen 5 x8",
+        0xC3 => "PCIe Gen 5 x16",
         _ => "Other",
     }
 }
 
-/// Speed / Configured Speed：0 未知，0xFFFF 读 32 位扩展字段（3.3+ 的 0x56 / 0x5A）。
+/// Speed / Configured Speed：0 未知，0xFFFF 读 32 位扩展字段（3.3+ 的 0x54 / 0x58）。
 fn type17_speed_mts(
     buf: &[u8],
     i: usize,
@@ -1004,12 +1037,13 @@ mod tests {
         rec[0x1B] = 0x02;
         rec[0x20] = 0xFF;
         rec[0x21] = 0xFF;
-        rec[0x56] = 0x80;
-        rec[0x57] = 0x38;
-        rec[0x58] = 0x01;
-        rec[0x5A] = 0x40;
-        rec[0x5B] = 0x0D;
-        rec[0x5C] = 0x03;
+        // Extended Speed / Configured Memory Speed 在 0x54 / 0x58，不是 0x56 / 0x5A。
+        rec[0x54] = 0x80;
+        rec[0x55] = 0x38;
+        rec[0x56] = 0x01;
+        rec[0x58] = 0x40;
+        rec[0x59] = 0x0D;
+        rec[0x5A] = 0x03;
         rec.extend_from_slice(&[0, 0]);
         rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
         let recs = parse_smbios(&rec);
@@ -1037,6 +1071,8 @@ mod tests {
         rec[0x16] = 0x10;
         rec[0x17] = 0x0E;
         rec[0x18] = 0x41;
+        rec[0x23] = 0xFF;
+        rec[0x25] = 0xFF;
         rec[0x2A] = 8;
         rec[0x2E] = 16;
         rec.extend_from_slice(b"LGA1700\0Intel\0Core i7\0\0");
@@ -1137,6 +1173,42 @@ mod tests {
     }
 
     #[test]
+    fn type9_pcie_gen5_and_proprietary() {
+        let mut gen5 = vec![0u8; 0x11];
+        gen5[0] = 9;
+        gen5[1] = 0x11;
+        gen5[0x04] = 1;
+        gen5[0x05] = 0xBE;
+        gen5[0x07] = 0x04;
+        gen5.extend_from_slice(b"Slot0\0\0");
+        gen5.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&gen5);
+        let s = recs
+            .iter()
+            .find(|r| r.kind == 9)
+            .and_then(|r| slot_from_raw(&gen5, r))
+            .expect("type 9 gen5");
+        assert_eq!(s.kind.as_deref(), Some("PCIe Gen 5"));
+
+        let mut prop = vec![0u8; 0x0C];
+        prop[0] = 9;
+        prop[1] = 0x0C;
+        prop[0x04] = 1;
+        prop[0x05] = 0x09;
+        prop[0x07] = 0x02;
+        prop.extend_from_slice(b"OEM\0\0");
+        prop.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&prop);
+        let s = recs
+            .iter()
+            .find(|r| r.kind == 9)
+            .and_then(|r| slot_from_raw(&prop, r))
+            .expect("type 9 proprietary");
+        assert_eq!(s.kind.as_deref(), Some("Proprietary"));
+        assert_eq!(s.usage.as_deref(), Some("Unknown"));
+    }
+
+    #[test]
     fn type4_byte_core_count_when_no_word() {
         let mut rec = vec![0u8; 0x26];
         rec[0] = 4;
@@ -1165,6 +1237,33 @@ mod tests {
         assert_eq!(p.cores, Some(4));
         assert_eq!(p.threads, Some(8));
         assert!(p.populated && p.enabled);
+    }
+
+    #[test]
+    fn type4_byte_count_beats_zero_word() {
+        let mut rec = vec![0u8; 0x30];
+        rec[0] = 4;
+        rec[1] = 0x30;
+        rec[0x04] = 1;
+        rec[0x07] = 2;
+        rec[0x10] = 3;
+        rec[0x14] = 0x88;
+        rec[0x15] = 0x13;
+        rec[0x16] = 0x10;
+        rec[0x17] = 0x0E;
+        rec[0x18] = 0x41;
+        rec[0x23] = 8;
+        rec[0x25] = 16;
+        rec.extend_from_slice(b"LGA1700\0Intel\0Core i7\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 4)
+            .and_then(|r| processor_from_raw(&rec, r))
+            .expect("type 4");
+        assert_eq!(p.cores, Some(8));
+        assert_eq!(p.threads, Some(16));
     }
 
     #[test]
@@ -1199,6 +1298,25 @@ mod tests {
         let bios = recs.iter().find(|r| r.kind == 0).expect("type 0");
         let (rom, rel) = bios_extras(&rec, bios);
         assert_eq!(rom, Some(16 * 1024));
+        assert_eq!(rel, None);
+    }
+
+    #[test]
+    fn type0_extended_rom_is_gib() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 0;
+        rec[1] = 0x1A;
+        rec[0x09] = 0xFF;
+        rec[0x14] = 0xFF;
+        rec[0x15] = 0xFF;
+        rec[0x18] = 0x01;
+        rec[0x19] = 0x40;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let bios = recs.iter().find(|r| r.kind == 0).expect("type 0");
+        let (rom, rel) = bios_extras(&rec, bios);
+        assert_eq!(rom, Some(1_048_576));
         assert_eq!(rel, None);
     }
 
