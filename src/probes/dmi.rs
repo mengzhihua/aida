@@ -51,17 +51,31 @@ pub struct MemoryArray {
 pub struct MemoryDevice {
     pub locator: Option<String>,
     pub bank: Option<String>,
+    /// Size=0 未安装；Size=0xFFFF 已安装但容量未知（`installed` 仍为 true）。
+    pub installed: bool,
     pub size_mb: Option<u64>,
     pub r#type: Option<String>,
     pub form_factor: Option<String>,
-    pub speed_mts: Option<u16>,
-    pub configured_mts: Option<u16>,
+    pub speed_mts: Option<u32>,
+    pub configured_mts: Option<u32>,
     pub data_width: Option<u16>,
     pub total_width: Option<u16>,
     pub rank: Option<u8>,
     pub manufacturer: Option<String>,
     pub serial: Option<String>,
     pub part: Option<String>,
+}
+
+impl MemoryDevice {
+    pub fn size_label(&self) -> String {
+        if !self.installed {
+            "empty".into()
+        } else {
+            self.size_mb
+                .map(|n| format!("{n} MB"))
+                .unwrap_or_else(|| "unknown".into())
+        }
+    }
 }
 
 pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
@@ -313,7 +327,9 @@ fn array_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryArray> {
         if kind == 16 && handle == rec.handle && length >= 0x0F {
             let location = match buf[i + 0x04] {
                 0x03 => Some("System board".into()),
-                0x05 => Some("PCI add-on".into()),
+                0x04 => Some("ISA add-on".into()),
+                0x05 => Some("EISA add-on".into()),
+                0x06 => Some("PCI add-on".into()),
                 other => Some(format!("0x{other:02x}")),
             };
             let ecc = match buf[i + 0x06] {
@@ -373,6 +389,7 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
         let handle = u16::from_le_bytes([buf[i + 2], buf[i + 3]]);
         if kind == 17 && handle == rec.handle && length >= 0x0F {
             let size_raw = u16::from_le_bytes([buf[i + 0x0C], buf[i + 0x0D]]);
+            let installed = size_raw != 0;
             let size_mb = if size_raw == 0 || size_raw == 0xFFFF {
                 None
             } else if size_raw == 0x7FFF && length >= 0x20 {
@@ -404,12 +421,7 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
             } else {
                 None
             };
-            let speed_mts = if length >= 0x17 {
-                let sp = u16::from_le_bytes([buf[i + 0x15], buf[i + 0x16]]);
-                if sp == 0 { None } else { Some(sp) }
-            } else {
-                None
-            };
+            let speed_mts = type17_speed_mts(buf, i, length, 0x15, 0x56);
             let manufacturer = if length > 0x17 {
                 smbios_str(&rec.strings, buf[i + 0x17])
             } else {
@@ -437,21 +449,17 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
             } else {
                 None
             };
-            let rank = if length > 0x1D {
-                let r = buf[i + 0x1D] & 0x0F;
+            let rank = if length > 0x1B {
+                let r = buf[i + 0x1B] & 0x0F;
                 if r == 0 { None } else { Some(r) }
             } else {
                 None
             };
-            let configured_mts = if length >= 0x22 {
-                let sp = u16::from_le_bytes([buf[i + 0x20], buf[i + 0x21]]);
-                if sp == 0 { None } else { Some(sp) }
-            } else {
-                None
-            };
+            let configured_mts = type17_speed_mts(buf, i, length, 0x20, 0x5A);
             return Some(MemoryDevice {
                 locator,
                 bank,
+                installed,
                 size_mb,
                 r#type: mem_type,
                 form_factor,
@@ -470,12 +478,43 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
     None
 }
 
+/// Speed / Configured Speed：0 未知，0xFFFF 读 32 位扩展字段（3.3+ 的 0x56 / 0x5A）。
+fn type17_speed_mts(
+    buf: &[u8],
+    i: usize,
+    length: usize,
+    word_off: usize,
+    ext_off: usize,
+) -> Option<u32> {
+    if length < word_off + 2 {
+        return None;
+    }
+    let sp = u16::from_le_bytes([buf[i + word_off], buf[i + word_off + 1]]);
+    match sp {
+        0 => None,
+        0xFFFF => {
+            if length < ext_off + 4 {
+                return None;
+            }
+            let ext = u32::from_le_bytes([
+                buf[i + ext_off],
+                buf[i + ext_off + 1],
+                buf[i + ext_off + 2],
+                buf[i + ext_off + 3],
+            ]);
+            if ext == 0 { None } else { Some(ext) }
+        }
+        n => Some(n as u32),
+    }
+}
+
 fn form_factor_name(t: u8) -> &'static str {
     match t {
         0x01 => "Other",
         0x02 => "Unknown",
-        0x08 => "DIMM",
-        0x09 => "RIMM",
+        0x08 => "Proprietary Card",
+        0x09 => "DIMM",
+        0x0C => "RIMM",
         0x0D => "SODIMM",
         0x0E => "SRIMM",
         0x0F => "FB-DIMM",
@@ -527,7 +566,7 @@ mod tests {
         rec[0x0A] = 64;
         rec[0x0C] = 0x00;
         rec[0x0D] = 0x20;
-        rec[0x0E] = 0x08;
+        rec[0x0E] = 0x09;
         rec[0x10] = 1;
         rec[0x11] = 2;
         rec[0x12] = 0x1A;
@@ -536,7 +575,7 @@ mod tests {
         rec[0x17] = 3;
         rec[0x18] = 4;
         rec[0x1A] = 5;
-        rec[0x1D] = 0x02;
+        rec[0x1B] = 0x02;
         rec[0x20] = 0x6A;
         rec[0x21] = 0x0A;
         rec.extend_from_slice(b"DIMM_A1\0BANK 0\0Samsung\0SN1\0M393A\0\0");
@@ -550,6 +589,7 @@ mod tests {
         assert_eq!(mem.locator.as_deref(), Some("DIMM_A1"));
         assert_eq!(mem.bank.as_deref(), Some("BANK 0"));
         assert_eq!(mem.size_mb, Some(8192));
+        assert!(mem.installed);
         assert_eq!(mem.r#type.as_deref(), Some("DDR4"));
         assert_eq!(mem.form_factor.as_deref(), Some("DIMM"));
         assert_eq!(mem.speed_mts, Some(3200));
@@ -587,5 +627,97 @@ mod tests {
         assert_eq!(arr.ecc.as_deref(), Some("Single-bit ECC"));
         assert_eq!(arr.max_capacity_mb, Some(32 * 1024));
         assert_eq!(arr.devices, Some(4));
+    }
+
+    #[test]
+    fn type16_pci_addon_is_location_0x06() {
+        let mut rec = vec![0u8; 0x0F];
+        rec[0] = 16;
+        rec[1] = 0x0F;
+        rec[0x04] = 0x06;
+        rec[0x06] = 0x03;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let arr = recs
+            .iter()
+            .find(|r| r.kind == 16)
+            .and_then(|r| array_from_raw(&rec, r))
+            .expect("type 16");
+        assert_eq!(arr.location.as_deref(), Some("PCI add-on"));
+    }
+
+    #[test]
+    fn type17_ffff_size_is_installed_unknown() {
+        let mut rec = vec![0u8; 0x1B];
+        rec[0] = 17;
+        rec[1] = 0x1B;
+        rec[0x0C] = 0xFF;
+        rec[0x0D] = 0xFF;
+        rec[0x0E] = 0x09;
+        rec[0x10] = 1;
+        rec.extend_from_slice(b"DIMM_B1\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let mem = recs
+            .iter()
+            .find(|r| r.kind == 17)
+            .and_then(|r| memory_from_raw(&rec, r))
+            .expect("type 17");
+        assert!(mem.installed);
+        assert_eq!(mem.size_mb, None);
+        assert_eq!(mem.size_label(), "unknown");
+        assert_eq!(mem.locator.as_deref(), Some("DIMM_B1"));
+    }
+
+    #[test]
+    fn type17_zero_size_is_empty_slot() {
+        let mut rec = vec![0u8; 0x1B];
+        rec[0] = 17;
+        rec[1] = 0x1B;
+        rec[0x10] = 1;
+        rec.extend_from_slice(b"DIMM_C1\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let mem = recs
+            .iter()
+            .find(|r| r.kind == 17)
+            .and_then(|r| memory_from_raw(&rec, r))
+            .expect("type 17");
+        assert!(!mem.installed);
+        assert_eq!(mem.size_label(), "empty");
+    }
+
+    #[test]
+    fn type17_ffff_speed_reads_extended_dwords() {
+        let mut rec = vec![0u8; 0x5E];
+        rec[0] = 17;
+        rec[1] = 0x5E;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x20;
+        rec[0x0E] = 0x09;
+        rec[0x15] = 0xFF;
+        rec[0x16] = 0xFF;
+        rec[0x1B] = 0x02;
+        rec[0x20] = 0xFF;
+        rec[0x21] = 0xFF;
+        rec[0x56] = 0x80;
+        rec[0x57] = 0x38;
+        rec[0x58] = 0x01;
+        rec[0x5A] = 0x40;
+        rec[0x5B] = 0x0D;
+        rec[0x5C] = 0x03;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let mem = recs
+            .iter()
+            .find(|r| r.kind == 17)
+            .and_then(|r| memory_from_raw(&rec, r))
+            .expect("type 17");
+        assert_eq!(mem.speed_mts, Some(80_000));
+        assert_eq!(mem.configured_mts, Some(200_000));
+        assert_eq!(mem.rank, Some(2));
+        assert_eq!(mem.size_mb, Some(8192));
     }
 }
