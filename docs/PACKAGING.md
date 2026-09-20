@@ -21,16 +21,20 @@ GitHub Actions：`.github/workflows/package.yml` 在**每个 PR** 和 tag 上传
 
 用户下载入口是 [Releases](https://github.com/mengzhihua/aida/releases)，不需要 Rust。
 
+无问题的版本会自动发行：把 `Cargo.toml` 的 `version` 升一档，合并到 `main` 或 `cursor/rc-stm-peci-587c`。`package.yml` 发现还没有 `v$VERSION` tag 时，会再编一次、跑 `cargo test` 和 `smoke-dist.sh`，**全部通过才**用 `softprops/action-gh-release` 打 tag 并挂上成品。已经发过的版本不会重复打包装。
+
+也可以手工打 tag（不要用 `gh release create` 挂未经自测的文件）：
+
 ```bash
-# 1. Cargo.toml 的 version 已改（例如 0.40.0）
+# 1. Cargo.toml 的 version 已改（例如 0.43.0）
 # 2. 本地打包装并自测
 ./scripts/package.sh
-# 3. 合并 PR 后打 tag（必须是 v 开头）
-git tag v0.40.0
-git push origin v0.40.0
+# 3. 合并 PR 后打 tag（必须是 v 开头，且等于 Cargo.toml）
+./scripts/release.sh --push
+# 等价于：git tag v0.43.0 && git push origin v0.43.0
 ```
 
-推送 `v*` tag 后 `package` 工作流会再编一次、再跑 `smoke-dist.sh`，**全部通过才**用 `softprops/action-gh-release` 挂上：
+推送 `v*` tag 后同一套工作流再编一次、再跑 smoke，通过才挂：
 
 - `aida-linux-<ver>-<arch>.tar.gz`（解压即用）
 - `AIDA_Linux-<ver>-<arch>.AppImage`

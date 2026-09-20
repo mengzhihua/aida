@@ -6,6 +6,9 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
+      - cursor/rc-stm-peci-587c
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,7 +17,51 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_package: ${{ steps.d.outputs.should_package }}
+      should_release: ${{ steps.d.outputs.should_release }}
+      tag: ${{ steps.d.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: d
+        name: decide package / release
+        run: |
+          set -euo pipefail
+          VER=$(sed -n 's/^version = "\([0-9][0-9.]*\)"/\1/p' Cargo.toml | head -1)
+          TAG="v${VER}"
+          echo "cargo version ${VER} tag ${TAG} ref ${GITHUB_REF} event ${GITHUB_EVENT_NAME}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_EVENT_NAME}" == pull_request || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
+            echo "should_package=1" >> "$GITHUB_OUTPUT"
+            echo "should_release=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            GOT="${GITHUB_REF#refs/tags/}"
+            if [[ "${GOT}" != "${TAG}" ]]; then
+              echo "tag ${GOT} does not match Cargo.toml v${VER}" >&2
+              exit 1
+            fi
+            echo "tag=${GOT}" >> "$GITHUB_OUTPUT"
+            echo "should_package=1" >> "$GITHUB_OUTPUT"
+            echo "should_release=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 栈顶 / main：Cargo.toml 还没有对应 tag 才打包并发版。
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            echo "tag ${TAG} already exists; skip rebuild/release"
+            echo "should_package=0" >> "$GITHUB_OUTPUT"
+            echo "should_release=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_package=1" >> "$GITHUB_OUTPUT"
+            echo "should_release=1" >> "$GITHUB_OUTPUT"
+          fi
+
   cli:
+    needs: gate
+    if: needs.gate.outputs.should_package == '1'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +83,8 @@ jobs:
           if-no-files-found: error
 
   appimage:
+    needs: gate
+    if: needs.gate.outputs.should_package == '1'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +106,8 @@ jobs:
           if-no-files-found: error
 
   bundle:
-    needs: [cli, appimage]
+    needs: [gate, cli, appimage]
+    if: needs.gate.outputs.should_package == '1'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,9 +134,21 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  test:
+    needs: gate
+    if: needs.gate.outputs.should_release == '1'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: lib tests
+        run: cargo test --lib
+      - name: live collect
+        run: cargo test --test live_collect
+
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [bundle]
+    needs: [gate, bundle, test]
+    if: needs.gate.outputs.should_release == '1'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -102,6 +164,7 @@ jobs:
         run: chmod +x scripts/smoke-dist.sh && ./scripts/smoke-dist.sh
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.gate.outputs.tag }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |

@@ -112,6 +112,12 @@ pub struct BusesReport {
     pub msr: Vec<String>,
     /// Data PLL（`class/dpll`）。空 = 无电信/同步硬件。
     pub dpll: Vec<String>,
+    /// IOMMU 设备（`class/iommu`）。与 `iommu_groups` 不是同一棵树。
+    pub iommu: Vec<String>,
+    /// HID：先 `bus/hid/devices`，再 `class/hid`。只列名，不读 report。
+    pub hid: Vec<String>,
+    /// 内存热插拔块：先 `bus/memory/devices`，再 `class/memory`。最多 8 个名。
+    pub memory: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -733,6 +739,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let iommu = list_optional_names(
+        ctx.sys_path("class/iommu"),
+        8,
+        "iommu",
+        &mut notes,
+        &mut missing,
+    );
+    // HID 真实 ABI 是 bus；没有独立 `class/hid` 时不要当成缺失。
+    let hid = list_alt_dirs(
+        ctx,
+        "bus/hid/devices",
+        "class/hid",
+        8,
+        "hid",
+        &mut notes,
+        &mut missing,
+    );
+    // 内存块在 `bus/memory`；没有独立 `class/memory` 时不要当成缺失。
+    let memory = list_alt_dirs(
+        ctx,
+        "bus/memory/devices",
+        "class/memory",
+        8,
+        "memory",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -821,6 +854,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         wakeup,
         msr,
         dpll,
+        iommu,
+        hid,
+        memory,
         notes,
     }
 }
@@ -1615,6 +1651,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/wakeup/wakeup0")).unwrap();
         fs::create_dir_all(root.join("sys/class/msr/msr0")).unwrap();
         fs::create_dir_all(root.join("sys/class/dpll/dev0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/iommu/dmar0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/hid/devices/0003:046D:C52B.0001")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/memory/devices/memory0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1704,6 +1743,9 @@ mod tests {
         assert_eq!(r.wakeup, vec!["wakeup0".to_string()]);
         assert_eq!(r.msr, vec!["msr0".to_string()]);
         assert_eq!(r.dpll, vec!["dev0".to_string()]);
+        assert_eq!(r.iommu, vec!["dmar0".to_string()]);
+        assert_eq!(r.hid, vec!["0003:046D:C52B.0001".to_string()]);
+        assert_eq!(r.memory, vec!["memory0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2543,6 +2585,84 @@ mod tests {
                 inner.split('/').all(|s| s != "wakeup" && s != "msr")
             })),
             "present wakeup/msr must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_iommu_hid_memory_when_classes_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-iommu-hid-mem-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"iommu") && labels.contains(&"hid") && labels.contains(&"memory"),
+            "missing iommu/hid/memory must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn iommu_hid_memory_present_are_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-iommu-hid-mem-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/iommu/dmar0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/hid/devices/0003:0001:0001.0001")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/memory/devices/memory3")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.iommu, vec!["dmar0".to_string()]);
+        assert_eq!(r.hid, vec!["0003:0001:0001.0001".to_string()]);
+        assert_eq!(r.memory, vec!["memory3".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner
+                    .split('/')
+                    .all(|s| s != "iommu" && s != "hid" && s != "memory")
+            })),
+            "present iommu/hid/memory must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memory_block_names_capped_at_eight() {
+        let root = std::env::temp_dir().join(format!("aida-mem-cap-{}", std::process::id()));
+        for i in 0..12 {
+            fs::create_dir_all(root.join(format!("sys/bus/memory/devices/memory{i}"))).unwrap();
+        }
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.memory.len(), 8, "memory blocks must cap at 8: {:?}", r.memory);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "memory")
+            })),
+            "present memory bus must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

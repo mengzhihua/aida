@@ -270,6 +270,11 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 246. **桌面 AppImage 跟着构建机 glibc 走（Ubuntu 24.04 常见 `GLIBC_2.39`）。** CentOS 7（2.17）/ Rocky 8（2.28）/ Ubuntu 22.04（2.35）上 GUI 可能 `GLIBC_2.xx not found`。这不是采集失败；用包内 musl 静态 `aida-cli`。先跑 `aida doctor`（读 `os-release` 的 `ID`/`ID_LIKE`，不调用 `lsb_release`/`ldd`）。
 247. **`install.sh` 不需要 cargo。** 解压 tar 后 `./install.sh`；`--deps` 按 family 走 `apt-get` 或 `dnf`/`yum`。源码树默认装 `dist/` 成品，只有 `--from-source` 才 `cargo build`。
 248. **`ID_LIKE` 用来分 Debian 系和 RHEL/CentOS 系。** Ubuntu 的 `ID=ubuntu ID_LIKE=debian`；CentOS 的 `ID=centos ID_LIKE=rhel fedora`。不要用 `PRETTY_NAME` 字符串猜包管理器。
+249. **空的 iommu / hid / memory 表示没有对应硬件。** IOMMU 设备只列 `class/iommu` 名，与 `iommu_groups` 不是同一棵树。HID 先看 `bus/hid/devices`，没有再看 `class/hid`，不读 report。内存热插拔块先看 `bus/memory/devices`，没有再看 `class/memory`，最多 8 个名。`PermissionDenied` 仍写 note。
+250. **`tcp_fack=0` 表示 FACK 关闭。** 现代内核常与 SACK 合并，键仍在。`tcp_low_latency=0` 表示不走低延迟小包路径（偏吞吐）。
+251. **`drop_unicast_in_l2_multicast` / `force_tllao` 只列出与 `conf/all` 不同的接口。** `1` 分别表示丢掉 L2 组播里的单播、NS 强制带目标链路层地址。不要用 `default` 顶替已有 iface。
+252. **`sched_schedstats=0` 表示不额外导出调度统计。** 无 `CONFIG_SCHEDSTATS` 时为 NotFound，不是失败。`traceoff_on_warning=0` 表示 WARN 时不关掉 tracing；无 tracing 时 NotFound。
+253. **无问题的版本自动发 GitHub Release。** 合并到 `main` / 栈顶且还没有 `v$VERSION` tag 时，`package.yml` 先跑 `cargo test` 和成品 smoke，通过才打 tag 并挂 tar.gz / AppImage / musl CLI。不要用 `gh release create` 挂未经自测的文件。`./scripts/release.sh --push` 只推 tag。
 
 ## 测试方案
 

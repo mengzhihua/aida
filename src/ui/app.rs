@@ -2242,7 +2242,7 @@ impl AidaApp {
             ui,
             "tcp extra",
             &format!(
-                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}  thin_linear {}  limit_out {}  comp_sack {}  fwd_prio {}  fib_notify {}  echo_probe {}  fwmark {}  ndisc_notify {}  early_demux {}/{}  sack_delay {}ns  sack_slack {}ns  app_win {}  tfo_blackhole {}s  base_mss {}  min_snd_mss {}  reorder {}  recovery {}  max_reorder {}  tso_div {}  udp_demux {}  syn_linear {}  fwd_pmtu {}  no_ssthresh {}  min_rtt_wlen {}  mtu_floor {}  tso_rtt_log {}  udp_rmem_min {}  udp_wmem_min {}  shrink_win {}  l3mdev {}  migrate_req {}  reflect_tos {}  rto_min {}us  plb {}  udp_l3mdev {}  backlog_ack {}  fwmark_reflect {}  signed_win {}  stdurg {}  ulp {}  plb_cong {}  plb_idle {}  plb_rehash {}  plb_rto {}s  pingpong {}  retrans_collapse {}  probe_int {}  probe_th {}  ehash {}  child_ehash {}  udp_hash {}  autobind {}",
+                "orphan_retries {}  rfc1337 {}  unpriv_port {}  bindv6only {}  ipfrag_time {}  dad_tx {}  ecn_fb {}  nonlocal {}  echo_ignore_all {}  ipfrag_max_dist {}  abort_ovf {}  no_metrics {}  challenge_ack {}  dynaddr {}  thin_linear {}  limit_out {}  comp_sack {}  fwd_prio {}  fib_notify {}  echo_probe {}  fwmark {}  ndisc_notify {}  early_demux {}/{}  sack_delay {}ns  sack_slack {}ns  app_win {}  tfo_blackhole {}s  base_mss {}  min_snd_mss {}  reorder {}  recovery {}  max_reorder {}  tso_div {}  udp_demux {}  syn_linear {}  fwd_pmtu {}  no_ssthresh {}  min_rtt_wlen {}  mtu_floor {}  tso_rtt_log {}  udp_rmem_min {}  udp_wmem_min {}  shrink_win {}  l3mdev {}  migrate_req {}  reflect_tos {}  rto_min {}us  plb {}  udp_l3mdev {}  backlog_ack {}  fwmark_reflect {}  signed_win {}  stdurg {}  ulp {}  plb_cong {}  plb_idle {}  plb_rehash {}  plb_rto {}s  pingpong {}  retrans_collapse {}  probe_int {}  probe_th {}  ehash {}  child_ehash {}  udp_hash {}  autobind {}  fack {}  low_lat {}",
                 self.snap.net.tcp_orphan_retries.display(),
                 self.snap.net.tcp_rfc1337.display(),
                 self.snap.net.ip_unprivileged_port_start.display(),
@@ -2351,6 +2351,14 @@ impl AidaApp {
                 match self.snap.net.ip_autobind_reuse.value.as_deref() {
                     Some("0") => "0 关".into(),
                     _ => self.snap.net.ip_autobind_reuse.display(),
+                },
+                match self.snap.net.tcp_fack.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.net.tcp_fack.display(),
+                },
+                match self.snap.net.tcp_low_latency.value.as_deref() {
+                    Some("0") => "0 吞吐".into(),
+                    _ => self.snap.net.tcp_low_latency.display(),
                 }
             ),
         );
@@ -2358,7 +2366,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2421,6 +2429,16 @@ impl AidaApp {
                     Some("0") => "0 留".into(),
                     Some("1") => "1 丢".into(),
                     _ => self.snap.net.ipv6_drop_unsolicited_na.display(),
+                },
+                match self.snap.net.ipv6_drop_unicast_in_l2_multicast.value.as_deref() {
+                    Some("0") => "0 留".into(),
+                    Some("1") => "1 丢".into(),
+                    _ => self.snap.net.ipv6_drop_unicast_in_l2_multicast.display(),
+                },
+                match self.snap.net.ipv6_force_tllao.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    Some("1") => "1 强制".into(),
+                    _ => self.snap.net.ipv6_force_tllao.display(),
                 }
             ),
         );
@@ -2585,6 +2603,20 @@ impl AidaApp {
                 ui,
                 "drop_unsolicited_na iface",
                 &self.snap.net.ipv6_drop_unsolicited_na_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_drop_unicast_in_l2_multicast_dev.is_empty() {
+            kv(
+                ui,
+                "drop_unicast_l2mcast iface",
+                &self.snap.net.ipv6_drop_unicast_in_l2_multicast_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_force_tllao_dev.is_empty() {
+            kv(
+                ui,
+                "force_tllao iface",
+                &self.snap.net.ipv6_force_tllao_dev.join("  "),
             );
         }
         kv(
@@ -3191,6 +3223,9 @@ impl AidaApp {
             ("wakeup", &self.snap.buses.wakeup),
             ("msr", &self.snap.buses.msr),
             ("dpll", &self.snap.buses.dpll),
+            ("iommu", &self.snap.buses.iommu),
+            ("hid", &self.snap.buses.hid),
+            ("memory", &self.snap.buses.memory),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -3649,7 +3684,7 @@ impl AidaApp {
             ui,
             "bootloader",
             &format!(
-                "type {}  version {}  firmware_sysfs {}/{}  real_root {}",
+                "type {}  version {}  firmware_sysfs {}/{}  real_root {}  schedstats {}  traceoff_warn {}",
                 self.snap.sysctl.bootloader_type.display(),
                 self.snap.sysctl.bootloader_version.display(),
                 match self.snap.sysctl.firmware_force_sysfs_fallback.value.as_deref() {
@@ -3663,6 +3698,14 @@ impl AidaApp {
                 match self.snap.sysctl.real_root_dev.value {
                     Some(0) => "0".into(),
                     _ => self.snap.sysctl.real_root_dev.display(),
+                },
+                match self.snap.sysctl.sched_schedstats.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.sysctl.sched_schedstats.display(),
+                },
+                match self.snap.sysctl.traceoff_on_warning.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    _ => self.snap.sysctl.traceoff_on_warning.display(),
                 }
             ),
         );

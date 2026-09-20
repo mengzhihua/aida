@@ -16,7 +16,7 @@
 
 去哪下：
 
-1. **发版**：[GitHub Releases](https://github.com/mengzhihua/aida/releases)（推送 `v*` tag 后，CI 自测通过再挂上 tar.gz / AppImage / musl CLI）
+1. **发版**：[GitHub Releases](https://github.com/mengzhihua/aida/releases)。合并到 `main` / 栈顶且 `Cargo.toml` 版本还没有 `v*` tag 时，`package` 工作流自测（单元测试 + 成品 smoke）通过后**自动**挂 tar.gz / AppImage / musl CLI。也可以 `./scripts/release.sh --push` 手工打 tag。
 2. **每个 PR / 每次开发**：Actions 工作流 [package](https://github.com/mengzhihua/aida/actions/workflows/package.yml) → 最新成功的 run → Artifact **`aida-linux`**
 
 ```bash
@@ -182,6 +182,7 @@ cargo test --lib
 cargo test --test live_collect
 cargo test --no-default-features --lib
 ./scripts/package.sh              # 每轮结束：产出 dist/ 可拷走的安装包
+./scripts/release.sh --push       # 无问题版本：打 v$VERSION tag，CI 自测后发 Release
 ```
 
 | 路径 | 职责 |
