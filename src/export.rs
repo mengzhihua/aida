@@ -97,6 +97,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("microcode", snap.cpu.microcode.display()),
         ],
     );
+    html_dmi_board(&mut html, snap);
     if !snap.cpu.vulnerabilities.is_empty() {
         html.push_str("<table><tr><th>漏洞</th><th>状态</th></tr>");
         for v in &snap.cpu.vulnerabilities {
@@ -156,9 +157,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "BIOS",
                 format!(
-                    "{} {}",
+                    "{} {} rom {} rel {}",
                     snap.dmi.bios_vendor.display(),
-                    snap.dmi.bios_version.display()
+                    snap.dmi.bios_version.display(),
+                    snap.dmi
+                        .bios_rom_kb
+                        .map(|n| format!("{n} KiB"))
+                        .unwrap_or_else(|| "—".into()),
+                    snap.dmi.bios_release.as_deref().unwrap_or("—")
                 ),
             ),
         ],
@@ -167,6 +173,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
     html_dmi_memory(&mut html, snap);
+    html_dmi_board(&mut html, snap);
 
     section(&mut html, "固件");
     kv(
@@ -800,6 +807,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("firewire", &snap.buses.firewire),
         ("greybus", &snap.buses.greybus),
         ("rapidio", &snap.buses.rapidio),
+        ("ulpi", &snap.buses.ulpi),
+        ("spmi", &snap.buses.spmi),
+        ("pci_epc", &snap.buses.pci_epc),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1304,7 +1314,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1383,6 +1393,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 关".into(),
             Some("1") => "1 代理".into(),
             _ => snap.net.ipv6_proxy_ndp.display(),
+        },
+        snap.net.ipv6_ndisc_tclass.display(),
+        match snap.net.ipv6_suppress_frag_ndisc.value.as_deref() {
+            Some("0") => "0 允许".into(),
+            Some("1") => "1 丢分片".into(),
+            _ => snap.net.ipv6_suppress_frag_ndisc.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1527,6 +1543,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">proxy_ndp iface {}</p>",
             esc(&snap.net.ipv6_proxy_ndp_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_ndisc_tclass_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ndisc_tclass iface {}</p>",
+            esc(&snap.net.ipv6_ndisc_tclass_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_suppress_frag_ndisc_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">suppress_frag_ndisc iface {}</p>",
+            esc(&snap.net.ipv6_suppress_frag_ndisc_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2558,6 +2586,64 @@ fn html_dmi_memory(html: &mut String, snap: &HardwareSnapshot) {
                 esc(m.manufacturer.as_deref().unwrap_or("—")),
                 esc(m.serial.as_deref().unwrap_or("—")),
                 esc(m.part.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+}
+
+fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
+    if !snap.dmi.processors.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 4 处理器</p>");
+        html.push_str("<table><tr><th>插座</th><th>厂商</th><th>型号</th><th>最大</th><th>当前</th><th>核心</th><th>线程</th><th>状态</th></tr>");
+        for p in &snap.dmi.processors {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(p.socket.as_deref().unwrap_or("—")),
+                esc(p.manufacturer.as_deref().unwrap_or("—")),
+                esc(p.version.as_deref().unwrap_or("—")),
+                p.max_mhz.map(|n| format!("{n} MHz")).unwrap_or_else(|| "—".into()),
+                p.current_mhz.map(|n| format!("{n} MHz")).unwrap_or_else(|| "—".into()),
+                p.cores.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                p.threads.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                if !p.populated {
+                    "empty"
+                } else if p.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.caches.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 7 缓存</p>");
+        html.push_str("<table><tr><th>名称</th><th>级</th><th>类型</th><th>大小</th><th>相联</th></tr>");
+        for c in &snap.dmi.caches {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>L{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(c.socket.as_deref().unwrap_or("—")),
+                c.level.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+                esc(c.kind.as_deref().unwrap_or("—")),
+                c.size_kb
+                    .map(|n| format!("{n} KiB"))
+                    .unwrap_or_else(|| "—".into()),
+                esc(c.associativity.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.slots.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 9 系统插槽</p>");
+        html.push_str("<table><tr><th>名称</th><th>类型</th><th>状态</th><th>总线</th></tr>");
+        for s in &snap.dmi.slots {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(s.designation.as_deref().unwrap_or("—")),
+                esc(s.kind.as_deref().unwrap_or("—")),
+                esc(s.usage.as_deref().unwrap_or("—")),
+                esc(s.bus.as_deref().unwrap_or("—"))
             ));
         }
         html.push_str("</table>");

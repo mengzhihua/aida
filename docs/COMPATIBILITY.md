@@ -279,6 +279,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 255. **空的 firewire / greybus / rapidio 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
 256. **`accept_untracked_na` / `proxy_ndp` 只列出与 `conf/all` 不同的接口。** `1` 分别表示接受未跟踪 Neighbor Advertisement、开启 NDP 代理。不要用 `default` 顶替已有 iface。
 257. **`kernel.arch` 是内核自称的架构字符串（常为 `x86_64`）。** 无该键时 NotFound，不是失败；与 `cpu_byteorder` / `address_bits` 不要混。
+258. **SMBIOS Type 4/7/9/0 按 DSP0134 偏移解析。** Type 4 插座/厂商/型号用字符串号；最大/当前 MHz 在 `0x14`/`0x16`；Status bit6 已插入、bits2:0=`1` 启用；核心/线程优先 3.0 WORD（`0x2A`/`0x2E`），否则 2.5 BYTE（`0x23`/`0x25`）。Type 7 级别是 Config bits2:0 再加 1；安装大小 `0xFFFF` 读扩展 DWORD `0x17`。Type 9 Current Usage `0x03`=Available、`0x04`=In use（不是 `0x02`）；PCI 段/总线/设备在 length≥`0x11`，全 `FF` 表示无 PCI 地址。Type 0 ROM=`(n+1)*64` KiB，`0xFF` 读扩展 WORD MiB（`0x18`）；Release 在 `0x14`/`0x15`。不调用 dmidecode。
+259. **空的 ulpi / spmi / pci_epc 表示没有对应硬件。** ULPI/SPMI 先看 `bus/*/devices`，没有再看 `class/*`。`pci_epc` 只看 `class/pci_epc`。`PermissionDenied` 仍写 note。
+260. **`ndisc_tclass` / `suppress_frag_ndisc` 只列出与 `conf/all` 不同的接口。** 前者是 ND 报文 Traffic Class（`0` 默认）；后者 `1` 丢掉分片的 Neighbor Discovery。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

@@ -263,6 +263,14 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"ipv6_accept_untracked_na\""));
     assert!(json.contains("\"ipv6_proxy_ndp\""));
     assert!(json.contains("\"kernel_arch\""));
+    assert!(json.contains("\"processors\""));
+    assert!(json.contains("\"slots\""));
+    assert!(json.contains("\"bios_rom_kb\""));
+    assert!(json.contains("\"ulpi\""));
+    assert!(json.contains("\"spmi\""));
+    assert!(json.contains("\"pci_epc\""));
+    assert!(json.contains("\"ipv6_ndisc_tclass\""));
+    assert!(json.contains("\"ipv6_suppress_frag_ndisc\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),

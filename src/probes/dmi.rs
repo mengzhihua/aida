@@ -28,6 +28,16 @@ pub struct DmiInfo {
     /// SMBIOS Type 16 物理内存阵列（容量上限 / ECC / 槽位数）。
     pub memory_arrays: Vec<MemoryArray>,
     pub memory_devices: Vec<MemoryDevice>,
+    /// SMBIOS Type 4 处理器（插座 / 额定频率 / 核心数）。对标 AIDA64 CPU/主板。
+    pub processors: Vec<ProcessorDevice>,
+    /// SMBIOS Type 7 缓存（与 sysfs cpu0/cache 互补）。
+    pub caches: Vec<CacheDevice>,
+    /// SMBIOS Type 9 系统插槽（PCI/PCIe）。
+    pub slots: Vec<SystemSlot>,
+    /// Type 0 BIOS ROM 大小（KiB）。
+    pub bios_rom_kb: Option<u64>,
+    /// Type 0 BIOS 版本号 major.minor（有则显示）。
+    pub bios_release: Option<String>,
     pub notes: Vec<String>,
 }
 
@@ -101,6 +111,11 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         smbios_records: Vec::new(),
         memory_arrays: Vec::new(),
         memory_devices: Vec::new(),
+        processors: Vec::new(),
+        caches: Vec::new(),
+        slots: Vec::new(),
+        bios_rom_kb: None,
+        bios_release: None,
         notes: Vec::new(),
     };
 
@@ -119,6 +134,27 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter(|r| r.kind == 17)
                     .filter_map(|r| memory_from_raw(bytes, r))
                     .collect();
+                info.processors = parsed
+                    .iter()
+                    .filter(|r| r.kind == 4)
+                    .filter_map(|r| processor_from_raw(bytes, r))
+                    .collect();
+                info.caches = parsed
+                    .iter()
+                    .filter(|r| r.kind == 7)
+                    .filter_map(|r| cache_from_raw(bytes, r))
+                    .collect();
+                info.slots = parsed
+                    .iter()
+                    .filter(|r| r.kind == 9)
+                    .filter_map(|r| slot_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
+                    let (rom, rel) = bios_extras(bytes, bios);
+                    info.bios_rom_kb = rom;
+                    info.bios_release = rel;
+                }
                 info.smbios_records = parsed;
                 if info.sys_vendor.value.is_none() {
                     fill_from_smbios(&mut info);
@@ -213,6 +249,7 @@ fn kind_name(kind: u8) -> String {
         3 => "Chassis",
         4 => "Processor",
         7 => "Cache",
+        9 => "System Slot",
         16 => "Memory Array",
         17 => "Memory Device",
         19 => "Memory Mapped Address",
@@ -290,6 +327,36 @@ fn smbios_str(strings: &[String], idx: u8) -> Option<String> {
         .get((idx as usize).saturating_sub(1))
         .cloned()
         .filter(|s| !s.is_empty())
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessorDevice {
+    pub socket: Option<String>,
+    pub manufacturer: Option<String>,
+    pub version: Option<String>,
+    pub max_mhz: Option<u16>,
+    pub current_mhz: Option<u16>,
+    pub cores: Option<u16>,
+    pub threads: Option<u16>,
+    pub populated: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CacheDevice {
+    pub socket: Option<String>,
+    pub level: Option<u8>,
+    pub kind: Option<String>,
+    pub size_kb: Option<u64>,
+    pub associativity: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SystemSlot {
+    pub designation: Option<String>,
+    pub kind: Option<String>,
+    pub usage: Option<String>,
+    pub bus: Option<String>,
 }
 
 fn next_smbios_struct(buf: &[u8], i: usize) -> Option<usize> {
@@ -476,6 +543,242 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
         i = next_smbios_struct(buf, i + length)?;
     }
     None
+}
+
+fn rec_offset(buf: &[u8], rec: &SmbiosRecord) -> Option<usize> {
+    let mut i = 0usize;
+    while i + 4 <= buf.len() {
+        let kind = buf[i];
+        let length = buf[i + 1] as usize;
+        if length < 4 || i + length > buf.len() {
+            break;
+        }
+        let handle = u16::from_le_bytes([buf[i + 2], buf[i + 3]]);
+        if kind == rec.kind && handle == rec.handle {
+            return Some(i);
+        }
+        i = next_smbios_struct(buf, i + length)?;
+    }
+    None
+}
+
+fn word(buf: &[u8], i: usize, off: usize) -> u16 {
+    u16::from_le_bytes([buf[i + off], buf[i + off + 1]])
+}
+
+fn bios_extras(buf: &[u8], rec: &SmbiosRecord) -> (Option<u64>, Option<String>) {
+    let Some(i) = rec_offset(buf, rec) else {
+        return (None, None);
+    };
+    let length = buf[i + 1] as usize;
+    if i + length > buf.len() || length < 0x0A {
+        return (None, None);
+    }
+    let rom = buf[i + 0x09];
+    let bios_rom_kb = if rom == 0xFF {
+        if length >= 0x1A {
+            let ext = word(buf, i, 0x18) as u64;
+            if ext == 0 { None } else { Some(ext * 1024) }
+        } else {
+            None
+        }
+    } else {
+        Some((rom as u64 + 1) * 64)
+    };
+    let bios_release = if length >= 0x16 {
+        let maj = buf[i + 0x14];
+        let min = buf[i + 0x15];
+        if maj == 0xFF && min == 0xFF {
+            None
+        } else {
+            Some(format!("{maj}.{min}"))
+        }
+    } else {
+        None
+    };
+    (bios_rom_kb, bios_release)
+}
+
+fn processor_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ProcessorDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x1A || i + length > buf.len() {
+        return None;
+    }
+    let max_mhz = {
+        let v = word(buf, i, 0x14);
+        if v == 0 { None } else { Some(v) }
+    };
+    let current_mhz = {
+        let v = word(buf, i, 0x16);
+        if v == 0 { None } else { Some(v) }
+    };
+    let status = buf[i + 0x18];
+    let populated = status & 0x40 != 0;
+    let enabled = (status & 0x07) == 0x01;
+    let cores = if length >= 0x2C {
+        let c = word(buf, i, 0x2A);
+        if c == 0 { None } else { Some(c) }
+    } else if length > 0x23 {
+        match buf[i + 0x23] {
+            0 | 0xFF => None,
+            n => Some(n as u16),
+        }
+    } else {
+        None
+    };
+    let threads = if length >= 0x30 {
+        let t = word(buf, i, 0x2E);
+        if t == 0 { None } else { Some(t) }
+    } else if length > 0x25 {
+        match buf[i + 0x25] {
+            0 | 0xFF => None,
+            n => Some(n as u16),
+        }
+    } else {
+        None
+    };
+    Some(ProcessorDevice {
+        socket: smbios_str(&rec.strings, buf[i + 0x04]),
+        manufacturer: if length > 0x07 {
+            smbios_str(&rec.strings, buf[i + 0x07])
+        } else {
+            None
+        },
+        version: if length > 0x10 {
+            smbios_str(&rec.strings, buf[i + 0x10])
+        } else {
+            None
+        },
+        max_mhz,
+        current_mhz,
+        cores,
+        threads,
+        populated,
+        enabled,
+    })
+}
+
+fn cache_size_kb(raw: u16, ext: Option<u32>) -> Option<u64> {
+    if raw == 0xFFFF {
+        let ext = ext?;
+        if ext == 0 {
+            return None;
+        }
+        let granules = (ext & 0x7FFF_FFFF) as u64;
+        Some(if ext & 0x8000_0000 != 0 {
+            granules * 64
+        } else {
+            granules
+        })
+    } else if raw == 0 {
+        None
+    } else {
+        let granules = (raw & 0x7FFF) as u64;
+        Some(if raw & 0x8000 != 0 {
+            granules * 64
+        } else {
+            granules
+        })
+    }
+}
+
+fn cache_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<CacheDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x13 || i + length > buf.len() {
+        return None;
+    }
+    let cfg = word(buf, i, 0x05);
+    let level = ((cfg & 0x07) + 1) as u8;
+    let installed = word(buf, i, 0x09);
+    let ext = if length >= 0x1B {
+        Some(u32::from_le_bytes([
+            buf[i + 0x17],
+            buf[i + 0x18],
+            buf[i + 0x19],
+            buf[i + 0x1A],
+        ]))
+    } else {
+        None
+    };
+    let kind = match buf[i + 0x11] {
+        0x03 => Some("Instruction".into()),
+        0x04 => Some("Data".into()),
+        0x05 => Some("Unified".into()),
+        other => Some(format!("0x{other:02x}")),
+    };
+    let associativity = match buf[i + 0x12] {
+        0x02 => Some("Unknown".into()),
+        0x03 => Some("Direct".into()),
+        0x04 => Some("2-way".into()),
+        0x05 => Some("4-way".into()),
+        0x06 => Some("Fully".into()),
+        0x07 => Some("8-way".into()),
+        0x08 => Some("16-way".into()),
+        other => Some(format!("0x{other:02x}")),
+    };
+    Some(CacheDevice {
+        socket: smbios_str(&rec.strings, buf[i + 0x04]),
+        level: Some(level),
+        kind,
+        size_kb: cache_size_kb(installed, ext),
+        associativity,
+    })
+}
+
+fn slot_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<SystemSlot> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0C || i + length > buf.len() {
+        return None;
+    }
+    let kind = slot_type_name(buf[i + 0x05]);
+    // DSP0134 7.10.3 Current Usage：01h Other / 02h Unknown / 03h Available / 04h In use。
+    let usage = match buf[i + 0x07] {
+        0x01 => Some("Other".into()),
+        0x02 => Some("Unknown".into()),
+        0x03 => Some("Available".into()),
+        0x04 => Some("In use".into()),
+        other => Some(format!("0x{other:02x}")),
+    };
+    let bus = if length >= 0x11 {
+        let seg = word(buf, i, 0x0D);
+        let busn = buf[i + 0x0F];
+        let df = buf[i + 0x10];
+        if seg == 0xFFFF && busn == 0xFF && df == 0xFF {
+            None
+        } else {
+            Some(format!("{seg:04x}:{busn:02x}:{:02x}.{}", df >> 3, df & 7))
+        }
+    } else {
+        None
+    };
+    Some(SystemSlot {
+        designation: smbios_str(&rec.strings, buf[i + 0x04]),
+        kind: Some(kind.into()),
+        usage,
+        bus,
+    })
+}
+
+fn slot_type_name(t: u8) -> &'static str {
+    match t {
+        0x03 => "ISA",
+        0x06 => "PCI",
+        0x09 => "AGP",
+        0xA5 => "PCI Express",
+        0xA6 => "PCIe x1",
+        0xA7 => "PCIe x2",
+        0xA8 => "PCIe x4",
+        0xA9 => "PCIe x8",
+        0xAA => "PCIe x16",
+        0xAB => "PCIe x32",
+        0xB8 => "PCIe 3 x16",
+        0xBE => "PCIe 4 x16",
+        0xD1 => "PCIe 5 x16",
+        _ => "Other",
+    }
 }
 
 /// Speed / Configured Speed：0 未知，0xFFFF 读 32 位扩展字段（3.3+ 的 0x56 / 0x5A）。
@@ -719,5 +1022,211 @@ mod tests {
         assert_eq!(mem.configured_mts, Some(200_000));
         assert_eq!(mem.rank, Some(2));
         assert_eq!(mem.size_mb, Some(8192));
+    }
+
+    #[test]
+    fn type4_processor_socket_speed_and_cores() {
+        let mut rec = vec![0u8; 0x30];
+        rec[0] = 4;
+        rec[1] = 0x30;
+        rec[0x04] = 1;
+        rec[0x07] = 2;
+        rec[0x10] = 3;
+        rec[0x14] = 0x88;
+        rec[0x15] = 0x13;
+        rec[0x16] = 0x10;
+        rec[0x17] = 0x0E;
+        rec[0x18] = 0x41;
+        rec[0x2A] = 8;
+        rec[0x2E] = 16;
+        rec.extend_from_slice(b"LGA1700\0Intel\0Core i7\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 4)
+            .and_then(|r| processor_from_raw(&rec, r))
+            .expect("type 4");
+        assert_eq!(p.socket.as_deref(), Some("LGA1700"));
+        assert_eq!(p.manufacturer.as_deref(), Some("Intel"));
+        assert_eq!(p.version.as_deref(), Some("Core i7"));
+        assert_eq!(p.max_mhz, Some(5000));
+        assert_eq!(p.current_mhz, Some(3600));
+        assert_eq!(p.cores, Some(8));
+        assert_eq!(p.threads, Some(16));
+        assert!(p.populated && p.enabled);
+    }
+
+    #[test]
+    fn type7_cache_level_and_size() {
+        let mut rec = vec![0u8; 0x13];
+        rec[0] = 7;
+        rec[1] = 0x13;
+        rec[0x04] = 1;
+        rec[0x05] = 0x02;
+        rec[0x09] = 0x00;
+        rec[0x0A] = 0x20;
+        rec[0x11] = 0x05;
+        rec[0x12] = 0x07;
+        rec.extend_from_slice(b"L3 Cache\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 7)
+            .and_then(|r| cache_from_raw(&rec, r))
+            .expect("type 7");
+        assert_eq!(c.socket.as_deref(), Some("L3 Cache"));
+        assert_eq!(c.level, Some(3));
+        assert_eq!(c.kind.as_deref(), Some("Unified"));
+        assert_eq!(c.size_kb, Some(8192));
+        assert_eq!(c.associativity.as_deref(), Some("8-way"));
+    }
+
+    #[test]
+    fn type9_pcie_slot_in_use() {
+        let mut rec = vec![0u8; 0x11];
+        rec[0] = 9;
+        rec[1] = 0x11;
+        rec[0x04] = 1;
+        rec[0x05] = 0xAA;
+        rec[0x07] = 0x04;
+        rec[0x0F] = 0x01;
+        rec.extend_from_slice(b"PCIe x16\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let s = recs
+            .iter()
+            .find(|r| r.kind == 9)
+            .and_then(|r| slot_from_raw(&rec, r))
+            .expect("type 9");
+        assert_eq!(s.designation.as_deref(), Some("PCIe x16"));
+        assert_eq!(s.kind.as_deref(), Some("PCIe x16"));
+        assert_eq!(s.usage.as_deref(), Some("In use"));
+        assert_eq!(s.bus.as_deref(), Some("0000:01:00.0"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 9).map(|r| r.kind_name.as_str()),
+            Some("System Slot")
+        );
+    }
+
+    #[test]
+    fn type9_available_without_pci_address() {
+        let mut rec = vec![0u8; 0x11];
+        rec[0] = 9;
+        rec[1] = 0x11;
+        rec[0x04] = 1;
+        rec[0x05] = 0x06;
+        rec[0x07] = 0x03;
+        rec[0x0D] = 0xFF;
+        rec[0x0E] = 0xFF;
+        rec[0x0F] = 0xFF;
+        rec[0x10] = 0xFF;
+        rec.extend_from_slice(b"PCI Slot 1\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let s = recs
+            .iter()
+            .find(|r| r.kind == 9)
+            .and_then(|r| slot_from_raw(&rec, r))
+            .expect("type 9");
+        assert_eq!(s.designation.as_deref(), Some("PCI Slot 1"));
+        assert_eq!(s.kind.as_deref(), Some("PCI"));
+        assert_eq!(s.usage.as_deref(), Some("Available"));
+        assert_eq!(s.bus, None);
+    }
+
+    #[test]
+    fn type4_byte_core_count_when_no_word() {
+        let mut rec = vec![0u8; 0x26];
+        rec[0] = 4;
+        rec[1] = 0x26;
+        rec[0x04] = 1;
+        rec[0x07] = 2;
+        rec[0x10] = 3;
+        rec[0x14] = 0x20;
+        rec[0x15] = 0x0C;
+        rec[0x16] = 0xE8;
+        rec[0x17] = 0x07;
+        rec[0x18] = 0x41;
+        rec[0x23] = 4;
+        rec[0x25] = 8;
+        rec.extend_from_slice(b"Socket 0\0AMD\0Ryzen\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 4)
+            .and_then(|r| processor_from_raw(&rec, r))
+            .expect("type 4");
+        assert_eq!(p.socket.as_deref(), Some("Socket 0"));
+        assert_eq!(p.max_mhz, Some(3104));
+        assert_eq!(p.current_mhz, Some(2024));
+        assert_eq!(p.cores, Some(4));
+        assert_eq!(p.threads, Some(8));
+        assert!(p.populated && p.enabled);
+    }
+
+    #[test]
+    fn type0_bios_rom_and_release() {
+        let mut rec = vec![0u8; 0x18];
+        rec[0] = 0;
+        rec[1] = 0x18;
+        rec[0x09] = 0x7F;
+        rec[0x14] = 5;
+        rec[0x15] = 17;
+        rec.extend_from_slice(b"Vendor\0Ver\0Date\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let bios = recs.iter().find(|r| r.kind == 0).expect("type 0");
+        let (rom, rel) = bios_extras(&rec, bios);
+        assert_eq!(rom, Some(8192));
+        assert_eq!(rel.as_deref(), Some("5.17"));
+    }
+
+    #[test]
+    fn type0_extended_rom_is_mib() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 0;
+        rec[1] = 0x1A;
+        rec[0x09] = 0xFF;
+        rec[0x14] = 0xFF;
+        rec[0x15] = 0xFF;
+        rec[0x18] = 16;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let bios = recs.iter().find(|r| r.kind == 0).expect("type 0");
+        let (rom, rel) = bios_extras(&rec, bios);
+        assert_eq!(rom, Some(16 * 1024));
+        assert_eq!(rel, None);
+    }
+
+    #[test]
+    fn type7_extended_size_when_ffff() {
+        let mut rec = vec![0u8; 0x1B];
+        rec[0] = 7;
+        rec[1] = 0x1B;
+        rec[0x04] = 1;
+        rec[0x05] = 0x01;
+        rec[0x09] = 0xFF;
+        rec[0x0A] = 0xFF;
+        rec[0x11] = 0x04;
+        rec[0x12] = 0x08;
+        rec[0x17] = 0x00;
+        rec[0x18] = 0x80;
+        rec.extend_from_slice(b"L2 Cache\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 7)
+            .and_then(|r| cache_from_raw(&rec, r))
+            .expect("type 7");
+        assert_eq!(c.socket.as_deref(), Some("L2 Cache"));
+        assert_eq!(c.level, Some(2));
+        assert_eq!(c.kind.as_deref(), Some("Data"));
+        assert_eq!(c.size_kb, Some(32768));
+        assert_eq!(c.associativity.as_deref(), Some("16-way"));
     }
 }
