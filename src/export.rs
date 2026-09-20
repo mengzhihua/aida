@@ -912,6 +912,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("ulpi", &snap.buses.ulpi),
         ("spmi", &snap.buses.spmi),
         ("pci_epc", &snap.buses.pci_epc),
+        ("ptp", &snap.buses.ptp),
+        ("pps", &snap.buses.pps),
+        ("tpm", &snap.buses.tpm),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1416,7 +1419,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1501,6 +1504,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 允许".into(),
             Some("1") => "1 丢分片".into(),
             _ => snap.net.ipv6_suppress_frag_ndisc.display(),
+        },
+        match snap.net.ipv6_optimistic_dad.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 乐观".into(),
+            _ => snap.net.ipv6_optimistic_dad.display(),
+        },
+        match snap.net.ipv6_accept_source_route.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 接受".into(),
+            _ => snap.net.ipv6_accept_source_route.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1657,6 +1670,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">suppress_frag_ndisc iface {}</p>",
             esc(&snap.net.ipv6_suppress_frag_ndisc_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_optimistic_dad_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">optimistic_dad iface {}</p>",
+            esc(&snap.net.ipv6_optimistic_dad_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_accept_source_route_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">v6_srcrt iface {}</p>",
+            esc(&snap.net.ipv6_accept_source_route_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2750,6 +2775,49 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.ports.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 8 端口</p>");
+        html.push_str("<table><tr><th>内部</th><th>外部</th><th>连接器</th><th>端口</th></tr>");
+        for p in &snap.dmi.ports {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(p.internal.as_deref().unwrap_or("—")),
+                esc(p.external.as_deref().unwrap_or("—")),
+                esc(p.connector.as_deref().unwrap_or("—")),
+                esc(p.port.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.onboard.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 41 板载设备</p>");
+        html.push_str("<table><tr><th>名称</th><th>类型</th><th>状态</th><th>总线</th></tr>");
+        for d in &snap.dmi.onboard {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(d.designation.as_deref().unwrap_or("—")),
+                esc(d.kind.as_deref().unwrap_or("—")),
+                if d.enabled { "enabled" } else { "disabled" },
+                esc(d.bus.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.power_supplies.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 39 电源</p>");
+        html.push_str("<table><tr><th>名称</th><th>厂商</th><th>位置</th><th>功率</th><th>状态</th></tr>");
+        for p in &snap.dmi.power_supplies {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(p.name.as_deref().unwrap_or("—")),
+                esc(p.manufacturer.as_deref().unwrap_or("—")),
+                esc(p.location.as_deref().unwrap_or("—")),
+                p.max_watts.map(|n| format!("{n} W")).unwrap_or_else(|| "—".into()),
+                if p.present { "present" } else { "missing" }
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -2908,6 +2976,43 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 s.kind.as_deref().unwrap_or("—"),
                 s.usage.as_deref().unwrap_or("—"),
                 s.bus.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    for p in snap.dmi.ports.iter().take(16) {
+        dmi.push(pair(
+            p.external
+                .as_deref()
+                .or(p.internal.as_deref())
+                .unwrap_or("port"),
+            format!(
+                "{}  {}",
+                p.connector.as_deref().unwrap_or("—"),
+                p.port.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    for d in snap.dmi.onboard.iter().take(16) {
+        dmi.push(pair(
+            d.designation.as_deref().unwrap_or("onboard"),
+            format!(
+                "{}  {}  {}",
+                d.kind.as_deref().unwrap_or("—"),
+                if d.enabled { "enabled" } else { "disabled" },
+                d.bus.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    for p in snap.dmi.power_supplies.iter().take(8) {
+        dmi.push(pair(
+            p.name.as_deref().unwrap_or("PSU"),
+            format!(
+                "{}  {} W  {}",
+                p.manufacturer.as_deref().unwrap_or("—"),
+                p.max_watts
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                if p.present { "present" } else { "missing" }
             ),
         ));
     }

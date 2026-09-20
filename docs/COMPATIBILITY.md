@@ -283,6 +283,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 259. **空的 ulpi / spmi / pci_epc 表示没有对应硬件。** ULPI/SPMI 先看 `bus/*/devices`，没有再看 `class/*`。`pci_epc` 只看 `class/pci_epc`。`PermissionDenied` 仍写 note。
 260. **`ndisc_tclass` / `suppress_frag_ndisc` 只列出与 `conf/all` 不同的接口。** 前者是 ND 报文 Traffic Class（`0` 默认）；后者 `1` 丢掉分片的 Neighbor Discovery。不要用 `default` 顶替已有 iface。
 261. **文本 / CSV / Markdown 是摘要报告，不是 JSON 的全字段展开。** `aida collect --format text|csv|md` 打到 stdout；`--text`/`--csv`/`--md`/`--html`/`--json` 写文件，FILE=`-` 也是 stdout，可与 `--format` 并存（按顺序追加，不丢）。CSV 表头固定 `section,key,value`，含逗号的值按 RFC4180 加引号；以 `=`/`+`/`-`/`@` 开头的值加 `'` 再加引号，避免表格软件当公式。摘要单元格用短状态（`—` / `[权限不足]`），不展开 hint。完整 Sample（access/source/hint）仍只在 JSON。
+262. **SMBIOS Type 8/39/41 按 DSP0134 偏移解析。** Type 8 内部/外部标识是字符串号，连接器优先外部类型（`0x12`=USB、`0x1F`=RJ-45、`0x22`=USB-C），端口类型 `0x08`=USB、`0x10`=Network。Type 41 设备类型在 `0x05`（bit7 启用，低 7 位类型：`0x05` 以太网、`0x09` SATA、`0x0F` NVMe），PCI 段/总线/设备 length≥`0x0B`，全 `FF` 无地址。Type 39 最大功率 WORD `0x0C`（`0x8000` 未知），Characteristics bit1 表示在位。不调用 dmidecode。
+263. **空的 ptp / pps / tpm 表示没有对应硬件。** PTP/PPS 只看 `class/ptp` 与 `class/pps`。TPM 合并 `class/tpm` 与 `class/tpmrm`，两边都缺失才 leftover。`PermissionDenied` 仍写 note。
+264. **`optimistic_dad` / `accept_source_route`（IPv6）只列出与 `conf/all` 不同的接口。** 前者 `1` 允许未完成 DAD 的地址先用；后者 `1` 接受 IPv6 源路由。不要用 `default` 顶替已有 iface。不要 dump `stable_secret`。
 
 ## 测试方案
 
