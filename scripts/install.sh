@@ -356,6 +356,8 @@ echo
 echo "installed: $BIN/aida"
 echo "run:       $BIN/aida doctor"
 echo "           $BIN/aida collect --html report.html"
+echo "           $BIN/aida collect --format text > report.txt"
+echo "           $BIN/aida collect --csv report.csv --md report.md"
 if [[ -n "$APP_SRC" || -n "$GUI_SRC" ]]; then
   echo "           $BIN/aida gui"
 fi

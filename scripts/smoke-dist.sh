@@ -45,9 +45,15 @@ smoke_collect() {
   local prefix="$2"
   local json="$WORK/${prefix}.json"
   local html="$WORK/${prefix}.html"
-  "$bin" collect --json "$json" --html "$html" >/dev/null
+  local text="$WORK/${prefix}.txt"
+  local csv="$WORK/${prefix}.csv"
+  local md="$WORK/${prefix}.md"
+  "$bin" collect --json "$json" --html "$html" --text "$text" --csv "$csv" --md "$md" >/dev/null
   [[ -s "$json" ]] || fail "$bin collect --json 空文件"
   [[ -s "$html" ]] || fail "$bin collect --html 空文件"
+  [[ -s "$text" ]] || fail "$bin collect --text 空文件"
+  [[ -s "$csv" ]] || fail "$bin collect --csv 空文件"
+  [[ -s "$md" ]] || fail "$bin collect --md 空文件"
   python3 - "$json" "$VERSION" <<'PY'
 import json, sys
 path, ver = sys.argv[1], sys.argv[2]
@@ -59,7 +65,17 @@ assert d.get("cpu", {}).get("logical_cpus", 0) >= 1, d.get("cpu")
 assert "sysctl" in d and "net" in d and "buses" in d
 PY
   grep -qi "aida" "$html" || fail "$bin HTML 不含 AIDA"
-  ok "$bin collect json+html"
+  grep -q "AIDA Linux 硬件报告" "$text" || fail "$bin TEXT 不含标题"
+  grep -q "^\[CPU\]" "$text" || fail "$bin TEXT 不含 [CPU]"
+  head -n1 "$csv" | grep -qx 'section,key,value' || fail "$bin CSV 表头不对"
+  grep -q "CPU" "$csv" || fail "$bin CSV 不含 CPU"
+  grep -q "# AIDA Linux 硬件报告" "$md" || fail "$bin MD 不含标题"
+  "$bin" collect --format text >"$WORK/${prefix}-fmt.txt"
+  grep -q "AIDA Linux 硬件报告" "$WORK/${prefix}-fmt.txt" || fail "$bin --format text 空"
+  "$bin" collect --format text --csv - >"$WORK/${prefix}-fmt-csv.out"
+  grep -q "AIDA Linux 硬件报告" "$WORK/${prefix}-fmt-csv.out" || fail "$bin --format text --csv - 缺 TEXT"
+  grep -q "^section,key,value" "$WORK/${prefix}-fmt-csv.out" || fail "$bin --format text --csv - 缺 CSV"
+  ok "$bin collect json+html+text+csv+md"
 }
 
 smoke_bench() {

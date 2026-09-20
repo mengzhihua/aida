@@ -529,6 +529,21 @@ fn live_snapshot_json_and_html() {
     );
     let html = export::to_html(&snap);
     assert!(html.contains("AIDA Linux"));
+    let text = export::to_text(&snap);
+    assert!(text.contains("AIDA Linux 硬件报告"));
+    assert!(text.contains("[CPU]"));
+    assert!(text.contains("[OS]"));
+    let csv = export::to_csv(&snap);
+    assert!(csv.starts_with("section,key,value\n"));
+    assert!(csv.contains("CPU"));
+    assert!(csv.contains("meta"));
+    let md = export::to_markdown(&snap);
+    assert!(md.contains("# AIDA Linux 硬件报告"));
+    assert!(md.contains("| 项 | 值 |"));
+    assert_eq!(
+        export::ReportFormat::parse("csv"),
+        Some(export::ReportFormat::Csv)
+    );
     assert!(html.contains("GPU"));
     assert!(html.contains("网络"));
     assert!(html.contains("USB"));

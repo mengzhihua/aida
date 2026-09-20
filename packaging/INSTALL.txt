@@ -25,6 +25,8 @@ AIDA Linux — 解压即可用，不需要 Rust，也不需要先装开发工具
   服务器 / 无显示器 / 旧发行版（CentOS 7 也能采集）：
     chmod +x run-collect.sh aida-cli
     ./run-collect.sh --html report.html
+    ./run-collect.sh --format text > report.txt
+    ./run-collect.sh --csv report.csv
     ./aida-cli doctor
     ./aida-cli bench --quick
     ./aida-cli version

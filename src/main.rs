@@ -3,7 +3,8 @@
 //! ```text
 //! aida                 # GUI（无 DISPLAY 时退化为 collect）
 //! aida collect         # 打印 JSON
-//! aida collect --html report.html
+//! aida collect [--json FILE] [--html FILE] [--text FILE] [--csv FILE] [--md FILE]
+//! aida collect --format text   # 打印可读报告（默认仍是 JSON）
 //! aida bench --quick
 //! ```
 
@@ -59,7 +60,9 @@ AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmi
 用法:
   aida                              有图形会话则 GUI，否则打印 JSON
   aida gui                          桌面界面（状态栏 / 传感器折线 / 导出）
-  aida collect [--json FILE] [--html FILE]
+  aida collect [--format json|html|text|csv|md]
+               [--json FILE] [--html FILE] [--text FILE] [--csv FILE] [--md FILE]
+               FILE 为 - 时写到 stdout（可与 --format 并存，按出现顺序追加）。
   aida doctor [--json]
   aida bench [--quick] [--cpu] [--memory] [--disk] [--no-direct]
   aida elevate [gui|collect|bench ...]   pkexec，没有则 sudo -E
@@ -81,17 +84,45 @@ root 或 disk 组。桌面提权用 `aida elevate gui`，不要对 GUI 裸 sudo 
 fn cmd_collect(args: &[String]) -> ExitCode {
     let ctx = ProbeCtx::live();
     let snap = HardwareSnapshot::collect(&ctx);
-    let mut json_path: Option<PathBuf> = None;
-    let mut html_path: Option<PathBuf> = None;
+    let mut stdout_fmt = export::ReportFormat::Json;
+    let mut stdout_explicit = false;
+    let mut files: Vec<(export::ReportFormat, PathBuf)> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--json" => {
-                json_path = Some(next_file(args, &mut i, "aida-report.json"));
+            "--format" => {
+                let Some(name) = args.get(i + 1) else {
+                    eprintln!("--format 需要 json / html / text / csv / md");
+                    return ExitCode::from(2);
+                };
+                let Some(fmt) = export::ReportFormat::parse(name) else {
+                    eprintln!("未知 --format {name}（json / html / text / csv / md）");
+                    return ExitCode::from(2);
+                };
+                stdout_fmt = fmt;
+                stdout_explicit = true;
+                i += 1;
             }
-            "--html" => {
-                html_path = Some(next_file(args, &mut i, "aida-report.html"));
-            }
+            "--json" => files.push((
+                export::ReportFormat::Json,
+                next_file(args, &mut i, "aida-report.json"),
+            )),
+            "--html" => files.push((
+                export::ReportFormat::Html,
+                next_file(args, &mut i, "aida-report.html"),
+            )),
+            "--text" | "--txt" => files.push((
+                export::ReportFormat::Text,
+                next_file(args, &mut i, "aida-report.txt"),
+            )),
+            "--csv" => files.push((
+                export::ReportFormat::Csv,
+                next_file(args, &mut i, "aida-report.csv"),
+            )),
+            "--md" | "--markdown" => files.push((
+                export::ReportFormat::Markdown,
+                next_file(args, &mut i, "aida-report.md"),
+            )),
             "-h" | "--help" => {
                 print_help();
                 return ExitCode::SUCCESS;
@@ -104,41 +135,56 @@ fn cmd_collect(args: &[String]) -> ExitCode {
         i += 1;
     }
 
-    if json_path.is_none() && html_path.is_none() {
-        match export::to_json_pretty(&snap) {
-            Ok(s) => {
-                println!("{s}");
-                ExitCode::SUCCESS
-            }
+    let print_stdout = files.is_empty() || stdout_explicit;
+    if print_stdout {
+        match stdout_fmt.render(&snap) {
+            Ok(s) => emit_stdout(&s),
             Err(e) => {
                 eprintln!("{e}");
-                ExitCode::from(1)
-            }
-        }
-    } else {
-        if let Some(p) = json_path {
-            match export::to_json_pretty(&snap) {
-                Ok(s) => {
-                    if let Err(e) = fs::write(&p, s) {
-                        eprintln!("写 {}: {e}", p.display());
-                        return ExitCode::from(1);
-                    }
-                    eprintln!("JSON -> {}", p.display());
-                }
-                Err(e) => {
-                    eprintln!("{e}");
-                    return ExitCode::from(1);
-                }
-            }
-        }
-        if let Some(p) = html_path {
-            if let Err(e) = fs::write(&p, export::to_html(&snap)) {
-                eprintln!("写 {}: {e}", p.display());
                 return ExitCode::from(1);
             }
-            eprintln!("HTML -> {}", p.display());
         }
-        ExitCode::SUCCESS
+        if files.is_empty() {
+            return ExitCode::SUCCESS;
+        }
+    }
+
+    for (fmt, p) in &files {
+        let body = match fmt.render(&snap) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::from(1);
+            }
+        };
+        if p.as_os_str() == "-" {
+            // --format 已经占用 stdout 时仍要写出这份报告，不能静默丢掉。
+            emit_stdout(&body);
+            continue;
+        }
+        if let Err(e) = fs::write(p, &body) {
+            eprintln!("写 {}: {e}", p.display());
+            return ExitCode::from(1);
+        }
+        eprintln!("{} -> {}", format_label(*fmt), p.display());
+    }
+    ExitCode::SUCCESS
+}
+
+fn emit_stdout(s: &str) {
+    print!("{s}");
+    if !s.ends_with('\n') {
+        println!();
+    }
+}
+
+fn format_label(fmt: export::ReportFormat) -> &'static str {
+    match fmt {
+        export::ReportFormat::Json => "JSON",
+        export::ReportFormat::Html => "HTML",
+        export::ReportFormat::Text => "TEXT",
+        export::ReportFormat::Csv => "CSV",
+        export::ReportFormat::Markdown => "MD",
     }
 }
 
@@ -180,7 +226,7 @@ fn cmd_doctor(args: &[String]) -> ExitCode {
 
 fn next_file(args: &[String], i: &mut usize, default: &str) -> PathBuf {
     if let Some(n) = args.get(*i + 1) {
-        if !n.starts_with('-') {
+        if n == "-" || !n.starts_with('-') {
             *i += 1;
             return PathBuf::from(n);
         }
