@@ -287,7 +287,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 263. **空的 ptp / pps / tpm 表示没有对应硬件。** PTP/PPS 只看 `class/ptp` 与 `class/pps`。TPM 合并 `class/tpm` 与 `class/tpmrm`，两边都缺失才 leftover。`PermissionDenied` 仍写 note。
 264. **`optimistic_dad` / `accept_source_route`（IPv6）只列出与 `conf/all` 不同的接口。** 前者 `1` 允许未完成 DAD 的地址先用；后者是整数：`>=0` 接受 routing header type 2（默认 `0` 不是关），`<0` 拒绝。不要用 `default` 顶替已有 iface。不要 dump `stable_secret`。
 265. **SMBIOS Type 11/13/32/43 按 DSP0134 偏移解析。** Type 11 Count 在 `0x04`，随后是 OEM 字符串。Type 13 当前语言是 `0x15` 字符串号（length≥`0x16`），Flags bit0 为缩写格式。Type 32 Boot Status 在 `0x0A`（`0`=No errors）。Type 43 Vendor ID 是 4 字节 ASCII，Major/Minor Spec 在 `0x08`/`0x09`。不调用 dmidecode。
-266. **空的 firmware_attributes / pci_epf / slimbus 表示没有对应硬件。** `firmware_attributes` 只看 `class/firmware_attributes`（ThinkLMI/Dell sysman）。pci_epf / Slimbus 先看 `bus/*/devices`，没有再看 `class/*`。IIO/NVMEM/LED 已在 periph/platform 采集，不要 leftover 重复。`PermissionDenied` 仍写 note。
+266. **空的 firmware_attributes / pci_epf / slimbus 表示没有对应硬件。** `firmware_attributes` 只看 `class/firmware-attributes`（连字符 ABI，ThinkLMI/Dell sysman）。pci_epf / Slimbus 先看 `bus/*/devices`，没有再看 `class/*`。IIO/NVMEM/LED 已在 periph/platform 采集，不要 leftover 重复。`PermissionDenied` 仍写 note。
 267. **`use_optimistic` / `ignore_routes_with_linkdown` 只列出与 `conf/all` 不同的接口。** 前者 `1` 在 optimistic DAD 完成前使用该地址；后者 `1` 忽略链路 down 的路由。不要用 `default` 顶替已有 iface。
 
 ## 测试方案

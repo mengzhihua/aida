@@ -136,7 +136,7 @@ pub struct BusesReport {
     pub pps: Vec<String>,
     /// TPM：`class/tpm`，资源管理器另见 `class/tpmrm`。
     pub tpm: Vec<String>,
-    /// BIOS WMI 固件属性（`class/firmware_attributes`，ThinkLMI/Dell sysman）。
+    /// BIOS WMI 固件属性（`class/firmware-attributes`，ThinkLMI/Dell sysman）。
     pub firmware_attributes: Vec<String>,
     /// PCIe endpoint function：先 `bus/pci-epf/devices`，再 `class/pci_epf`。
     pub pci_epf: Vec<String>,
@@ -866,7 +866,7 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut missing,
     );
     let firmware_attributes = list_optional_names(
-        ctx.sys_path("class/firmware_attributes"),
+        ctx.sys_path("class/firmware-attributes"),
         8,
         "firmware_attributes",
         &mut notes,
@@ -1799,7 +1799,7 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/ptp/ptp0")).unwrap();
         fs::create_dir_all(root.join("sys/class/pps/pps0")).unwrap();
         fs::create_dir_all(root.join("sys/class/tpm/tpm0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/firmware_attributes/thinklmi")).unwrap();
+        fs::create_dir_all(root.join("sys/class/firmware-attributes/thinklmi")).unwrap();
         fs::create_dir_all(root.join("sys/bus/pci-epf/devices/pci_epf_test.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/slimbus/devices/slim-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
@@ -3040,6 +3040,51 @@ mod tests {
                 && labels.contains(&"pci_epf")
                 && labels.contains(&"slimbus"),
             "missing firmware_attributes/pci_epf/slimbus must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn firmware_attributes_hyphen_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-fwattr-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/firmware-attributes/thinklmi")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.firmware_attributes, vec!["thinklmi".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "firmware_attributes")
+            })),
+            "class/firmware-attributes must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn firmware_attributes_underscore_class_still_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-fwattr-underscore-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/firmware_attributes/thinklmi")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.firmware_attributes.is_empty());
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        assert!(
+            inner.split('/').any(|s| s == "firmware_attributes"),
+            "underscore class is not the ABI and should leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
