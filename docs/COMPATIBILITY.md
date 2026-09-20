@@ -261,6 +261,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 239. **`accept_ra_from_local` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 不接受来自本机的 RA。
 240. **`bootloader_type` / `bootloader_version` 来自 x86 启动协议。** `type=0` 表示未声明 bootloader；version 常为 `0`。
 241. **GUI 快路径不重读 TCP 连接表和 sysctl。** 前台约 1Hz 只更新传感器/利用率/网卡磁盘计数；`full` 每 8 拍才扫 `/proc/net/tcp*`、IRQ 亲和、挂载 `statvfs`、zoneinfo。窗口失焦时采集降到约 2.5s 且不做 full。不是采集失败。
+242. **空的 wakeup / msr / dpll 表示没有对应硬件。** wakeup 只列 `class/wakeup` 名，不读 `event_count`。MSR 只列 `class/msr` 名，不 dump `/dev/cpu/N/msr`。`PermissionDenied` 仍写 note。
+243. **`accept_redirects`（IPv6）只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 忽略 ICMPv6 重定向。
+244. **`drop_unsolicited_na` 只列出与 `conf/all` 不同的接口。** `1` 丢掉未经请求的 Neighbor Advertisement。
+245. **`firmware_config/force_sysfs_fallback=0` 表示不强制 sysfs 固件回退。** `ignore_sysfs_fallback=0` 表示仍允许该回退。`real-root-dev=0` 表示未声明 initramfs 根设备。
 
 ## 测试方案
 

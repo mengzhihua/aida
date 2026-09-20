@@ -257,6 +257,12 @@ pub struct NetReport {
     pub ipv6_accept_ra_from_local: Sample<String>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_from_local_dev: Vec<String>,
+    /// IPv6 `accept_redirects`。`0` 忽略 ICMPv6 重定向。
+    pub ipv6_accept_redirects: Sample<String>,
+    pub ipv6_accept_redirects_dev: Vec<String>,
+    /// `1` 丢掉未经请求的 Neighbor Advertisement。
+    pub ipv6_drop_unsolicited_na: Sample<String>,
+    pub ipv6_drop_unsolicited_na_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -781,6 +787,24 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_ra_from_local",
         ra_from_local_all.as_deref(),
     );
+    let ipv6_accept_redirects =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_redirects"));
+    let ra_redir_all = ipv6_accept_redirects.value.clone();
+    let ipv6_accept_redirects_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_redirects",
+        ra_redir_all.as_deref(),
+    );
+    let ipv6_drop_unsolicited_na =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/drop_unsolicited_na"));
+    let drop_na_all = ipv6_drop_unsolicited_na.value.clone();
+    let ipv6_drop_unsolicited_na_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "drop_unsolicited_na",
+        drop_na_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -996,6 +1020,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ip_autobind_reuse,
                 ipv6_accept_ra_from_local,
                 ipv6_accept_ra_from_local_dev,
+                ipv6_accept_redirects,
+                ipv6_accept_redirects_dev,
+                ipv6_drop_unsolicited_na,
+                ipv6_drop_unsolicited_na_dev,
                 notes,
             };
         }
@@ -1319,6 +1347,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ip_autobind_reuse,
         ipv6_accept_ra_from_local,
         ipv6_accept_ra_from_local_dev,
+        ipv6_accept_redirects,
+        ipv6_accept_redirects_dev,
+        ipv6_drop_unsolicited_na,
+        ipv6_drop_unsolicited_na_dev,
         notes,
     }
 }
@@ -2374,6 +2406,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_redirects"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/drop_unsolicited_na"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2554,6 +2596,8 @@ mod tests {
         assert_eq!(r.udp_hash_entries.value, Some(8192));
         assert_eq!(r.ip_autobind_reuse.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_ra_from_local.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_redirects.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_drop_unsolicited_na.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2694,6 +2738,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_redirects"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_redirects"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/drop_unsolicited_na"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/drop_unsolicited_na"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2822,6 +2886,20 @@ mod tests {
                 .any(|s| s == "lo:1"),
             "lo accept_ra_from_local=1 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_from_local_dev
+        );
+        assert_eq!(r.ipv6_accept_redirects.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_accept_redirects_dev.iter().any(|s| s == "lo:0"),
+            "lo accept_redirects=0 must differ from conf/all: {:?}",
+            r.ipv6_accept_redirects_dev
+        );
+        assert_eq!(r.ipv6_drop_unsolicited_na.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_drop_unsolicited_na_dev
+                .iter()
+                .any(|s| s == "lo:1"),
+            "lo drop_unsolicited_na=1 must differ from conf/all: {:?}",
+            r.ipv6_drop_unsolicited_na_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

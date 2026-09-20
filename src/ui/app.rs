@@ -2358,7 +2358,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2411,6 +2411,16 @@ impl AidaApp {
                     Some("0") => "0 拒本机".into(),
                     Some("1") => "1 接受".into(),
                     _ => self.snap.net.ipv6_accept_ra_from_local.display(),
+                },
+                match self.snap.net.ipv6_accept_redirects.value.as_deref() {
+                    Some("0") => "0 忽略".into(),
+                    Some("1") => "1 接受".into(),
+                    _ => self.snap.net.ipv6_accept_redirects.display(),
+                },
+                match self.snap.net.ipv6_drop_unsolicited_na.value.as_deref() {
+                    Some("0") => "0 留".into(),
+                    Some("1") => "1 丢".into(),
+                    _ => self.snap.net.ipv6_drop_unsolicited_na.display(),
                 }
             ),
         );
@@ -2561,6 +2571,20 @@ impl AidaApp {
                 ui,
                 "accept_ra_from_local iface",
                 &self.snap.net.ipv6_accept_ra_from_local_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_accept_redirects_dev.is_empty() {
+            kv(
+                ui,
+                "ipv6_accept_redirects iface",
+                &self.snap.net.ipv6_accept_redirects_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_drop_unsolicited_na_dev.is_empty() {
+            kv(
+                ui,
+                "drop_unsolicited_na iface",
+                &self.snap.net.ipv6_drop_unsolicited_na_dev.join("  "),
             );
         }
         kv(
@@ -3164,6 +3188,9 @@ impl AidaApp {
             ("rc", &self.snap.buses.rc),
             ("stm", &self.snap.buses.stm),
             ("peci", &self.snap.buses.peci),
+            ("wakeup", &self.snap.buses.wakeup),
+            ("msr", &self.snap.buses.msr),
+            ("dpll", &self.snap.buses.dpll),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -3620,9 +3647,21 @@ impl AidaApp {
             ui,
             "bootloader",
             &format!(
-                "type {}  version {}",
+                "type {}  version {}  firmware_sysfs {}/{}  real_root {}",
                 self.snap.sysctl.bootloader_type.display(),
-                self.snap.sysctl.bootloader_version.display()
+                self.snap.sysctl.bootloader_version.display(),
+                match self.snap.sysctl.firmware_force_sysfs_fallback.value.as_deref() {
+                    Some("0") => "0".into(),
+                    _ => self.snap.sysctl.firmware_force_sysfs_fallback.display(),
+                },
+                match self.snap.sysctl.firmware_ignore_sysfs_fallback.value.as_deref() {
+                    Some("0") => "0".into(),
+                    _ => self.snap.sysctl.firmware_ignore_sysfs_fallback.display(),
+                },
+                match self.snap.sysctl.real_root_dev.value {
+                    Some(0) => "0".into(),
+                    _ => self.snap.sysctl.real_root_dev.display(),
+                }
             ),
         );
         kv(ui, "ASLR", &self.snap.sysctl.aslr.display());

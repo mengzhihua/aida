@@ -206,6 +206,12 @@ pub struct SysctlReport {
     /// x86 启动协议里的 bootloader 类型；`0` 表示未声明。
     pub bootloader_type: Sample<u64>,
     pub bootloader_version: Sample<u64>,
+    /// `1` 强制走 sysfs 固件回退（调试用）。
+    pub firmware_force_sysfs_fallback: Sample<String>,
+    /// `1` 忽略 sysfs 固件回退。
+    pub firmware_ignore_sysfs_fallback: Sample<String>,
+    /// initramfs 声明的根设备号。`0` 表示未设。
+    pub real_root_dev: Sample<u64>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -480,6 +486,13 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         acpi_video_flags: access::read_u64(ctx.proc_path("sys/kernel/acpi_video_flags")),
         bootloader_type: access::read_u64(ctx.proc_path("sys/kernel/bootloader_type")),
         bootloader_version: access::read_u64(ctx.proc_path("sys/kernel/bootloader_version")),
+        firmware_force_sysfs_fallback: access::read_trimmed(
+            ctx.proc_path("sys/kernel/firmware_config/force_sysfs_fallback"),
+        ),
+        firmware_ignore_sysfs_fallback: access::read_trimmed(
+            ctx.proc_path("sys/kernel/firmware_config/ignore_sysfs_fallback"),
+        ),
+        real_root_dev: access::read_u64(ctx.proc_path("sys/kernel/real-root-dev")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -845,6 +858,18 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/acpi_video_flags"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/bootloader_type"), "176\n").unwrap();
         fs::write(root.join("proc/sys/kernel/bootloader_version"), "0\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/kernel/firmware_config")).unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/firmware_config/force_sysfs_fallback"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/kernel/firmware_config/ignore_sysfs_fallback"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/sys/kernel/real-root-dev"), "0\n").unwrap();
         fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
@@ -995,6 +1020,9 @@ mod tests {
         assert_eq!(r.acpi_video_flags.value, Some(0));
         assert_eq!(r.bootloader_type.value, Some(176));
         assert_eq!(r.bootloader_version.value, Some(0));
+        assert_eq!(r.firmware_force_sysfs_fallback.value.as_deref(), Some("0"));
+        assert_eq!(r.firmware_ignore_sysfs_fallback.value.as_deref(), Some("0"));
+        assert_eq!(r.real_root_dev.value, Some(0));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
