@@ -3153,21 +3153,34 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
     sections
 }
 
+fn csv_formula_leading(s: &str) -> bool {
+    matches!(
+        s.as_bytes().first(),
+        Some(b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r')
+    )
+}
+
 fn csv_escape(s: &str) -> String {
-    if s.bytes().any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r')) {
-        let mut out = String::from("\"");
-        for c in s.chars() {
-            if c == '"' {
-                out.push_str("\"\"");
-            } else {
-                out.push(c);
-            }
-        }
-        out.push('"');
-        out
-    } else {
-        s.to_string()
+    let formula = csv_formula_leading(s);
+    let needs_quote = formula
+        || s.bytes()
+            .any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r'));
+    if !needs_quote {
+        return s.to_string();
     }
+    let mut out = String::from("\"");
+    if formula {
+        out.push('\'');
+    }
+    for c in s.chars() {
+        if c == '"' {
+            out.push_str("\"\"");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn md_cell(s: &str) -> String {
@@ -3184,6 +3197,11 @@ mod tests {
         assert_eq!(csv_escape("a,b"), "\"a,b\"");
         assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
         assert_eq!(csv_escape("a\nb"), "\"a\nb\"");
+        assert_eq!(csv_escape("=1+1"), "\"'=1+1\"");
+        assert_eq!(csv_escape("+cmd"), "\"'+cmd\"");
+        assert_eq!(csv_escape("-1"), "\"'-1\"");
+        assert_eq!(csv_escape("@SUM(A1)"), "\"'@SUM(A1)\"");
+        assert_eq!(csv_escape("—"), "—");
     }
 
     #[test]

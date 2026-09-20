@@ -62,7 +62,7 @@ AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmi
   aida gui                          桌面界面（状态栏 / 传感器折线 / 导出）
   aida collect [--format json|html|text|csv|md]
                [--json FILE] [--html FILE] [--text FILE] [--csv FILE] [--md FILE]
-               FILE 为 - 时写到 stdout。一次采集可同时写出多种格式。
+               FILE 为 - 时写到 stdout（可与 --format 并存，按出现顺序追加）。
   aida doctor [--json]
   aida bench [--quick] [--cpu] [--memory] [--disk] [--no-direct]
   aida elevate [gui|collect|bench ...]   pkexec，没有则 sudo -E
@@ -158,9 +158,8 @@ fn cmd_collect(args: &[String]) -> ExitCode {
             }
         };
         if p.as_os_str() == "-" {
-            if !print_stdout {
-                emit_stdout(&body);
-            }
+            // --format 已经占用 stdout 时仍要写出这份报告，不能静默丢掉。
+            emit_stdout(&body);
             continue;
         }
         if let Err(e) = fs::write(p, &body) {

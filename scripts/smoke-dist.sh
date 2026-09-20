@@ -72,6 +72,9 @@ PY
   grep -q "# AIDA Linux 硬件报告" "$md" || fail "$bin MD 不含标题"
   "$bin" collect --format text >"$WORK/${prefix}-fmt.txt"
   grep -q "AIDA Linux 硬件报告" "$WORK/${prefix}-fmt.txt" || fail "$bin --format text 空"
+  "$bin" collect --format text --csv - >"$WORK/${prefix}-fmt-csv.out"
+  grep -q "AIDA Linux 硬件报告" "$WORK/${prefix}-fmt-csv.out" || fail "$bin --format text --csv - 缺 TEXT"
+  grep -q "^section,key,value" "$WORK/${prefix}-fmt-csv.out" || fail "$bin --format text --csv - 缺 CSV"
   ok "$bin collect json+html+text+csv+md"
 }
 

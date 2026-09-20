@@ -282,7 +282,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 258. **SMBIOS Type 4/7/9/0 按 DSP0134 偏移解析。** Type 4 插座/厂商/型号用字符串号；最大/当前 MHz 在 `0x14`/`0x16`；Status bit6 已插入、bits2:0=`1` 启用；核心/线程 BYTE（`0x23`/`0x25`）为 `0` 未知、为 `0xFF` 才读 3.0 WORD（`0x2A`/`0x2E`，需 length≥`0x2C`/`0x30`）；BYTE 有效时即使结构够长也不用 WORD。Type 7 级别是 Config bits2:0 再加 1；安装大小 `0xFFFF` 读扩展 DWORD `0x17`。Type 9 Current Usage `0x03`=Available、`0x04`=In use（不是 `0x02`）；插槽类型 `0x09`=Proprietary、`0x0F`=AGP、`0xB8`=PCIe Gen 4、`0xBE`=PCIe Gen 5（无宽度）；PCI 段/总线/设备在 length≥`0x11`，全 `FF` 表示无 PCI 地址。Type 0 ROM=`(n+1)*64` KiB，`0xFF` 读扩展 WORD `0x18`：bits13:0 数值、bits15:14 单位 `00b`=MiB / `01b`=GiB；Release 在 `0x14`/`0x15`。不调用 dmidecode。
 259. **空的 ulpi / spmi / pci_epc 表示没有对应硬件。** ULPI/SPMI 先看 `bus/*/devices`，没有再看 `class/*`。`pci_epc` 只看 `class/pci_epc`。`PermissionDenied` 仍写 note。
 260. **`ndisc_tclass` / `suppress_frag_ndisc` 只列出与 `conf/all` 不同的接口。** 前者是 ND 报文 Traffic Class（`0` 默认）；后者 `1` 丢掉分片的 Neighbor Discovery。不要用 `default` 顶替已有 iface。
-261. **文本 / CSV / Markdown 是摘要报告，不是 JSON 的全字段展开。** `aida collect --format text|csv|md` 打到 stdout；`--text`/`--csv`/`--md`/`--html`/`--json` 写文件，FILE=`-` 也是 stdout。CSV 表头固定 `section,key,value`，含逗号的值按 RFC4180 加引号。摘要单元格用短状态（`—` / `[权限不足]`），不展开 hint。完整 Sample（access/source/hint）仍只在 JSON。
+261. **文本 / CSV / Markdown 是摘要报告，不是 JSON 的全字段展开。** `aida collect --format text|csv|md` 打到 stdout；`--text`/`--csv`/`--md`/`--html`/`--json` 写文件，FILE=`-` 也是 stdout，可与 `--format` 并存（按顺序追加，不丢）。CSV 表头固定 `section,key,value`，含逗号的值按 RFC4180 加引号；以 `=`/`+`/`-`/`@` 开头的值加 `'` 再加引号，避免表格软件当公式。摘要单元格用短状态（`—` / `[权限不足]`），不展开 hint。完整 Sample（access/source/hint）仍只在 JSON。
 
 ## 测试方案
 
