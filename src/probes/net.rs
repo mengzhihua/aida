@@ -245,6 +245,18 @@ pub struct NetReport {
     pub ipv6_accept_ra_rtr_pref: Sample<String>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_rtr_pref_dev: Vec<String>,
+    /// TCP established 哈希桶数（只读）。
+    pub tcp_ehash_entries: Sample<u64>,
+    /// `0` 表示子命名空间沿用父哈希表。
+    pub tcp_child_ehash_entries: Sample<u64>,
+    /// UDP 哈希桶数（只读）。
+    pub udp_hash_entries: Sample<u64>,
+    /// `0` 表示 bind 不复用 TIME_WAIT 端口。
+    pub ip_autobind_reuse: Sample<String>,
+    /// `0` 不接受来自本机的 RA。
+    pub ipv6_accept_ra_from_local: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_from_local_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -755,6 +767,20 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_ra_rtr_pref",
         ra_rtr_pref_all.as_deref(),
     );
+    let tcp_ehash_entries = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_ehash_entries"));
+    let tcp_child_ehash_entries =
+        access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_child_ehash_entries"));
+    let udp_hash_entries = access::read_u64(ctx.proc_path("sys/net/ipv4/udp_hash_entries"));
+    let ip_autobind_reuse = access::read_trimmed(ctx.proc_path("sys/net/ipv4/ip_autobind_reuse"));
+    let ipv6_accept_ra_from_local =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_from_local"));
+    let ra_from_local_all = ipv6_accept_ra_from_local.value.clone();
+    let ipv6_accept_ra_from_local_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_from_local",
+        ra_from_local_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -964,6 +990,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_probe_threshold,
                 ipv6_accept_ra_rtr_pref,
                 ipv6_accept_ra_rtr_pref_dev,
+                tcp_ehash_entries,
+                tcp_child_ehash_entries,
+                udp_hash_entries,
+                ip_autobind_reuse,
+                ipv6_accept_ra_from_local,
+                ipv6_accept_ra_from_local_dev,
                 notes,
             };
         }
@@ -1281,6 +1313,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_probe_threshold,
         ipv6_accept_ra_rtr_pref,
         ipv6_accept_ra_rtr_pref_dev,
+        tcp_ehash_entries,
+        tcp_child_ehash_entries,
+        udp_hash_entries,
+        ip_autobind_reuse,
+        ipv6_accept_ra_from_local,
+        ipv6_accept_ra_from_local_dev,
         notes,
     }
 }
@@ -2248,6 +2286,15 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_ehash_entries"), "131072\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_child_ehash_entries"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/udp_hash_entries"), "8192\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/ip_autobind_reuse"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_from_local"),
+            "0\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -2424,6 +2471,11 @@ mod tests {
         assert_eq!(r.tcp_probe_interval.value, Some(600));
         assert_eq!(r.tcp_probe_threshold.value, Some(8));
         assert_eq!(r.ipv6_accept_ra_rtr_pref.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_ehash_entries.value, Some(131072));
+        assert_eq!(r.tcp_child_ehash_entries.value, Some(0));
+        assert_eq!(r.udp_hash_entries.value, Some(8192));
+        assert_eq!(r.ip_autobind_reuse.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_ra_from_local.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2554,6 +2606,16 @@ mod tests {
             "0\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_from_local"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_from_local"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2674,6 +2736,14 @@ mod tests {
             r.ipv6_accept_ra_rtr_pref_dev.iter().any(|s| s == "lo:0"),
             "lo accept_ra_rtr_pref=0 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_rtr_pref_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_from_local.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_accept_ra_from_local_dev
+                .iter()
+                .any(|s| s == "lo:1"),
+            "lo accept_ra_from_local=1 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_from_local_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
