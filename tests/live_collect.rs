@@ -248,6 +248,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"soundwire\""));
     assert!(json.contains("\"tcp_pingpong_thresh\""));
     assert!(json.contains("\"acpi_video_flags\""));
+    assert!(json.contains("\"rc\""));
+    assert!(json.contains("\"stm\""));
+    assert!(json.contains("\"peci\""));
+    assert!(json.contains("\"tcp_ehash_entries\""));
+    assert!(json.contains("\"bootloader_type\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),

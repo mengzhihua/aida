@@ -256,6 +256,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 234. **`tcp_pingpong_thresh` 是 delayed ACK 的 ping-pong 阈值。** `tcp_retrans_collapse=1` 表示重传时合并相邻 SKB。`tcp_probe_interval` / `tcp_probe_threshold` 与 `tcp_mtu_probing` 成对。
 235. **`accept_ra_rtr_pref` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 忽略 RA Router Preference，`1` 接受。
 236. **`acpi_video_flags=0` 表示不启用 ACPI video 特殊标志。** 不是采集失败。
+237. **空的 rc / stm / peci 表示没有对应硬件。** STM 合并 `class/stm` 与 `class/stm_source`，两边都缺失才 leftover。PECI 先看 `bus/peci/devices`，没有再看 `class/peci`。`PermissionDenied` 仍写 note。
+238. **`tcp_ehash_entries` / `udp_hash_entries` 是只读哈希桶数。** `tcp_child_ehash_entries=0` 表示子命名空间沿用父表。`ip_autobind_reuse=0` 表示 bind 不复用 TIME_WAIT 端口。
+239. **`accept_ra_from_local` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 不接受来自本机的 RA。
+240. **`bootloader_type` / `bootloader_version` 来自 x86 启动协议。** `type=0` 表示未声明 bootloader；version 常为 `0`。
 
 ## 测试方案
 

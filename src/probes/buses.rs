@@ -100,6 +100,12 @@ pub struct BusesReport {
     pub mux: Vec<String>,
     /// SoundWire：先 `bus/soundwire/devices`，再 `class/soundwire`。
     pub soundwire: Vec<String>,
+    /// 红外遥控接收器（`class/rc`，`rcN`）。
+    pub rc: Vec<String>,
+    /// MIPI STM：`class/stm`，源设备另见 `class/stm_source`。
+    pub stm: Vec<String>,
+    /// PECI：先 `bus/peci/devices`，再 `class/peci`。
+    pub peci: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -686,6 +692,26 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let rc = list_optional_names(ctx.sys_path("class/rc"), 8, "rc", &mut notes, &mut missing);
+    // STM 设备是 `class/stm`；console/heartbeat 等源在 `class/stm_source`。两边都缺失才 leftover。
+    let stm = list_prefixed_classes(
+        ctx,
+        &[("class/stm", "stm"), ("class/stm_source", "stm_source")],
+        8,
+        "stm",
+        &mut notes,
+        &mut missing,
+    );
+    // PECI 真实 ABI 是 bus；没有独立 `class/peci` 时不要当成缺失。
+    let peci = list_alt_dirs(
+        ctx,
+        "bus/peci/devices",
+        "class/peci",
+        8,
+        "peci",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -768,6 +794,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         vduse,
         mux,
         soundwire,
+        rc,
+        stm,
+        peci,
         notes,
     }
 }
@@ -1556,6 +1585,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/vduse/vduse0")).unwrap();
         fs::create_dir_all(root.join("sys/class/mux/muxchip0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/soundwire/devices/sdw-master-0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/rc/rc0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/stm/dummy_stm.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/peci/devices/0-30")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1639,6 +1671,9 @@ mod tests {
         assert_eq!(r.vduse, vec!["vduse0".to_string()]);
         assert_eq!(r.mux, vec!["muxchip0".to_string()]);
         assert_eq!(r.soundwire, vec!["sdw-master-0".to_string()]);
+        assert_eq!(r.rc, vec!["rc0".to_string()]);
+        assert_eq!(r.stm, vec!["stm/dummy_stm.0".to_string()]);
+        assert_eq!(r.peci, vec!["0-30".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2360,6 +2395,75 @@ mod tests {
                 && labels.contains(&"mux")
                 && labels.contains(&"soundwire"),
             "missing vduse/mux/soundwire must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn peci_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-peci-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/peci/devices/0-30")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.peci, vec!["0-30".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "peci"))),
+            "bus/peci must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stm_source_without_stm_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-stm-source-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/stm_source/stm_console")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.stm, vec!["stm_source/stm_console".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "stm"))),
+            "class/stm_source must not leftover stm: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_rc_stm_peci_when_classes_missing() {
+        let root = std::env::temp_dir().join(format!("aida-rc-stm-peci-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"rc") && labels.contains(&"stm") && labels.contains(&"peci"),
+            "missing rc/stm/peci must leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
