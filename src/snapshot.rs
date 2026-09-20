@@ -171,39 +171,51 @@ impl HardwareSnapshot {
         prev_disk: &mut Option<Vec<DiskSnap>>,
         prev_rapl: &mut Option<Vec<RaplSnap>>,
         dt_sec: f64,
+        full: bool,
     ) {
-        // 整份 CPU 报告都替换：cpuidle governor 等可在运行期切换，不能只更新 logical。
-        let now = cpu::read_proc_stat(ctx);
-        let mut cpu = cpu::collect_with_util(ctx, None);
-        cpu.utilization_pct = cpu::utilization(prev_stat, &now);
-        cpu::apply_per_cpu(&mut cpu.logical, prev_stat, &now);
-        self.cpu = cpu;
-        *prev_stat = now;
         self.sensors = hwmon::collect(ctx);
         self.alerts = alerts::evaluate(&self.sensors);
-        self.gpu = gpu::collect(ctx);
-        self.net = net::collect_with_prev(ctx, prev_net.as_deref(), dt_sec);
-        *prev_net = Some(net::counters(&self.net));
-        self.block = block::collect_with_prev(ctx, prev_disk.as_deref(), dt_sec);
-        *prev_disk = Some(block::counters(&self.block));
-        self.memory = memory::collect(ctx);
         self.power = power::collect(ctx);
-        self.pm = pm::collect(ctx);
         self.rapl = rapl::collect_with_prev(ctx, prev_rapl.as_deref(), dt_sec);
         *prev_rapl = Some(rapl::counters(&self.rapl));
-        self.software = software::collect(ctx);
-        self.clock = clock::collect(ctx);
-        self.edac = edac::collect(ctx);
-        self.fs = fs::collect(ctx);
         self.psi = psi::collect(ctx);
-        self.irq = irq::collect(ctx);
-        self.platform = platform::collect(ctx);
-        self.zmem = zmem::collect(ctx);
-        self.sysctl = sysctl::collect(ctx);
-        self.cgroup = cgroup::collect(ctx);
-        self.security = security::collect(ctx);
         // devcoredump 是崩溃后才出现、读完/超时即消失的瞬时 class，不能停在启动清单。
         buses::refresh_devcoredump(&mut self.buses, ctx);
+        if full {
+            let now = cpu::read_proc_stat(ctx);
+            let mut cpu = cpu::collect_with_util(ctx, None);
+            cpu.utilization_pct = cpu::utilization(prev_stat, &now);
+            cpu::apply_per_cpu(&mut cpu.logical, prev_stat, &now);
+            self.cpu = cpu;
+            *prev_stat = now;
+            self.gpu = gpu::collect(ctx);
+            self.net = net::collect_with_prev(ctx, prev_net.as_deref(), dt_sec);
+            *prev_net = Some(net::counters(&self.net));
+            self.block = block::collect_with_prev(ctx, prev_disk.as_deref(), dt_sec);
+            *prev_disk = Some(block::counters(&self.block));
+            self.memory = memory::collect(ctx);
+            self.pm = pm::collect(ctx);
+            self.software = software::collect(ctx);
+            self.clock = clock::collect(ctx);
+            self.edac = edac::collect(ctx);
+            self.fs = fs::collect(ctx);
+            self.irq = irq::collect(ctx);
+            self.platform = platform::collect(ctx);
+            self.zmem = zmem::collect(ctx);
+            self.sysctl = sysctl::collect(ctx);
+            self.cgroup = cgroup::collect(ctx);
+            self.security = security::collect(ctx);
+        } else {
+            cpu::refresh_runtime(&mut self.cpu, ctx, prev_stat);
+            gpu::refresh_runtime(&mut self.gpu, ctx);
+            net::refresh_runtime(&mut self.net, ctx, prev_net.as_deref(), dt_sec);
+            *prev_net = Some(net::counters(&self.net));
+            block::refresh_runtime(&mut self.block, ctx, prev_disk.as_deref(), dt_sec);
+            *prev_disk = Some(block::counters(&self.block));
+            memory::refresh_runtime(&mut self.memory, ctx);
+            software::refresh_runtime(&mut self.software, ctx);
+            zmem::refresh_runtime(&mut self.zmem, ctx);
+        }
         self.collected_at_unix_ms = unix_ms();
     }
 }
@@ -275,6 +287,7 @@ mod tests {
             &mut prev_disk,
             &mut prev_rapl,
             0.8,
+            false,
         );
         assert_eq!(snap.cpu.cpuidle_governor.value.as_deref(), Some("teo"));
         let _ = std::fs::remove_dir_all(&root);
@@ -316,6 +329,7 @@ mod tests {
             &mut prev_disk,
             &mut prev_rapl,
             0.8,
+            false,
         );
         assert_eq!(snap.buses.devcoredump, vec!["devcd0".to_string()]);
         std::fs::remove_dir_all(root.join("sys/class/devcoredump")).unwrap();
@@ -326,8 +340,67 @@ mod tests {
             &mut prev_disk,
             &mut prev_rapl,
             0.8,
+            false,
         );
         assert!(snap.buses.devcoredump.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_live_fast_skips_sysctl_until_full() {
+        let root = std::env::temp_dir().join(format!("aida-snap-sysctl-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc/sys/kernel")).unwrap();
+        std::fs::create_dir_all(root.join("sys/devices/system/cpu/cpuidle")).unwrap();
+        std::fs::write(root.join("proc/sys/kernel/panic"), "10\n").unwrap();
+        std::fs::write(
+            root.join("proc/stat"),
+            "cpu  1 0 0 1 0 0 0 0 0 0\ncpu0 1 0 0 1 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/cpuinfo"),
+            "processor\t: 0\nmodel name\t: Test\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut snap = HardwareSnapshot::collect_cpu_sample(&ctx, false);
+        assert_eq!(snap.sysctl.panic.value, Some(10));
+        std::fs::write(root.join("proc/sys/kernel/panic"), "20\n").unwrap();
+        let mut prev_stat = None;
+        let mut prev_net = None;
+        let mut prev_disk = None;
+        let mut prev_rapl = None;
+        snap.refresh_live(
+            &ctx,
+            &mut prev_stat,
+            &mut prev_net,
+            &mut prev_disk,
+            &mut prev_rapl,
+            1.0,
+            false,
+        );
+        assert_eq!(
+            snap.sysctl.panic.value,
+            Some(10),
+            "fast path must not re-read sysctl: {:?}",
+            snap.sysctl.panic
+        );
+        snap.refresh_live(
+            &ctx,
+            &mut prev_stat,
+            &mut prev_net,
+            &mut prev_disk,
+            &mut prev_rapl,
+            1.0,
+            true,
+        );
+        assert_eq!(snap.sysctl.panic.value, Some(20));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

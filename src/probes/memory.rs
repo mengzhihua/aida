@@ -170,6 +170,31 @@ pub fn collect(ctx: &ProbeCtx) -> MemoryReport {
     }
 }
 
+/// GUI 快路径：只重读 meminfo/vmstat，不扫 zoneinfo/buddy/KSM/memory block。
+pub fn refresh_runtime(report: &mut MemoryReport, ctx: &ProbeCtx) {
+    let mem = parse_meminfo(&access::read_trimmed(ctx.proc_path("meminfo")));
+    report.total_kb = mem.total_kb;
+    report.available_kb = mem.available_kb;
+    report.free_kb = mem.free_kb;
+    report.buffers_kb = mem.buffers_kb;
+    report.cached_kb = mem.cached_kb;
+    report.swap_total_kb = mem.swap_total_kb;
+    report.swap_free_kb = mem.swap_free_kb;
+    report.dirty_kb = mem.dirty_kb;
+    report.anon_kb = mem.anon_kb;
+    report.shmem_kb = mem.shmem_kb;
+    report.mapped_kb = mem.mapped_kb;
+    report.sreclaimable_kb = mem.sreclaimable_kb;
+    report.commit_limit_kb = mem.commit_limit_kb;
+    report.committed_as_kb = mem.committed_as_kb;
+    report.anon_huge_kb = mem.anon_huge_kb;
+    report.vmalloc_used_kb = mem.vmalloc_used_kb;
+    report.directmap_4k_kb = mem.directmap_4k_kb;
+    report.directmap_2m_kb = mem.directmap_2m_kb;
+    report.directmap_1g_kb = mem.directmap_1g_kb;
+    report.vmstat = parse_vmstat(&access::read_trimmed(ctx.proc_path("vmstat")));
+}
+
 struct ParsedMem {
     total_kb: Sample<u64>,
     available_kb: Sample<u64>,

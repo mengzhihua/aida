@@ -18,13 +18,13 @@
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`HardwareSnapshot::refresh_live` 更新 hwmon + 告警 + GPU + `/proc/stat` + 网卡/磁盘差分 + RAPL + meminfo + zram/zswap + power + pm + 平台亮度 + loadavg + clocksource/PTP + EDAC + PSI + IRQ + 挂载用量 + sysctl + cgroup + security + `buses.devcoredump`（瞬时 class，不重扫整份 buses），避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
+4. GUI 热路径：`refresh_live(..., full=false)` 约 1Hz（失焦 2.5s）只更新 hwmon/告警、CPU 利用率与当前频率/governor、GPU 忙闲/显存（不重读 EDID）、网卡/磁盘计数差分、RAPL、meminfo/vmstat、loadavg、PSI、电源、zram mm_stat、`buses.devcoredump`。`full=true` 每 8 拍才重扫 TCP 调优项、`/proc/net/tcp*`、sysctl、IRQ 亲和、挂载 statvfs、zoneinfo、cgroup、security、clock/EDAC/platform/pm。避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
 
 ## 各 probe 内核接口
 
 | Probe | 主路径 | 补充 |
 | --- | --- | --- |
-| CPU | `/proc/cpuinfo`，`/sys/devices/system/cpu/cpuN/` | topology；cpuidle；全局 `cpuidle/current_driver`（`none` 合法）/`current_governor`/`available_governors`；GUI `refresh_live` 替换整份 CPU 报告并保留差分利用率；`/proc/stat`；cache；vulnerabilities；`smt/`；`isolated`；`online`/`offline`/`possible`/`present`/`kernel_max`/`enabled`；`nohz_full`（空或缺失=无）；`modalias`（界面截断）；cpufreq `policyN`；schedstat；不 dump `hotplug/states` |
+| CPU | `/proc/cpuinfo`，`/sys/devices/system/cpu/cpuN/` | topology；cpuidle；全局 `cpuidle/current_driver`（`none` 合法）/`current_governor`/`available_governors`；GUI 快路径 `cpu::refresh_runtime` 只更新 `/proc/stat` 利用率、当前频率与 governor；慢路径才替换整份 CPU 报告；cache；vulnerabilities；`smt/`；`isolated`；`online`/`offline`/`possible`/`present`/`kernel_max`/`enabled`；`nohz_full`（空或缺失=无）；`modalias`（界面截断）；cpufreq `policyN`；schedstat；不 dump `hotplug/states` |
 | DMI | `/sys/class/dmi/id/*` | `/sys/firmware/dmi/tables/DMI` SMBIOS 结构 |
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02（ioctl request `as _`，兼容 musl `c_int` / glibc `c_ulong`） |
@@ -69,7 +69,7 @@
 ## 界面
 
 - 左：`SidePanel` 树（摘要 / CPU / DMI / 内存 / GPU / 传感器 / 电源 / 存储 / 文件系统 / 网络 / USB / 输入 / 声卡 / PCI / 平台 / NUMA / OS / 基准 / 导出）
-- 右：对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点
+- 右：对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点；界面重绘间隔与采集一致（前台 1s，失焦 2.5s），避免空转 500ms 帧
 - 顶：权限条 +「以管理员身份重启」（`elevate::reexec`）
 - 状态栏：对标 iStat Menus，窗口内常驻 CPU/内存用量/网络/磁盘/温度/loadavg；可选 always-on-top 窄条（无托盘 crate）；有底层盘时磁盘合计跳过 Device Mapper，只有 `dm-*` 时保留 mapper 速率
 - 记录：GUI 开始/停止，把每次 live 采样写成 JSONL（`$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`）

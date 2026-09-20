@@ -141,6 +141,38 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
     }
 }
 
+/// GUI 快路径：只更新 loadavg / uptime / entropy，不读 os-release、config.gz、locks。
+pub fn refresh_runtime(info: &mut SoftwareInfo, ctx: &ProbeCtx) {
+    let uptime = match access::read_trimmed(ctx.proc_path("uptime")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(s),
+            source,
+            ..
+        } => match s
+            .split_whitespace()
+            .next()
+            .and_then(|x| x.parse::<f64>().ok())
+        {
+            Some(v) => Sample::ok(v, source),
+            None => Sample::error(source, "无法解析 uptime"),
+        },
+        s => Sample {
+            value: None,
+            access: s.access,
+            source: s.source,
+            hint: s.hint,
+        },
+    };
+    let load = parse_loadavg(&access::read_trimmed(ctx.proc_path("loadavg")));
+    info.uptime_sec = uptime;
+    info.load_1 = load.l1;
+    info.load_5 = load.l5;
+    info.load_15 = load.l15;
+    info.procs = load.procs;
+    info.entropy_avail = access::read_u64(ctx.proc_path("sys/kernel/random/entropy_avail"));
+}
+
 /// procfs 上 `config.gz` 的 inode size 经常是 0，必须读字节才能知道压缩包长度。
 /// 不解码 gzip，避免引入 flate2。
 fn config_gz_sample(ctx: &ProbeCtx) -> Sample<String> {

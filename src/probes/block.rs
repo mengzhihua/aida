@@ -352,6 +352,40 @@ pub fn counters(report: &BlockReport) -> Vec<DiskSnap> {
         .collect()
 }
 
+/// GUI 快路径：只从 `/proc/diskstats` 更新吞吐，不重扫 queue sysfs / loop / mapper。
+pub fn refresh_runtime(
+    report: &mut BlockReport,
+    ctx: &ProbeCtx,
+    prev: Option<&[DiskSnap]>,
+    dt_sec: f64,
+) {
+    let stats = parse_diskstats(ctx);
+    for d in &mut report.devices {
+        let io = stats.get(&d.name);
+        let (rd_bps, wr_bps) = match (prev, io) {
+            (Some(p), Some(now)) if dt_sec > 0.0 => {
+                if let Some(old) = p.iter().find(|x| x.name == d.name) {
+                    (
+                        Some((now.rd_bytes.saturating_sub(old.rd_bytes) as f64) / dt_sec),
+                        Some((now.wr_bytes.saturating_sub(old.wr_bytes) as f64) / dt_sec),
+                    )
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
+        };
+        if let Some(s) = io {
+            d.rd_ios = Sample::ok(s.rd_ios, "/proc/diskstats");
+            d.wr_ios = Sample::ok(s.wr_ios, "/proc/diskstats");
+            d.rd_bytes = Sample::ok(s.rd_bytes, "/proc/diskstats");
+            d.wr_bytes = Sample::ok(s.wr_bytes, "/proc/diskstats");
+        }
+        d.rd_bps = rd_bps;
+        d.wr_bps = wr_bps;
+    }
+}
+
 #[derive(Clone)]
 struct DiskStat {
     rd_ios: u64,

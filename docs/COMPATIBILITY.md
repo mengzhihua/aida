@@ -260,6 +260,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 238. **`tcp_ehash_entries` / `udp_hash_entries` 是只读哈希桶数。** `tcp_child_ehash_entries=0` 表示子命名空间沿用父表。`ip_autobind_reuse=0` 表示 bind 不复用 TIME_WAIT 端口。
 239. **`accept_ra_from_local` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 不接受来自本机的 RA。
 240. **`bootloader_type` / `bootloader_version` 来自 x86 启动协议。** `type=0` 表示未声明 bootloader；version 常为 `0`。
+241. **GUI 快路径不重读 TCP 连接表和 sysctl。** 前台约 1Hz 只更新传感器/利用率/网卡磁盘计数；`full` 每 8 拍才扫 `/proc/net/tcp*`、IRQ 亲和、挂载 `statvfs`、zoneinfo。窗口失焦时采集降到约 2.5s 且不做 full。不是采集失败。
 
 ## 测试方案
 

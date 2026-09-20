@@ -398,6 +398,36 @@ pub fn utilization(a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) -> Option<f
     Some(((dt - di) as f32) * 100.0 / dt as f32)
 }
 
+/// GUI 快路径：只更新利用率、当前频率、governor，不重扫 cpuinfo/cache/漏洞。
+pub fn refresh_runtime(
+    info: &mut CpuInfo,
+    ctx: &ProbeCtx,
+    prev_stat: &mut Option<CpuStatSnap>,
+) {
+    let now = read_proc_stat(ctx);
+    info.utilization_pct = utilization(prev_stat, &now);
+    apply_per_cpu(&mut info.logical, prev_stat, &now);
+    *prev_stat = now;
+    for l in &mut info.logical {
+        let cpu_dir = ctx.sys_path(format!("devices/system/cpu/cpu{}", l.processor));
+        l.scaling_cur_khz = read_u64(cpu_dir.join("cpufreq/scaling_cur_freq"));
+        l.governor = access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor"));
+        l.online = access::read_trimmed(cpu_dir.join("online"));
+    }
+    info.cpuidle_driver =
+        access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_driver"));
+    info.cpuidle_governor =
+        access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_governor"));
+    info.online = access::read_trimmed(ctx.sys_path("devices/system/cpu/online"));
+    let root = ctx.sys_path("devices/system/cpu/cpufreq");
+    for p in &mut info.freq_policies {
+        let dir = root.join(&p.name);
+        p.governor = access::read_trimmed(dir.join("scaling_governor"));
+        p.scaling_cur_khz = access::read_u64(dir.join("scaling_cur_freq"));
+        p.epp = access::read_trimmed(dir.join("energy_performance_preference"));
+    }
+}
+
 fn logical_from_sysfs(
     cpu_dir: &std::path::Path,
     processor: u32,

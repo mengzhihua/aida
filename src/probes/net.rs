@@ -1337,6 +1337,47 @@ pub fn counters(report: &NetReport) -> Vec<NetSnap> {
         .collect()
 }
 
+/// GUI 快路径：只更新已有接口计数与 sockstat/snmp/conntrack，不读 TCP 表和调优项。
+pub fn refresh_runtime(
+    report: &mut NetReport,
+    ctx: &ProbeCtx,
+    prev: Option<&[NetSnap]>,
+    dt_sec: f64,
+) {
+    for iface in &mut report.interfaces {
+        let dir = ctx.sys_path(format!("class/net/{}", iface.name));
+        let stats = dir.join("statistics");
+        let rx = access::read_u64(stats.join("rx_bytes"));
+        let tx = access::read_u64(stats.join("tx_bytes"));
+        let (rx_bps, tx_bps) = match (prev, rx.value, tx.value) {
+            (Some(p), Some(rxb), Some(txb)) if dt_sec > 0.0 => {
+                if let Some(old) = p.iter().find(|x| x.name == iface.name) {
+                    (
+                        Some((rxb.saturating_sub(old.rx_bytes) as f64) / dt_sec),
+                        Some((txb.saturating_sub(old.tx_bytes) as f64) / dt_sec),
+                    )
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
+        };
+        iface.operstate = access::read_trimmed(dir.join("operstate"));
+        iface.carrier = access::read_trimmed(dir.join("carrier"));
+        iface.rx_packets = access::read_u64(stats.join("rx_packets"));
+        iface.tx_packets = access::read_u64(stats.join("tx_packets"));
+        iface.rx_errors = access::read_u64(stats.join("rx_errors"));
+        iface.tx_errors = access::read_u64(stats.join("tx_errors"));
+        iface.rx_bytes = rx;
+        iface.tx_bytes = tx;
+        iface.rx_bps = rx_bps;
+        iface.tx_bps = tx_bps;
+    }
+    report.sockstat = parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat")));
+    report.snmp = parse_snmp(&access::read_trimmed(ctx.proc_path("net/snmp")));
+    report.conntrack_count = access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_count"));
+}
+
 fn count_queues(dir: &std::path::Path) -> (usize, usize) {
     let names = match access::list_dir_names(dir).value {
         Some(n) => n,
@@ -1870,6 +1911,43 @@ mod tests {
         fs::create_dir_all(iface.join("wireless")).unwrap();
         let r2 = collect(&ctx);
         assert!(r2.interfaces[0].wireless);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_runtime_skips_tcp_knobs() {
+        let root = std::env::temp_dir().join(format!("aida-net-fast-{}", std::process::id()));
+        let iface = root.join("sys/class/net/eth0");
+        fs::create_dir_all(iface.join("statistics")).unwrap();
+        fs::write(iface.join("operstate"), "up\n").unwrap();
+        fs::write(iface.join("type"), "1\n").unwrap();
+        fs::write(iface.join("statistics/rx_bytes"), "1000\n").unwrap();
+        fs::write(iface.join("statistics/tx_bytes"), "2000\n").unwrap();
+        fs::write(iface.join("statistics/rx_packets"), "10\n").unwrap();
+        fs::write(iface.join("statistics/tx_packets"), "20\n").unwrap();
+        fs::write(iface.join("statistics/rx_errors"), "0\n").unwrap();
+        fs::write(iface.join("statistics/tx_errors"), "0\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_ehash_entries"), "131072\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        assert_eq!(r.tcp_ehash_entries.value, Some(131072));
+        fs::write(iface.join("statistics/rx_bytes"), "2000\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_ehash_entries"), "1\n").unwrap();
+        let prev = counters(&r);
+        refresh_runtime(&mut r, &ctx, Some(&prev), 1.0);
+        assert_eq!(r.interfaces[0].rx_bps, Some(1000.0));
+        assert_eq!(
+            r.tcp_ehash_entries.value,
+            Some(131072),
+            "fast path must not re-read tcp knobs"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
