@@ -896,7 +896,7 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let memstick = list_alt_dirs(
+    let memstick = list_merge_dirs(
         ctx,
         "bus/memstick/devices",
         "class/memstick_host",
@@ -1154,6 +1154,40 @@ fn list_alt_dirs(
             Vec::new()
         }
     }
+}
+
+/// 合并两个目录的名字；空目录仍算存在。两边都 Missing 才 leftover。
+fn list_merge_dirs(
+    ctx: &ProbeCtx,
+    first_rel: &str,
+    second_rel: &str,
+    cap: usize,
+    label: &'static str,
+    notes: &mut Vec<String>,
+    missing: &mut Vec<&'static str>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut saw = false;
+    for rel in [first_rel, second_rel] {
+        match dir_list(ctx.sys_path(rel)) {
+            DirList::Names(n) => {
+                saw = true;
+                out.extend(n);
+            }
+            DirList::Failed(l) => {
+                saw = true;
+                notes.push(l);
+            }
+            DirList::Missing => {}
+        }
+    }
+    out.sort();
+    out.dedup();
+    out.truncate(cap);
+    if !saw {
+        missing.push(label);
+    }
+    out
 }
 
 /// FPGA 没有统一的 `class/fpga`。分别看 manager / bridge / region，名前加 class 前缀。
@@ -3220,6 +3254,30 @@ mod tests {
                 inner.split('/').all(|s| s != "memstick")
             })),
             "class/memstick_host must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memstick_empty_bus_falls_back_to_host_class() {
+        let root = std::env::temp_dir().join(format!("aida-memstick-empty-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/memstick/devices")).unwrap();
+        fs::create_dir_all(root.join("sys/class/memstick_host/memstick0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.memstick, vec!["memstick0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "memstick")
+            })),
+            "empty bus plus class/memstick_host must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

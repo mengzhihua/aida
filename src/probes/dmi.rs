@@ -1161,17 +1161,24 @@ fn battery_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PortableBattery> {
         return None;
     }
     let raw_cap = word(buf, i, 0x0A);
-    let mul = if length >= 0x17 {
-        let m = buf[i + 0x16];
+    let mul = if length >= 0x16 {
+        let m = buf[i + 0x15];
         if m == 0 { 1u32 } else { m as u32 }
     } else {
         1
+    };
+    let chem = buf[i + 0x09];
+    let chemistry = if chem == 0x02 && length >= 0x15 {
+        smbios_str(&rec.strings, buf[i + 0x14])
+            .or_else(|| Some(battery_chemistry_name(chem)))
+    } else {
+        Some(battery_chemistry_name(chem))
     };
     Some(PortableBattery {
         location: smbios_str(&rec.strings, buf[i + 0x04]),
         manufacturer: smbios_str(&rec.strings, buf[i + 0x05]),
         name: smbios_str(&rec.strings, buf[i + 0x08]),
-        chemistry: Some(battery_chemistry_name(buf[i + 0x09])),
+        chemistry,
         design_capacity_mwh: if raw_cap == 0 {
             None
         } else {
@@ -2122,7 +2129,7 @@ mod tests {
         rec[0x0B] = 0x12; // 4800 mWh
         rec[0x0C] = 0x5C;
         rec[0x0D] = 0x2B; // 11100 mV
-        rec[0x16] = 1;
+        rec[0x15] = 1;
         rec.extend_from_slice(b"BAT0\0SMP\0DELL 1F22\0\0");
         rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
         let recs = parse_smbios(&rec);
@@ -2160,6 +2167,47 @@ mod tests {
         assert_eq!(b.design_capacity_mwh, None);
         assert_eq!(b.design_voltage_mv, None);
         assert_eq!(b.chemistry.as_deref(), Some("Unknown"));
+    }
+
+    #[test]
+    fn type22_multiplier_is_at_0x15_not_oem() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 22;
+        rec[1] = 0x1A;
+        rec[0x0A] = 0xC0;
+        rec[0x0B] = 0x12; // 4800
+        rec[0x15] = 2;
+        rec[0x16] = 0x80; // OEM, must not multiply
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let b = recs
+            .iter()
+            .find(|r| r.kind == 22)
+            .and_then(|r| battery_from_raw(&rec, r))
+            .expect("type 22");
+        assert_eq!(b.design_capacity_mwh, Some(9600));
+    }
+
+    #[test]
+    fn type22_unknown_chemistry_uses_sbds_string() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 22;
+        rec[1] = 0x1A;
+        rec[0x04] = 1;
+        rec[0x05] = 2;
+        rec[0x08] = 3;
+        rec[0x09] = 0x02;
+        rec[0x14] = 4;
+        rec.extend_from_slice(b"BAT0\0SMP\0NAME\0LION\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let b = recs
+            .iter()
+            .find(|r| r.kind == 22)
+            .and_then(|r| battery_from_raw(&rec, r))
+            .expect("type 22");
+        assert_eq!(b.chemistry.as_deref(), Some("LION"));
     }
 
     #[test]
