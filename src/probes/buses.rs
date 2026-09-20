@@ -130,6 +130,12 @@ pub struct BusesReport {
     pub spmi: Vec<String>,
     /// PCIe endpoint controller（`class/pci_epc`）。
     pub pci_epc: Vec<String>,
+    /// IEEE 1588 PTP 时钟（`class/ptp`）。
+    pub ptp: Vec<String>,
+    /// Pulse Per Second（`class/pps`）。
+    pub pps: Vec<String>,
+    /// TPM：`class/tpm`，资源管理器另见 `class/tpmrm`。
+    pub tpm: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -830,6 +836,29 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let ptp = list_optional_names(
+        ctx.sys_path("class/ptp"),
+        8,
+        "ptp",
+        &mut notes,
+        &mut missing,
+    );
+    let pps = list_optional_names(
+        ctx.sys_path("class/pps"),
+        8,
+        "pps",
+        &mut notes,
+        &mut missing,
+    );
+    // TPM 字符设备是 `class/tpm`；资源管理器是 `class/tpmrm`。两边都缺失才 leftover。
+    let tpm = list_prefixed_classes(
+        ctx,
+        &[("class/tpm", "tpm"), ("class/tpmrm", "tpmrm")],
+        8,
+        "tpm",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -927,6 +956,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         ulpi,
         spmi,
         pci_epc,
+        ptp,
+        pps,
+        tpm,
         notes,
     }
 }
@@ -1730,6 +1762,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/ulpi/devices/ulpi-1")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spmi/devices/0-00")).unwrap();
         fs::create_dir_all(root.join("sys/class/pci_epc/pci_epc0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/ptp/ptp0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/pps/pps0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/tpm/tpm0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1828,6 +1863,9 @@ mod tests {
         assert_eq!(r.ulpi, vec!["ulpi-1".to_string()]);
         assert_eq!(r.spmi, vec!["0-00".to_string()]);
         assert_eq!(r.pci_epc, vec!["pci_epc0".to_string()]);
+        assert_eq!(r.ptp, vec!["ptp0".to_string()]);
+        assert_eq!(r.pps, vec!["pps0".to_string()]);
+        assert_eq!(r.tpm, vec!["tpm/tpm0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2866,6 +2904,76 @@ mod tests {
                 inner.split('/').all(|s| s != "ulpi")
             })),
             "present ulpi must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_ptp_pps_tpm_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-ptp-pps-tpm-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"ptp") && labels.contains(&"pps") && labels.contains(&"tpm"),
+            "missing ptp/pps/tpm must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ptp_from_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ptp-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/ptp/ptp0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ptp, vec!["ptp0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "ptp")
+            })),
+            "present ptp must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tpmrm_without_tpm_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-tpmrm-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/tpmrm/tpmrm0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.tpm, vec!["tpmrm/tpmrm0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "tpm")
+            })),
+            "class/tpmrm must not leftover tpm: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

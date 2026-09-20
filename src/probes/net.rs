@@ -285,6 +285,12 @@ pub struct NetReport {
     /// `1` 丢掉需要分片的 NDISC 报文。
     pub ipv6_suppress_frag_ndisc: Sample<String>,
     pub ipv6_suppress_frag_ndisc_dev: Vec<String>,
+    /// `1` 允许 Optimistic DAD（地址未完成 DAD 也可使用）。
+    pub ipv6_optimistic_dad: Sample<String>,
+    pub ipv6_optimistic_dad_dev: Vec<String>,
+    /// `>= 0` 接受 routing header type 2；`< 0` 拒绝。默认 `0` 不是关。
+    pub ipv6_accept_source_route: Sample<String>,
+    pub ipv6_accept_source_route_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -299,6 +305,19 @@ pub fn ping_group_range_display(sample: &Sample<String>) -> String {
             if min > max {
                 return format!("{min} {max} 无特权ping");
             }
+        }
+    }
+    sample.display()
+}
+
+/// IPv6 `accept_source_route` 是整数：`>=0` 接受 RH type 2（默认 0），`<0` 拒绝。
+pub fn ipv6_accept_source_route_display(sample: &Sample<String>) -> String {
+    if let Some(raw) = sample.value.as_deref() {
+        if let Ok(n) = raw.trim().parse::<i64>() {
+            if n < 0 {
+                return format!("{n} 拒RH");
+            }
+            return format!("{n} RH2");
         }
     }
     sample.display()
@@ -869,6 +888,20 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "suppress_frag_ndisc",
         frag_ndisc_all.as_deref(),
     );
+    let ipv6_optimistic_dad =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/optimistic_dad"));
+    let optimistic_all = ipv6_optimistic_dad.value.clone();
+    let ipv6_optimistic_dad_dev =
+        conf_dev_diffs(ctx, "ipv6", "optimistic_dad", optimistic_all.as_deref());
+    let ipv6_accept_source_route =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_source_route"));
+    let v6_srcrt_all = ipv6_accept_source_route.value.clone();
+    let ipv6_accept_source_route_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_source_route",
+        v6_srcrt_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1102,6 +1135,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_ndisc_tclass_dev,
                 ipv6_suppress_frag_ndisc,
                 ipv6_suppress_frag_ndisc_dev,
+                ipv6_optimistic_dad,
+                ipv6_optimistic_dad_dev,
+                ipv6_accept_source_route,
+                ipv6_accept_source_route_dev,
                 notes,
             };
         }
@@ -1443,6 +1480,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_ndisc_tclass_dev,
         ipv6_suppress_frag_ndisc,
         ipv6_suppress_frag_ndisc_dev,
+        ipv6_optimistic_dad,
+        ipv6_optimistic_dad_dev,
+        ipv6_accept_source_route,
+        ipv6_accept_source_route_dev,
         notes,
     }
 }
@@ -2540,6 +2581,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/optimistic_dad"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_source_route"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2733,6 +2784,8 @@ mod tests {
         assert_eq!(r.ipv6_proxy_ndp.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_ndisc_tclass.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_suppress_frag_ndisc.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_optimistic_dad.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_source_route.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2949,8 +3002,28 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/optimistic_dad"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_source_route"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv6/conf/lo/suppress_frag_ndisc"),
             "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/optimistic_dad"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_source_route"),
+            "-1\n",
         )
         .unwrap();
         let ctx = ProbeCtx {
@@ -3137,6 +3210,18 @@ mod tests {
             "lo suppress_frag_ndisc=0 must differ from conf/all: {:?}",
             r.ipv6_suppress_frag_ndisc_dev
         );
+        assert_eq!(r.ipv6_optimistic_dad.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_optimistic_dad_dev.iter().any(|s| s == "lo:1"),
+            "lo optimistic_dad=1 must differ from conf/all: {:?}",
+            r.ipv6_optimistic_dad_dev
+        );
+        assert_eq!(r.ipv6_accept_source_route.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_accept_source_route_dev.iter().any(|s| s == "lo:-1"),
+            "lo accept_source_route=-1 must differ from conf/all: {:?}",
+            r.ipv6_accept_source_route_dev
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -3216,5 +3301,15 @@ mod tests {
         assert_eq!(ping_group_range_display(&open), "0 2147483647");
         let missing = Sample::<String>::missing("ping_group_range");
         assert!(ping_group_range_display(&missing).contains("不存在"));
+    }
+
+    #[test]
+    fn ipv6_accept_source_route_zero_is_rh2_not_off() {
+        let zero = Sample::ok("0".into(), "accept_source_route");
+        assert_eq!(ipv6_accept_source_route_display(&zero), "0 RH2");
+        let pos = Sample::ok("2".into(), "accept_source_route");
+        assert_eq!(ipv6_accept_source_route_display(&pos), "2 RH2");
+        let neg = Sample::ok("-1".into(), "accept_source_route");
+        assert_eq!(ipv6_accept_source_route_display(&neg), "-1 拒RH");
     }
 }

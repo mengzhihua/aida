@@ -34,6 +34,12 @@ pub struct DmiInfo {
     pub caches: Vec<CacheDevice>,
     /// SMBIOS Type 9 系统插槽（PCI/PCIe）。
     pub slots: Vec<SystemSlot>,
+    /// SMBIOS Type 8 端口连接器（USB / RJ-45 等，对标 AIDA64 主板端口）。
+    pub ports: Vec<PortConnector>,
+    /// SMBIOS Type 41 板载设备（网卡 / SATA / NVMe）。
+    pub onboard: Vec<OnboardDevice>,
+    /// SMBIOS Type 39 电源（额定功率 / 厂商）。
+    pub power_supplies: Vec<PowerSupply>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -114,6 +120,9 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         processors: Vec::new(),
         caches: Vec::new(),
         slots: Vec::new(),
+        ports: Vec::new(),
+        onboard: Vec::new(),
+        power_supplies: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -149,6 +158,24 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter(|r| r.kind == 9)
                     .filter_map(|r| slot_from_raw(bytes, r))
                     .take(16)
+                    .collect();
+                info.ports = parsed
+                    .iter()
+                    .filter(|r| r.kind == 8)
+                    .filter_map(|r| port_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.onboard = parsed
+                    .iter()
+                    .filter(|r| r.kind == 41)
+                    .filter_map(|r| onboard_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.power_supplies = parsed
+                    .iter()
+                    .filter(|r| r.kind == 39)
+                    .filter_map(|r| psu_from_raw(bytes, r))
+                    .take(8)
                     .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
@@ -249,11 +276,14 @@ fn kind_name(kind: u8) -> String {
         3 => "Chassis",
         4 => "Processor",
         7 => "Cache",
+        8 => "Port Connector",
         9 => "System Slot",
         16 => "Memory Array",
         17 => "Memory Device",
         19 => "Memory Mapped Address",
         32 => "Boot",
+        39 => "Power Supply",
+        41 => "Onboard Device",
         127 => "End of Table",
         n => return format!("Type {n}"),
     }
@@ -357,6 +387,31 @@ pub struct SystemSlot {
     pub kind: Option<String>,
     pub usage: Option<String>,
     pub bus: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PortConnector {
+    pub internal: Option<String>,
+    pub external: Option<String>,
+    pub connector: Option<String>,
+    pub port: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OnboardDevice {
+    pub designation: Option<String>,
+    pub kind: Option<String>,
+    pub enabled: bool,
+    pub bus: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PowerSupply {
+    pub location: Option<String>,
+    pub name: Option<String>,
+    pub manufacturer: Option<String>,
+    pub max_watts: Option<u16>,
+    pub present: bool,
 }
 
 fn next_smbios_struct(buf: &[u8], i: usize) -> Option<usize> {
@@ -771,6 +826,128 @@ fn slot_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<SystemSlot> {
         kind: Some(kind.into()),
         usage,
         bus,
+    })
+}
+
+fn port_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PortConnector> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x09 || i + length > buf.len() {
+        return None;
+    }
+    let internal = smbios_str(&rec.strings, buf[i + 0x04]);
+    let external = smbios_str(&rec.strings, buf[i + 0x06]);
+    let conn = buf[i + 0x07];
+    let connector = Some(connector_type_name(if conn == 0 { buf[i + 0x05] } else { conn }));
+    Some(PortConnector {
+        internal,
+        external,
+        connector,
+        port: Some(port_type_name(buf[i + 0x08])),
+    })
+}
+
+/// DSP0134 Table 42 Connector Types。未知编号保留十六进制，不折叠成 Other。
+fn connector_type_name(t: u8) -> String {
+    match t {
+        0x00 => "None".into(),
+        0x08 => "DB-9 male".into(),
+        0x09 => "DB-9 female".into(),
+        0x0A => "RJ-11".into(),
+        0x0B => "RJ-45".into(),
+        0x0F => "PS/2".into(),
+        0x12 => "USB".into(),
+        0x1F => "Mini-jack".into(),
+        0x21 => "IEEE 1394".into(),
+        0x22 => "SAS/SATA".into(),
+        0x23 => "USB-C".into(),
+        0xFF => "Other".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+/// DSP0134 Table 43 Port Types。未知编号保留十六进制。
+fn port_type_name(t: u8) -> String {
+    match t {
+        0x00 => "None".into(),
+        0x01 => "Parallel".into(),
+        0x08 => "Serial 16550".into(),
+        0x09 => "Serial 16550A".into(),
+        0x0D => "Keyboard".into(),
+        0x0E => "Mouse".into(),
+        0x10 => "USB".into(),
+        0x11 => "FireWire".into(),
+        0x16 => "Access Bus".into(),
+        0x1D => "Audio".into(),
+        0x1F => "Network".into(),
+        0x20 => "SATA".into(),
+        0x21 => "SAS".into(),
+        0x23 => "Thunderbolt".into(),
+        0xFF => "Other".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn onboard_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<OnboardDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0B || i + length > buf.len() {
+        return None;
+    }
+    let raw = buf[i + 0x05];
+    let enabled = raw & 0x80 != 0;
+    let kind = onboard_type_name(raw & 0x7F);
+    let bus = {
+        let seg = word(buf, i, 0x07);
+        let busn = buf[i + 0x09];
+        let df = buf[i + 0x0A];
+        if seg == 0xFFFF && busn == 0xFF && df == 0xFF {
+            None
+        } else {
+            Some(format!("{seg:04x}:{busn:02x}:{:02x}.{}", df >> 3, df & 7))
+        }
+    };
+    Some(OnboardDevice {
+        designation: smbios_str(&rec.strings, buf[i + 0x04]),
+        kind: Some(kind.into()),
+        enabled,
+        bus,
+    })
+}
+
+fn onboard_type_name(t: u8) -> &'static str {
+    match t {
+        0x01 => "Other",
+        0x03 => "Video",
+        0x05 => "Ethernet",
+        0x07 => "Sound",
+        0x09 => "SATA",
+        0x0A => "SAS",
+        0x0B => "WLAN",
+        0x0C => "Bluetooth",
+        0x0D => "WWAN",
+        0x0F => "NVMe",
+        0x10 => "UFS",
+        _ => "Other",
+    }
+}
+
+fn psu_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PowerSupply> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x10 || i + length > buf.len() {
+        return None;
+    }
+    let max = word(buf, i, 0x0C);
+    // DSP0134：仅 8000h 表示未知；0 仍是 0 W。
+    let max_watts = if max == 0x8000 { None } else { Some(max) };
+    let ch = word(buf, i, 0x0E);
+    Some(PowerSupply {
+        location: smbios_str(&rec.strings, buf[i + 0x05]),
+        name: smbios_str(&rec.strings, buf[i + 0x06]),
+        manufacturer: smbios_str(&rec.strings, buf[i + 0x07]),
+        max_watts,
+        present: ch & 0x02 != 0,
     })
 }
 
@@ -1346,5 +1523,171 @@ mod tests {
         assert_eq!(c.kind.as_deref(), Some("Data"));
         assert_eq!(c.size_kb, Some(32768));
         assert_eq!(c.associativity.as_deref(), Some("16-way"));
+    }
+
+    #[test]
+    fn type8_usb_and_rj45_ports() {
+        let mut rec = Vec::new();
+        let mut usb = vec![0u8; 0x09];
+        usb[0] = 8;
+        usb[1] = 0x09;
+        usb[2] = 1;
+        usb[0x04] = 1;
+        usb[0x05] = 0x12;
+        usb[0x06] = 2;
+        usb[0x07] = 0x12;
+        usb[0x08] = 0x10;
+        usb.extend_from_slice(b"JUSB1\0USB3_1\0\0");
+        rec.extend(usb);
+        let mut lan = vec![0u8; 0x09];
+        lan[0] = 8;
+        lan[1] = 0x09;
+        lan[2] = 2;
+        lan[0x04] = 1;
+        lan[0x06] = 2;
+        lan[0x07] = 0x0B;
+        lan[0x08] = 0x1F;
+        lan.extend_from_slice(b"JLAN1\0LAN1\0\0");
+        rec.extend(lan);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let ports: Vec<_> = recs
+            .iter()
+            .filter(|r| r.kind == 8)
+            .filter_map(|r| port_from_raw(&rec, r))
+            .collect();
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0].internal.as_deref(), Some("JUSB1"));
+        assert_eq!(ports[0].external.as_deref(), Some("USB3_1"));
+        assert_eq!(ports[0].connector.as_deref(), Some("USB"));
+        assert_eq!(ports[0].port.as_deref(), Some("USB"));
+        assert_eq!(ports[1].internal.as_deref(), Some("JLAN1"));
+        assert_eq!(ports[1].external.as_deref(), Some("LAN1"));
+        assert_eq!(ports[1].connector.as_deref(), Some("RJ-45"));
+        assert_eq!(ports[1].port.as_deref(), Some("Network"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 8).map(|r| r.kind_name.as_str()),
+            Some("Port Connector")
+        );
+    }
+
+    #[test]
+    fn type8_prefers_internal_connector_when_external_none() {
+        let mut rec = vec![0u8; 0x09];
+        rec[0] = 8;
+        rec[1] = 0x09;
+        rec[0x04] = 1;
+        rec[0x05] = 0x12;
+        rec[0x07] = 0x00;
+        rec[0x08] = 0x10;
+        rec.extend_from_slice(b"JUSB2\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 8)
+            .and_then(|r| port_from_raw(&rec, r))
+            .expect("type 8");
+        assert_eq!(p.internal.as_deref(), Some("JUSB2"));
+        assert!(p.external.is_none());
+        assert_eq!(p.connector.as_deref(), Some("USB"));
+        assert_eq!(p.port.as_deref(), Some("USB"));
+    }
+
+    #[test]
+    fn type8_spec_codes_are_not_shifted() {
+        assert_eq!(connector_type_name(0x0B), "RJ-45");
+        assert_eq!(connector_type_name(0x1F), "Mini-jack");
+        assert_eq!(connector_type_name(0x23), "USB-C");
+        assert_eq!(port_type_name(0x08), "Serial 16550");
+        assert_eq!(port_type_name(0x10), "USB");
+        assert_eq!(port_type_name(0x1F), "Network");
+        assert_eq!(connector_type_name(0x40), "0x40");
+        assert_eq!(port_type_name(0x30), "0x30");
+    }
+
+    #[test]
+    fn type41_onboard_ethernet_enabled() {
+        let mut rec = vec![0u8; 0x0B];
+        rec[0] = 41;
+        rec[1] = 0x0B;
+        rec[0x04] = 1;
+        rec[0x05] = 0x85;
+        rec[0x09] = 0x02;
+        rec[0x0A] = 0x00;
+        rec.extend_from_slice(b"Onboard LAN\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let d = recs
+            .iter()
+            .find(|r| r.kind == 41)
+            .and_then(|r| onboard_from_raw(&rec, r))
+            .expect("type 41");
+        assert_eq!(d.designation.as_deref(), Some("Onboard LAN"));
+        assert_eq!(d.kind.as_deref(), Some("Ethernet"));
+        assert!(d.enabled);
+        assert_eq!(d.bus.as_deref(), Some("0000:02:00.0"));
+    }
+
+    #[test]
+    fn type39_psu_max_watts_and_present() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 39;
+        rec[1] = 0x10;
+        rec[0x05] = 1;
+        rec[0x06] = 2;
+        rec[0x07] = 3;
+        rec[0x0C] = 0x2C;
+        rec[0x0D] = 0x01;
+        rec[0x0E] = 0x02;
+        rec.extend_from_slice(b"PSU Bay\0PS-650\0Corsair\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 39)
+            .and_then(|r| psu_from_raw(&rec, r))
+            .expect("type 39");
+        assert_eq!(p.location.as_deref(), Some("PSU Bay"));
+        assert_eq!(p.name.as_deref(), Some("PS-650"));
+        assert_eq!(p.manufacturer.as_deref(), Some("Corsair"));
+        assert_eq!(p.max_watts, Some(300));
+        assert!(p.present);
+    }
+
+    #[test]
+    fn type39_zero_watts_is_zero_not_unknown() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 39;
+        rec[1] = 0x10;
+        rec[0x06] = 1;
+        rec.extend_from_slice(b"PS-0\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 39)
+            .and_then(|r| psu_from_raw(&rec, r))
+            .expect("type 39");
+        assert_eq!(p.max_watts, Some(0));
+    }
+
+    #[test]
+    fn type39_8000h_watts_is_unknown() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 39;
+        rec[1] = 0x10;
+        rec[0x06] = 1;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec.extend_from_slice(b"PS-U\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 39)
+            .and_then(|r| psu_from_raw(&rec, r))
+            .expect("type 39");
+        assert_eq!(p.max_watts, None);
     }
 }

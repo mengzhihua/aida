@@ -696,6 +696,34 @@ impl AidaApp {
                 &format!("{in_use} in use / {}", self.snap.dmi.slots.len()),
             );
         }
+        if !self.snap.dmi.ports.is_empty() {
+            kv(
+                ui,
+                self.t("主板端口", "Board ports"),
+                &self.snap.dmi.ports.len().to_string(),
+            );
+        }
+        if !self.snap.dmi.onboard.is_empty() {
+            kv(
+                ui,
+                self.t("板载设备", "Onboard devices"),
+                &self.snap.dmi.onboard.len().to_string(),
+            );
+        }
+        if !self.snap.dmi.power_supplies.is_empty() {
+            let p = &self.snap.dmi.power_supplies[0];
+            kv(
+                ui,
+                self.t("电源", "PSU"),
+                &format!(
+                    "{}  {} W",
+                    p.name.as_deref().unwrap_or("PSU"),
+                    p.max_watts
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "—".into())
+                ),
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -1445,6 +1473,56 @@ impl AidaApp {
                         s.kind.as_deref().unwrap_or("—"),
                         s.usage.as_deref().unwrap_or("—"),
                         s.bus.as_deref().unwrap_or("—")
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.ports.is_empty() {
+            ui.strong(self.t("端口 (SMBIOS Type 8)", "Ports"));
+            for p in &self.snap.dmi.ports {
+                kv(
+                    ui,
+                    p.external
+                        .as_deref()
+                        .or(p.internal.as_deref())
+                        .unwrap_or("port"),
+                    &format!(
+                        "{}  {}",
+                        p.connector.as_deref().unwrap_or("—"),
+                        p.port.as_deref().unwrap_or("—")
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.onboard.is_empty() {
+            ui.strong(self.t("板载设备 (SMBIOS Type 41)", "Onboard devices"));
+            for d in &self.snap.dmi.onboard {
+                kv(
+                    ui,
+                    d.designation.as_deref().unwrap_or("onboard"),
+                    &format!(
+                        "{}  {}  {}",
+                        d.kind.as_deref().unwrap_or("—"),
+                        if d.enabled { "enabled" } else { "disabled" },
+                        d.bus.as_deref().unwrap_or("—")
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.power_supplies.is_empty() {
+            ui.strong(self.t("电源 (SMBIOS Type 39)", "Power supplies"));
+            for p in &self.snap.dmi.power_supplies {
+                kv(
+                    ui,
+                    p.name.as_deref().unwrap_or("PSU"),
+                    &format!(
+                        "{}  {}  {} W  {}",
+                        p.manufacturer.as_deref().unwrap_or("—"),
+                        p.location.as_deref().unwrap_or("—"),
+                        p.max_watts
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into()),
+                        if p.present { "present" } else { "missing" }
                     ),
                 );
             }
@@ -2507,7 +2585,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2596,7 +2674,15 @@ impl AidaApp {
                     Some("0") => "0 允许".into(),
                     Some("1") => "1 丢分片".into(),
                     _ => self.snap.net.ipv6_suppress_frag_ndisc.display(),
-                }
+                },
+                match self.snap.net.ipv6_optimistic_dad.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    Some("1") => "1 乐观".into(),
+                    _ => self.snap.net.ipv6_optimistic_dad.display(),
+                },
+                crate::probes::net::ipv6_accept_source_route_display(
+                    &self.snap.net.ipv6_accept_source_route,
+                )
             ),
         );
         kv(
@@ -2802,6 +2888,20 @@ impl AidaApp {
                 ui,
                 "suppress_frag_ndisc iface",
                 &self.snap.net.ipv6_suppress_frag_ndisc_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_optimistic_dad_dev.is_empty() {
+            kv(
+                ui,
+                "optimistic_dad iface",
+                &self.snap.net.ipv6_optimistic_dad_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_accept_source_route_dev.is_empty() {
+            kv(
+                ui,
+                "v6_srcrt iface",
+                &self.snap.net.ipv6_accept_source_route_dev.join("  "),
             );
         }
         kv(
@@ -3417,6 +3517,9 @@ impl AidaApp {
             ("ulpi", &self.snap.buses.ulpi),
             ("spmi", &self.snap.buses.spmi),
             ("pci_epc", &self.snap.buses.pci_epc),
+            ("ptp", &self.snap.buses.ptp),
+            ("pps", &self.snap.buses.pps),
+            ("tpm", &self.snap.buses.tpm),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
