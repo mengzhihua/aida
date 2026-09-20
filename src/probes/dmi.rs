@@ -40,6 +40,16 @@ pub struct DmiInfo {
     pub onboard: Vec<OnboardDevice>,
     /// SMBIOS Type 39 电源（额定功率 / 厂商）。
     pub power_supplies: Vec<PowerSupply>,
+    /// SMBIOS Type 11 OEM 字符串。
+    pub oem_strings: Vec<String>,
+    /// SMBIOS Type 13 当前 BIOS 语言。
+    pub bios_language: Option<String>,
+    /// Type 13 可安装语言（最多 16）。
+    pub bios_languages: Vec<String>,
+    /// SMBIOS Type 32 系统启动状态。
+    pub boot_status: Option<String>,
+    /// SMBIOS Type 43 TPM 设备（与 sysfs class/tpm 互补）。
+    pub tpm_devices: Vec<TpmSmbios>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -123,6 +133,11 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         ports: Vec::new(),
         onboard: Vec::new(),
         power_supplies: Vec::new(),
+        oem_strings: Vec::new(),
+        bios_language: None,
+        bios_languages: Vec::new(),
+        boot_status: None,
+        tpm_devices: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -176,6 +191,30 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter(|r| r.kind == 39)
                     .filter_map(|r| psu_from_raw(bytes, r))
                     .take(8)
+                    .collect();
+                info.oem_strings = parsed
+                    .iter()
+                    .filter(|r| r.kind == 11)
+                    .flat_map(|r| oem_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                if let Some(lang) = parsed
+                    .iter()
+                    .find(|r| r.kind == 13)
+                    .and_then(|r| language_from_raw(bytes, r))
+                {
+                    info.bios_language = lang.0;
+                    info.bios_languages = lang.1;
+                }
+                info.boot_status = parsed
+                    .iter()
+                    .find(|r| r.kind == 32)
+                    .and_then(|r| boot_from_raw(bytes, r));
+                info.tpm_devices = parsed
+                    .iter()
+                    .filter(|r| r.kind == 43)
+                    .filter_map(|r| tpm_from_raw(bytes, r))
+                    .take(4)
                     .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
@@ -278,12 +317,15 @@ fn kind_name(kind: u8) -> String {
         7 => "Cache",
         8 => "Port Connector",
         9 => "System Slot",
+        11 => "OEM Strings",
+        13 => "BIOS Language",
         16 => "Memory Array",
         17 => "Memory Device",
         19 => "Memory Mapped Address",
-        32 => "Boot",
+        32 => "System Boot",
         39 => "Power Supply",
         41 => "Onboard Device",
+        43 => "TPM Device",
         127 => "End of Table",
         n => return format!("Type {n}"),
     }
@@ -412,6 +454,13 @@ pub struct PowerSupply {
     pub manufacturer: Option<String>,
     pub max_watts: Option<u16>,
     pub present: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TpmSmbios {
+    pub vendor: Option<String>,
+    pub spec: Option<String>,
+    pub description: Option<String>,
 }
 
 fn next_smbios_struct(buf: &[u8], i: usize) -> Option<usize> {
@@ -948,6 +997,82 @@ fn psu_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PowerSupply> {
         manufacturer: smbios_str(&rec.strings, buf[i + 0x07]),
         max_watts,
         present: ch & 0x02 != 0,
+    })
+}
+
+fn oem_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Vec<String> {
+    let Some(i) = rec_offset(buf, rec) else {
+        return Vec::new();
+    };
+    let length = buf[i + 1] as usize;
+    if length < 0x05 || i + length > buf.len() {
+        return Vec::new();
+    }
+    let n = buf[i + 0x04] as usize;
+    rec.strings.iter().take(n.min(16)).cloned().collect()
+}
+
+fn language_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<(Option<String>, Vec<String>)> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x16 || i + length > buf.len() {
+        return None;
+    }
+    let n = buf[i + 0x04] as usize;
+    Some((
+        smbios_str(&rec.strings, buf[i + 0x15]),
+        rec.strings.iter().take(n.min(16)).cloned().collect(),
+    ))
+}
+
+fn boot_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<String> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0B || i + length > buf.len() {
+        return None;
+    }
+    Some(boot_status_name(buf[i + 0x0A]).into())
+}
+
+fn boot_status_name(t: u8) -> String {
+    match t {
+        0 => "No errors".into(),
+        1 => "No bootable media".into(),
+        2 => "OS failed to load".into(),
+        3 => "Firmware hardware failure".into(),
+        4 => "OS hardware failure".into(),
+        5 => "User-requested boot".into(),
+        6 => "Security violation".into(),
+        7 => "Previously requested image".into(),
+        8 => "Watchdog expired".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn tpm_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<TpmSmbios> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x1F || i + length > buf.len() {
+        return None;
+    }
+    let raw = &buf[i + 0x04..i + 0x08];
+    let vendor = {
+        let s: String = raw
+            .iter()
+            .copied()
+            .take_while(|&b| b != 0 && b.is_ascii_graphic())
+            .map(|b| b as char)
+            .collect();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    };
+    Some(TpmSmbios {
+        vendor,
+        spec: Some(format!("{}.{}", buf[i + 0x08], buf[i + 0x09])),
+        description: smbios_str(&rec.strings, buf[i + 0x12]),
     })
 }
 
@@ -1689,5 +1814,98 @@ mod tests {
             .and_then(|r| psu_from_raw(&rec, r))
             .expect("type 39");
         assert_eq!(p.max_watts, None);
+    }
+
+    #[test]
+    fn type11_oem_strings() {
+        let mut rec = vec![0u8; 0x05];
+        rec[0] = 11;
+        rec[1] = 0x05;
+        rec[0x04] = 2;
+        rec.extend_from_slice(b"Board-REV-A\0https://oem.example\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let oem = recs
+            .iter()
+            .find(|r| r.kind == 11)
+            .map(|r| oem_from_raw(&rec, r))
+            .expect("type 11");
+        assert_eq!(oem, vec!["Board-REV-A".to_string(), "https://oem.example".to_string()]);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 11).map(|r| r.kind_name.as_str()),
+            Some("OEM Strings")
+        );
+    }
+
+    #[test]
+    fn type13_current_language_abbreviated() {
+        let mut rec = vec![0u8; 0x16];
+        rec[0] = 13;
+        rec[1] = 0x16;
+        rec[0x04] = 2;
+        rec[0x05] = 0x01;
+        rec[0x15] = 2;
+        rec.extend_from_slice(b"enUS\0frCA\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let (cur, langs) = recs
+            .iter()
+            .find(|r| r.kind == 13)
+            .and_then(|r| language_from_raw(&rec, r))
+            .expect("type 13");
+        assert_eq!(cur.as_deref(), Some("frCA"));
+        assert_eq!(langs, vec!["enUS".to_string(), "frCA".to_string()]);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 13).map(|r| r.kind_name.as_str()),
+            Some("BIOS Language")
+        );
+    }
+
+    #[test]
+    fn type32_no_errors_boot() {
+        let mut rec = vec![0u8; 0x0B];
+        rec[0] = 32;
+        rec[1] = 0x0B;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let st = recs
+            .iter()
+            .find(|r| r.kind == 32)
+            .and_then(|r| boot_from_raw(&rec, r))
+            .expect("type 32");
+        assert_eq!(st, "No errors");
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 32).map(|r| r.kind_name.as_str()),
+            Some("System Boot")
+        );
+    }
+
+    #[test]
+    fn type43_tpm2_vendor_and_spec() {
+        let mut rec = vec![0u8; 0x1F];
+        rec[0] = 43;
+        rec[1] = 0x1F;
+        rec[0x04] = b'I';
+        rec[0x05] = b'F';
+        rec[0x06] = b'X';
+        rec[0x08] = 2;
+        rec[0x09] = 0;
+        rec[0x12] = 1;
+        rec.extend_from_slice(b"TPM 2.0\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let t = recs
+            .iter()
+            .find(|r| r.kind == 43)
+            .and_then(|r| tpm_from_raw(&rec, r))
+            .expect("type 43");
+        assert_eq!(t.vendor.as_deref(), Some("IFX"));
+        assert_eq!(t.spec.as_deref(), Some("2.0"));
+        assert_eq!(t.description.as_deref(), Some("TPM 2.0"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 43).map(|r| r.kind_name.as_str()),
+            Some("TPM Device")
+        );
     }
 }

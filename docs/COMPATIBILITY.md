@@ -286,6 +286,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 262. **SMBIOS Type 8/39/41 按 DSP0134 偏移解析。** Type 8 内部/外部标识是字符串号，连接器优先外部类型（`0x0B`=RJ-45、`0x12`=USB Access Bus、`0x23`=USB-C；`0x1F` 是 Mini-jack 不是 RJ-45），端口类型 `0x10`=USB、`0x1F`=Network（`0x08` 是 Serial 16550 不是 USB）。未知编号保留 `0xNN`。Type 41 设备类型在 `0x05`（bit7 启用，低 7 位类型：`0x05` 以太网、`0x09` SATA、`0x0F` NVMe），PCI 段/总线/设备 length≥`0x0B`，全 `FF` 无地址。Type 39 最大功率 WORD `0x0C`（仅 `0x8000` 未知，`0` 仍是 0 W），Characteristics bit1 表示在位。不调用 dmidecode。
 263. **空的 ptp / pps / tpm 表示没有对应硬件。** PTP/PPS 只看 `class/ptp` 与 `class/pps`。TPM 合并 `class/tpm` 与 `class/tpmrm`，两边都缺失才 leftover。`PermissionDenied` 仍写 note。
 264. **`optimistic_dad` / `accept_source_route`（IPv6）只列出与 `conf/all` 不同的接口。** 前者 `1` 允许未完成 DAD 的地址先用；后者是整数：`>=0` 接受 routing header type 2（默认 `0` 不是关），`<0` 拒绝。不要用 `default` 顶替已有 iface。不要 dump `stable_secret`。
+265. **SMBIOS Type 11/13/32/43 按 DSP0134 偏移解析。** Type 11 Count 在 `0x04`，随后是 OEM 字符串。Type 13 当前语言是 `0x15` 字符串号（length≥`0x16`），Flags bit0 为缩写格式。Type 32 Boot Status 在 `0x0A`（`0`=No errors）。Type 43 Vendor ID 是 4 字节 ASCII，Major/Minor Spec 在 `0x08`/`0x09`。不调用 dmidecode。
+266. **空的 firmware_attributes / pci_epf / slimbus 表示没有对应硬件。** `firmware_attributes` 只看 `class/firmware_attributes`（ThinkLMI/Dell sysman）。pci_epf / Slimbus 先看 `bus/*/devices`，没有再看 `class/*`。IIO/NVMEM/LED 已在 periph/platform 采集，不要 leftover 重复。`PermissionDenied` 仍写 note。
+267. **`use_optimistic` / `ignore_routes_with_linkdown` 只列出与 `conf/all` 不同的接口。** 前者 `1` 在 optimistic DAD 完成前使用该地址；后者 `1` 忽略链路 down 的路由。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

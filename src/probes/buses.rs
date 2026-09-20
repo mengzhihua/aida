@@ -136,6 +136,12 @@ pub struct BusesReport {
     pub pps: Vec<String>,
     /// TPM：`class/tpm`，资源管理器另见 `class/tpmrm`。
     pub tpm: Vec<String>,
+    /// BIOS WMI 固件属性（`class/firmware_attributes`，ThinkLMI/Dell sysman）。
+    pub firmware_attributes: Vec<String>,
+    /// PCIe endpoint function：先 `bus/pci-epf/devices`，再 `class/pci_epf`。
+    pub pci_epf: Vec<String>,
+    /// MIPI Slimbus：先 `bus/slimbus/devices`，再 `class/slimbus`。
+    pub slimbus: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -859,6 +865,31 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let firmware_attributes = list_optional_names(
+        ctx.sys_path("class/firmware_attributes"),
+        8,
+        "firmware_attributes",
+        &mut notes,
+        &mut missing,
+    );
+    let pci_epf = list_alt_dirs(
+        ctx,
+        "bus/pci-epf/devices",
+        "class/pci_epf",
+        8,
+        "pci_epf",
+        &mut notes,
+        &mut missing,
+    );
+    let slimbus = list_alt_dirs(
+        ctx,
+        "bus/slimbus/devices",
+        "class/slimbus",
+        8,
+        "slimbus",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -959,6 +990,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         ptp,
         pps,
         tpm,
+        firmware_attributes,
+        pci_epf,
+        slimbus,
         notes,
     }
 }
@@ -1765,6 +1799,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/ptp/ptp0")).unwrap();
         fs::create_dir_all(root.join("sys/class/pps/pps0")).unwrap();
         fs::create_dir_all(root.join("sys/class/tpm/tpm0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/firmware_attributes/thinklmi")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/pci-epf/devices/pci_epf_test.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/slimbus/devices/slim-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1866,6 +1903,9 @@ mod tests {
         assert_eq!(r.ptp, vec!["ptp0".to_string()]);
         assert_eq!(r.pps, vec!["pps0".to_string()]);
         assert_eq!(r.tpm, vec!["tpm/tpm0".to_string()]);
+        assert_eq!(r.firmware_attributes, vec!["thinklmi".to_string()]);
+        assert_eq!(r.pci_epf, vec!["pci_epf_test.0".to_string()]);
+        assert_eq!(r.slimbus, vec!["slim-0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2974,6 +3014,55 @@ mod tests {
                 inner.split('/').all(|s| s != "tpm")
             })),
             "class/tpmrm must not leftover tpm: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_fwattr_epf_slimbus_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-fwattr-epf-slim-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"firmware_attributes")
+                && labels.contains(&"pci_epf")
+                && labels.contains(&"slimbus"),
+            "missing firmware_attributes/pci_epf/slimbus must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn slimbus_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-slimbus-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/slimbus/devices/slim-0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.slimbus, vec!["slim-0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "slimbus")
+            })),
+            "present slimbus must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
