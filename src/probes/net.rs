@@ -279,6 +279,12 @@ pub struct NetReport {
     /// `1` 做 NDP 代理。
     pub ipv6_proxy_ndp: Sample<String>,
     pub ipv6_proxy_ndp_dev: Vec<String>,
+    /// NDISC 流量类别（TOS/tclass）。
+    pub ipv6_ndisc_tclass: Sample<String>,
+    pub ipv6_ndisc_tclass_dev: Vec<String>,
+    /// `1` 丢掉需要分片的 NDISC 报文。
+    pub ipv6_suppress_frag_ndisc: Sample<String>,
+    pub ipv6_suppress_frag_ndisc_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -849,6 +855,20 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let ipv6_proxy_ndp = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/proxy_ndp"));
     let proxy_ndp_all = ipv6_proxy_ndp.value.clone();
     let ipv6_proxy_ndp_dev = conf_dev_diffs(ctx, "ipv6", "proxy_ndp", proxy_ndp_all.as_deref());
+    let ipv6_ndisc_tclass =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/ndisc_tclass"));
+    let ndisc_tclass_all = ipv6_ndisc_tclass.value.clone();
+    let ipv6_ndisc_tclass_dev =
+        conf_dev_diffs(ctx, "ipv6", "ndisc_tclass", ndisc_tclass_all.as_deref());
+    let ipv6_suppress_frag_ndisc =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/suppress_frag_ndisc"));
+    let frag_ndisc_all = ipv6_suppress_frag_ndisc.value.clone();
+    let ipv6_suppress_frag_ndisc_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "suppress_frag_ndisc",
+        frag_ndisc_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1078,6 +1098,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_accept_untracked_na_dev,
                 ipv6_proxy_ndp,
                 ipv6_proxy_ndp_dev,
+                ipv6_ndisc_tclass,
+                ipv6_ndisc_tclass_dev,
+                ipv6_suppress_frag_ndisc,
+                ipv6_suppress_frag_ndisc_dev,
                 notes,
             };
         }
@@ -1415,6 +1439,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_accept_untracked_na_dev,
         ipv6_proxy_ndp,
         ipv6_proxy_ndp_dev,
+        ipv6_ndisc_tclass,
+        ipv6_ndisc_tclass_dev,
+        ipv6_suppress_frag_ndisc,
+        ipv6_suppress_frag_ndisc_dev,
         notes,
     }
 }
@@ -2502,6 +2530,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ndisc_tclass"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/suppress_frag_ndisc"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2693,6 +2731,8 @@ mod tests {
         assert_eq!(r.ipv6_force_tllao.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_untracked_na.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_proxy_ndp.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_ndisc_tclass.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_suppress_frag_ndisc.value.as_deref(), Some("1"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2893,6 +2933,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ndisc_tclass"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/ndisc_tclass"),
+            "8\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/suppress_frag_ndisc"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/suppress_frag_ndisc"),
+            "0\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3064,6 +3124,18 @@ mod tests {
             r.ipv6_proxy_ndp_dev.iter().any(|s| s == "lo:1"),
             "lo proxy_ndp=1 must differ from conf/all: {:?}",
             r.ipv6_proxy_ndp_dev
+        );
+        assert_eq!(r.ipv6_ndisc_tclass.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_ndisc_tclass_dev.iter().any(|s| s == "lo:8"),
+            "lo ndisc_tclass=8 must differ from conf/all: {:?}",
+            r.ipv6_ndisc_tclass_dev
+        );
+        assert_eq!(r.ipv6_suppress_frag_ndisc.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_suppress_frag_ndisc_dev.iter().any(|s| s == "lo:0"),
+            "lo suppress_frag_ndisc=0 must differ from conf/all: {:?}",
+            r.ipv6_suppress_frag_ndisc_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

@@ -98,6 +98,20 @@ impl<T: Serialize> Sample<T> {
         }
     }
 
+    /// 文本 / CSV / Markdown 摘要用：只要状态短标签，不带 hint 段落。
+    pub fn compact(&self) -> String
+    where
+        T: std::fmt::Display,
+    {
+        match (&self.value, self.access) {
+            (Some(v), AccessKind::Ok) => v.to_string(),
+            (_, AccessKind::Ok | AccessKind::NotFound) => "—".into(),
+            (_, AccessKind::PermissionDenied) => "[权限不足]".into(),
+            (_, AccessKind::Unsupported) => "[不支持]".into(),
+            (_, AccessKind::Error) => "[读取失败]".into(),
+        }
+    }
+
     pub fn access_label(&self) -> String {
         match self.access {
             AccessKind::Ok => self
@@ -452,6 +466,11 @@ mod tests {
         assert_eq!(s.value.as_deref(), Some("hwmon0"));
         let missing = read_trimmed(dir.join("nope"));
         assert_eq!(missing.access, AccessKind::NotFound);
+        assert_eq!(missing.compact(), "—");
+        assert!(missing.display().contains("[不存在]"));
+        let denied = Sample::<String>::denied("/sys/firmware/dmi/tables/DMI");
+        assert_eq!(denied.compact(), "[权限不足]");
+        assert!(denied.display().contains("[权限不足]"));
         let _ = fs::remove_dir_all(&dir);
     }
 

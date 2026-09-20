@@ -124,6 +124,12 @@ pub struct BusesReport {
     pub greybus: Vec<String>,
     /// RapidIO：先 `bus/rapidio/devices`，再 `class/rapidio`。
     pub rapidio: Vec<String>,
+    /// ULPI USB PHY：先 `bus/ulpi/devices`，再 `class/ulpi`。
+    pub ulpi: Vec<String>,
+    /// SPMI：先 `bus/spmi/devices`，再 `class/spmi`。
+    pub spmi: Vec<String>,
+    /// PCIe endpoint controller（`class/pci_epc`）。
+    pub pci_epc: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -799,6 +805,31 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let ulpi = list_alt_dirs(
+        ctx,
+        "bus/ulpi/devices",
+        "class/ulpi",
+        8,
+        "ulpi",
+        &mut notes,
+        &mut missing,
+    );
+    let spmi = list_alt_dirs(
+        ctx,
+        "bus/spmi/devices",
+        "class/spmi",
+        8,
+        "spmi",
+        &mut notes,
+        &mut missing,
+    );
+    let pci_epc = list_optional_names(
+        ctx.sys_path("class/pci_epc"),
+        8,
+        "pci_epc",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -893,6 +924,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         firewire,
         greybus,
         rapidio,
+        ulpi,
+        spmi,
+        pci_epc,
         notes,
     }
 }
@@ -1693,6 +1727,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/firewire/devices/fw0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/greybus/devices/1-1")).unwrap();
         fs::create_dir_all(root.join("sys/bus/rapidio/devices/00:00")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/ulpi/devices/ulpi-1")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/spmi/devices/0-00")).unwrap();
+        fs::create_dir_all(root.join("sys/class/pci_epc/pci_epc0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1788,6 +1825,9 @@ mod tests {
         assert_eq!(r.firewire, vec!["fw0".to_string()]);
         assert_eq!(r.greybus, vec!["1-1".to_string()]);
         assert_eq!(r.rapidio, vec!["00:00".to_string()]);
+        assert_eq!(r.ulpi, vec!["ulpi-1".to_string()]);
+        assert_eq!(r.spmi, vec!["0-00".to_string()]);
+        assert_eq!(r.pci_epc, vec!["pci_epc0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2777,6 +2817,55 @@ mod tests {
                 inner.split('/').all(|s| s != "greybus")
             })),
             "present greybus must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_ulpi_spmi_pciepc_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-ulpi-spmi-epc-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"ulpi")
+                && labels.contains(&"spmi")
+                && labels.contains(&"pci_epc"),
+            "missing ulpi/spmi/pci_epc must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ulpi_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ulpi-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/ulpi/devices/phy0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ulpi, vec!["phy0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "ulpi")
+            })),
+            "present ulpi must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

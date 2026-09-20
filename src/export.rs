@@ -1,11 +1,113 @@
-//! JSON / HTML 报告导出。HTML 为单文件，无外部资源。
+//! JSON / HTML / 文本 / CSV / Markdown 报告导出。
+//! HTML 为单文件，无外部资源。文本/CSV/Markdown 共用同一份摘要清单
+//!（对标 AIDA64 的 TXT/CSV 报告；完整字段仍走 JSON）。
 
 use crate::access::AccessKind;
 use crate::alerts::AlertLevel;
+use crate::probes::hwmon::SensorKind;
 use crate::snapshot::HardwareSnapshot;
 
 pub fn to_json_pretty(snap: &HardwareSnapshot) -> Result<String, String> {
     serde_json::to_string_pretty(snap).map_err(|e| e.to_string())
+}
+
+/// CLI `--format` / 文件后缀用的报告种类。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportFormat {
+    Json,
+    Html,
+    Text,
+    Csv,
+    Markdown,
+}
+
+impl ReportFormat {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "json" => Some(Self::Json),
+            "html" | "htm" => Some(Self::Html),
+            "text" | "txt" => Some(Self::Text),
+            "csv" => Some(Self::Csv),
+            "md" | "markdown" => Some(Self::Markdown),
+            _ => None,
+        }
+    }
+
+    pub fn render(self, snap: &HardwareSnapshot) -> Result<String, String> {
+        match self {
+            Self::Json => to_json_pretty(snap),
+            Self::Html => Ok(to_html(snap)),
+            Self::Text => Ok(to_text(snap)),
+            Self::Csv => Ok(to_csv(snap)),
+            Self::Markdown => Ok(to_markdown(snap)),
+        }
+    }
+}
+
+pub fn to_text(snap: &HardwareSnapshot) -> String {
+    let mut out = String::new();
+    out.push_str("AIDA Linux 硬件报告\n");
+    out.push_str(&format!(
+        "version: {}\nunix_ms: {}\nprivilege: {}\n",
+        snap.version, snap.collected_at_unix_ms, snap.privilege.summary
+    ));
+    for sec in report_sections(snap) {
+        out.push('\n');
+        out.push_str(&format!("[{}]\n", sec.title));
+        for (k, v) in sec.rows {
+            out.push_str(&format!("{k}: {v}\n"));
+        }
+    }
+    out
+}
+
+pub fn to_csv(snap: &HardwareSnapshot) -> String {
+    let mut out = String::from("section,key,value\n");
+    out.push_str(&format!(
+        "{},{},{}\n",
+        csv_escape("meta"),
+        csv_escape("version"),
+        csv_escape(snap.version)
+    ));
+    out.push_str(&format!(
+        "{},{},{}\n",
+        csv_escape("meta"),
+        csv_escape("unix_ms"),
+        csv_escape(&snap.collected_at_unix_ms.to_string())
+    ));
+    out.push_str(&format!(
+        "{},{},{}\n",
+        csv_escape("meta"),
+        csv_escape("privilege"),
+        csv_escape(&snap.privilege.summary)
+    ));
+    for sec in report_sections(snap) {
+        for (k, v) in sec.rows {
+            out.push_str(&format!(
+                "{},{},{}\n",
+                csv_escape(&sec.title),
+                csv_escape(&k),
+                csv_escape(&v)
+            ));
+        }
+    }
+    out
+}
+
+pub fn to_markdown(snap: &HardwareSnapshot) -> String {
+    let mut out = String::new();
+    out.push_str("# AIDA Linux 硬件报告\n\n");
+    out.push_str(&format!(
+        "- version: `{}`\n- unix_ms: {}\n- privilege: {}\n",
+        snap.version, snap.collected_at_unix_ms, snap.privilege.summary
+    ));
+    for sec in report_sections(snap) {
+        out.push_str(&format!("\n## {}\n\n| 项 | 值 |\n| --- | --- |\n", sec.title));
+        for (k, v) in sec.rows {
+            out.push_str(&format!("| {} | {} |\n", md_cell(&k), md_cell(&v)));
+        }
+    }
+    out
 }
 
 pub fn to_html(snap: &HardwareSnapshot) -> String {
@@ -97,6 +199,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("microcode", snap.cpu.microcode.display()),
         ],
     );
+    html_dmi_board(&mut html, snap);
     if !snap.cpu.vulnerabilities.is_empty() {
         html.push_str("<table><tr><th>漏洞</th><th>状态</th></tr>");
         for v in &snap.cpu.vulnerabilities {
@@ -156,9 +259,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "BIOS",
                 format!(
-                    "{} {}",
+                    "{} {} rom {} rel {}",
                     snap.dmi.bios_vendor.display(),
-                    snap.dmi.bios_version.display()
+                    snap.dmi.bios_version.display(),
+                    snap.dmi
+                        .bios_rom_kb
+                        .map(|n| format!("{n} KiB"))
+                        .unwrap_or_else(|| "—".into()),
+                    snap.dmi.bios_release.as_deref().unwrap_or("—")
                 ),
             ),
         ],
@@ -167,6 +275,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
     html_dmi_memory(&mut html, snap);
+    html_dmi_board(&mut html, snap);
 
     section(&mut html, "固件");
     kv(
@@ -800,6 +909,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("firewire", &snap.buses.firewire),
         ("greybus", &snap.buses.greybus),
         ("rapidio", &snap.buses.rapidio),
+        ("ulpi", &snap.buses.ulpi),
+        ("spmi", &snap.buses.spmi),
+        ("pci_epc", &snap.buses.pci_epc),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1304,7 +1416,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1383,6 +1495,12 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 关".into(),
             Some("1") => "1 代理".into(),
             _ => snap.net.ipv6_proxy_ndp.display(),
+        },
+        snap.net.ipv6_ndisc_tclass.display(),
+        match snap.net.ipv6_suppress_frag_ndisc.value.as_deref() {
+            Some("0") => "0 允许".into(),
+            Some("1") => "1 丢分片".into(),
+            _ => snap.net.ipv6_suppress_frag_ndisc.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1527,6 +1645,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">proxy_ndp iface {}</p>",
             esc(&snap.net.ipv6_proxy_ndp_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_ndisc_tclass_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ndisc_tclass iface {}</p>",
+            esc(&snap.net.ipv6_ndisc_tclass_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_suppress_frag_ndisc_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">suppress_frag_ndisc iface {}</p>",
+            esc(&snap.net.ipv6_suppress_frag_ndisc_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2564,6 +2694,64 @@ fn html_dmi_memory(html: &mut String, snap: &HardwareSnapshot) {
     }
 }
 
+fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
+    if !snap.dmi.processors.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 4 处理器</p>");
+        html.push_str("<table><tr><th>插座</th><th>厂商</th><th>型号</th><th>最大</th><th>当前</th><th>核心</th><th>线程</th><th>状态</th></tr>");
+        for p in &snap.dmi.processors {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(p.socket.as_deref().unwrap_or("—")),
+                esc(p.manufacturer.as_deref().unwrap_or("—")),
+                esc(p.version.as_deref().unwrap_or("—")),
+                p.max_mhz.map(|n| format!("{n} MHz")).unwrap_or_else(|| "—".into()),
+                p.current_mhz.map(|n| format!("{n} MHz")).unwrap_or_else(|| "—".into()),
+                p.cores.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                p.threads.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                if !p.populated {
+                    "empty"
+                } else if p.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.caches.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 7 缓存</p>");
+        html.push_str("<table><tr><th>名称</th><th>级</th><th>类型</th><th>大小</th><th>相联</th></tr>");
+        for c in &snap.dmi.caches {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>L{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(c.socket.as_deref().unwrap_or("—")),
+                c.level.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+                esc(c.kind.as_deref().unwrap_or("—")),
+                c.size_kb
+                    .map(|n| format!("{n} KiB"))
+                    .unwrap_or_else(|| "—".into()),
+                esc(c.associativity.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.slots.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 9 系统插槽</p>");
+        html.push_str("<table><tr><th>名称</th><th>类型</th><th>状态</th><th>总线</th></tr>");
+        for s in &snap.dmi.slots {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(s.designation.as_deref().unwrap_or("—")),
+                esc(s.kind.as_deref().unwrap_or("—")),
+                esc(s.usage.as_deref().unwrap_or("—")),
+                esc(s.bus.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+}
+
 fn kb_html(s: &crate::Sample<u64>) -> String {
     s.value
         .map(|v| format_bytes(v * 1024))
@@ -2591,4 +2779,451 @@ pub fn format_bytes(n: u64) -> String {
         i += 1;
     }
     format!("{v:.2} {}", UNITS[i])
+}
+
+struct ReportSection {
+    title: String,
+    rows: Vec<(String, String)>,
+}
+
+fn pair(k: impl Into<String>, v: impl Into<String>) -> (String, String) {
+    (k.into(), v.into())
+}
+
+fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
+    let mut sections = Vec::new();
+
+    let mut cpu = vec![
+        pair("型号", snap.cpu.model_name.compact()),
+        pair("厂商", snap.cpu.vendor.compact()),
+        pair("逻辑 CPU", snap.cpu.logical_cpus.to_string()),
+        pair("封装数", snap.cpu.physical_packages.to_string()),
+        pair(
+            "利用率",
+            snap.cpu
+                .utilization_pct
+                .map(|v| format!("{v:.1}%"))
+                .unwrap_or_else(|| "n/a".into()),
+        ),
+        pair(
+            "SMT",
+            format!(
+                "active {} control {}",
+                snap.cpu.smt_active.compact(),
+                snap.cpu.smt_control.compact()
+            ),
+        ),
+        pair("microcode", snap.cpu.microcode.compact()),
+    ];
+    for p in snap.dmi.processors.iter().take(8) {
+        cpu.push(pair(
+            p.socket.as_deref().unwrap_or("CPU"),
+            format!(
+                "{}  {}  max {} MHz  cores {}  threads {}  {}",
+                p.manufacturer.as_deref().unwrap_or("—"),
+                p.version.as_deref().unwrap_or("—"),
+                p.max_mhz.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                p.cores.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                p.threads.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                if !p.populated {
+                    "empty"
+                } else if p.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ),
+        ));
+    }
+    for c in snap.dmi.caches.iter().take(8) {
+        cpu.push(pair(
+            c.socket.as_deref().unwrap_or("cache"),
+            format!(
+                "L{} {}  {} KiB  {}",
+                c.level.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+                c.kind.as_deref().unwrap_or("—"),
+                c.size_kb.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                c.associativity.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    sections.push(ReportSection {
+        title: "CPU".into(),
+        rows: cpu,
+    });
+
+    let mut dmi = vec![
+        pair(
+            "BIOS",
+            format!(
+                "{} {}  rom {}  rel {}",
+                snap.dmi.bios_vendor.compact(),
+                snap.dmi.bios_version.compact(),
+                snap.dmi
+                    .bios_rom_kb
+                    .map(|n| format!("{n} KiB"))
+                    .unwrap_or_else(|| "—".into()),
+                snap.dmi.bios_release.as_deref().unwrap_or("—")
+            ),
+        ),
+        pair("厂商", snap.dmi.sys_vendor.compact()),
+        pair("产品", snap.dmi.product_name.compact()),
+        pair(
+            "主板",
+            format!(
+                "{} {}",
+                snap.dmi.board_vendor.compact(),
+                snap.dmi.board_name.compact()
+            ),
+        ),
+        pair("序列号", snap.dmi.product_serial.compact()),
+        pair(
+            "固件",
+            format!(
+                "{}  Secure Boot {}",
+                snap.firmware.interface.compact(),
+                snap.firmware.secure_boot.compact()
+            ),
+        ),
+    ];
+    for m in snap.dmi.memory_devices.iter().take(16) {
+        dmi.push(pair(
+            m.locator.as_deref().unwrap_or("DIMM"),
+            format!(
+                "{}  {}  {} MT/s  rank {}",
+                m.size_label(),
+                m.r#type.as_deref().unwrap_or("—"),
+                m.speed_mts
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                m.rank.map(|n| n.to_string()).unwrap_or_else(|| "—".into())
+            ),
+        ));
+    }
+    for s in snap.dmi.slots.iter().take(16) {
+        dmi.push(pair(
+            s.designation.as_deref().unwrap_or("slot"),
+            format!(
+                "{}  {}  {}",
+                s.kind.as_deref().unwrap_or("—"),
+                s.usage.as_deref().unwrap_or("—"),
+                s.bus.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    sections.push(ReportSection {
+        title: "DMI / 主板".into(),
+        rows: dmi,
+    });
+
+    sections.push(ReportSection {
+        title: "内存".into(),
+        rows: vec![
+            pair("物理", kb_html(&snap.memory.total_kb)),
+            pair("可用", kb_html(&snap.memory.available_kb)),
+            pair("空闲", kb_html(&snap.memory.free_kb)),
+            pair(
+                "Swap",
+                format!(
+                    "{} / {}",
+                    kb_html(&snap.memory.swap_total_kb),
+                    kb_html(&snap.memory.swap_free_kb)
+                ),
+            ),
+            pair("THP", snap.memory.thp_enabled.compact()),
+        ],
+    });
+
+    let mut gpu = Vec::new();
+    if snap.gpu.devices.is_empty() {
+        gpu.push(pair("GPU", "未发现 DRM 设备"));
+    }
+    for g in snap.gpu.devices.iter().take(8) {
+        gpu.push(pair(
+            &g.id,
+            format!(
+                "{}  PCI {}  {}%  VBIOS {}",
+                g.driver,
+                g.pci_slot.compact(),
+                g.busy_percent
+                    .value
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| g.busy_percent.compact()),
+                g.vbios.compact()
+            ),
+        ));
+    }
+    sections.push(ReportSection {
+        title: "GPU".into(),
+        rows: gpu,
+    });
+
+    let mut sensors = Vec::new();
+    let mut temps = 0usize;
+    for chip in &snap.sensors.chips {
+        let name = chip.name.value.as_deref().unwrap_or("hwmon");
+        for ch in &chip.channels {
+            if ch.kind != SensorKind::Temp {
+                continue;
+            }
+            if temps >= 24 {
+                break;
+            }
+            sensors.push(pair(
+                format!("{name}/{}", ch.label),
+                ch.value
+                    .map(|v| format!("{v:.1} {}", ch.unit))
+                    .unwrap_or_else(|| ch.raw.compact()),
+            ));
+            temps += 1;
+        }
+    }
+    for z in snap.sensors.thermal_zones.iter().take(8) {
+        sensors.push(pair(
+            format!("thermal {}", z.r#type.compact()),
+            z.temp_c
+                .value
+                .map(|v| format!("{v:.1} °C"))
+                .unwrap_or_else(|| z.temp_c.compact()),
+        ));
+    }
+    if sensors.is_empty() {
+        sensors.push(pair("传感器", "无温度读数"));
+    }
+    sections.push(ReportSection {
+        title: "传感器".into(),
+        rows: sensors,
+    });
+
+    let mut power = Vec::new();
+    for p in snap.power.supplies.iter().take(8) {
+        power.push(pair(
+            &p.name,
+            format!(
+                "{}  {}  {}%",
+                p.kind.compact(),
+                p.status.compact(),
+                p.capacity_pct
+                    .value
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into())
+            ),
+        ));
+    }
+    if power.is_empty() {
+        power.push(pair("电源", "无 power_supply"));
+    }
+    for a in snap.alerts.iter().take(8) {
+        power.push(pair(
+            format!("{:?} {}", a.level, a.label),
+            a.message.clone(),
+        ));
+    }
+    sections.push(ReportSection {
+        title: "电源 / 告警".into(),
+        rows: power,
+    });
+
+    let mut storage = Vec::new();
+    for d in snap.block.devices.iter().take(16) {
+        storage.push(pair(
+            &d.name,
+            format!(
+                "{}  {}  {}",
+                d.model.compact(),
+                d.size_bytes
+                    .value
+                    .map(format_bytes)
+                    .unwrap_or_else(|| d.size_bytes.compact()),
+                d.queue_scheduler.compact()
+            ),
+        ));
+    }
+    for c in snap.nvme.controllers.iter().take(8) {
+        storage.push(pair(
+            &c.name,
+            format!(
+                "{}  fw {}  {}",
+                c.model.compact(),
+                c.firmware.compact(),
+                c.serial.compact()
+            ),
+        ));
+    }
+    if storage.is_empty() {
+        storage.push(pair("存储", "无块设备"));
+    }
+    sections.push(ReportSection {
+        title: "存储".into(),
+        rows: storage,
+    });
+
+    let mut net = Vec::new();
+    for i in snap.net.interfaces.iter().take(16) {
+        net.push(pair(
+            &i.name,
+            format!(
+                "{}  {}  mtu {}  {}",
+                i.operstate.compact(),
+                i.driver.compact(),
+                i.mtu.compact(),
+                if i.addresses.is_empty() {
+                    "—".into()
+                } else {
+                    i.addresses.join(" ")
+                }
+            ),
+        ));
+    }
+    net.push(pair("tcp_congestion", snap.net.tcp_congestion.compact()));
+    sections.push(ReportSection {
+        title: "网络".into(),
+        rows: net,
+    });
+
+    let mut pci = vec![pair("设备数", snap.pci.devices.len().to_string())];
+    for d in snap.pci.devices.iter().take(24) {
+        pci.push(pair(
+            &d.slot,
+            format!(
+                "{} {}  {}",
+                d.vendor_name.as_deref().unwrap_or(&d.vendor_id),
+                d.device_name.as_deref().unwrap_or(&d.device_id),
+                d.driver.compact()
+            ),
+        ));
+    }
+    sections.push(ReportSection {
+        title: "PCI".into(),
+        rows: pci,
+    });
+
+    let mut usb = Vec::new();
+    for d in snap.usb.devices.iter().take(24) {
+        usb.push(pair(
+            &d.sys_name,
+            format!(
+                "{} {}  {}",
+                d.vendor_name
+                    .as_deref()
+                    .or(d.manufacturer.value.as_deref())
+                    .unwrap_or("—"),
+                d.product_name
+                    .as_deref()
+                    .or(d.product.value.as_deref())
+                    .unwrap_or("—"),
+                d.speed.compact()
+            ),
+        ));
+    }
+    if usb.is_empty() {
+        usb.push(pair("USB", "无设备"));
+    }
+    sections.push(ReportSection {
+        title: "USB".into(),
+        rows: usb,
+    });
+
+    let mut os = vec![
+        pair("OS", snap.software.os_name.compact()),
+        pair("ID", snap.software.os_id.compact()),
+        pair("内核", snap.software.kernel_release.compact()),
+        pair("hostname", snap.software.hostname.compact()),
+        pair(
+            "loadavg",
+            format!(
+                "{} {} {}",
+                snap.software.load_1.compact(),
+                snap.software.load_5.compact(),
+                snap.software.load_15.compact()
+            ),
+        ),
+        pair("arch", snap.sysctl.kernel_arch.compact()),
+        pair("lockdown", snap.security.lockdown.compact()),
+        pair("KVM", snap.kvm.device.compact()),
+    ];
+    if let Some(n) = snap.buses.notes.iter().find(|s| s.starts_with("无 ")) {
+        os.push(pair("leftover", n.clone()));
+    }
+    sections.push(ReportSection {
+        title: "OS".into(),
+        rows: os,
+    });
+
+    sections
+}
+
+fn csv_formula_leading(s: &str) -> bool {
+    matches!(
+        s.as_bytes().first(),
+        Some(b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r')
+    )
+}
+
+fn csv_escape(s: &str) -> String {
+    let formula = csv_formula_leading(s);
+    let needs_quote = formula
+        || s.bytes()
+            .any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r'));
+    if !needs_quote {
+        return s.to_string();
+    }
+    let mut out = String::from("\"");
+    if formula {
+        out.push('\'');
+    }
+    for c in s.chars() {
+        if c == '"' {
+            out.push_str("\"\"");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn md_cell(s: &str) -> String {
+    s.replace('|', "\\|").replace('\n', " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_escape_quotes_specials() {
+        assert_eq!(csv_escape("ok"), "ok");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_escape("a\nb"), "\"a\nb\"");
+        assert_eq!(csv_escape("=1+1"), "\"'=1+1\"");
+        assert_eq!(csv_escape("+cmd"), "\"'+cmd\"");
+        assert_eq!(csv_escape("-1"), "\"'-1\"");
+        assert_eq!(csv_escape("@SUM(A1)"), "\"'@SUM(A1)\"");
+        assert_eq!(csv_escape("—"), "—");
+    }
+
+    #[test]
+    fn report_format_parse() {
+        assert_eq!(ReportFormat::parse("JSON"), Some(ReportFormat::Json));
+        assert_eq!(ReportFormat::parse("txt"), Some(ReportFormat::Text));
+        assert_eq!(ReportFormat::parse("markdown"), Some(ReportFormat::Markdown));
+        assert_eq!(ReportFormat::parse("htm"), Some(ReportFormat::Html));
+        assert_eq!(ReportFormat::parse("xml"), None);
+    }
+
+    #[test]
+    fn text_summary_omits_sample_hints() {
+        let snap = crate::snapshot::HardwareSnapshot::collect(&crate::access::ProbeCtx::default());
+        let text = to_text(&snap);
+        assert!(text.contains("AIDA Linux 硬件报告"));
+        assert!(!text.contains("容器或精简虚拟机"));
+        let csv = to_csv(&snap);
+        assert!(csv.starts_with("section,key,value"));
+        assert!(!csv.contains("容器或精简虚拟机"));
+        let md = to_markdown(&snap);
+        assert!(md.contains("# AIDA Linux 硬件报告"));
+        assert!(!md.contains("容器或精简虚拟机"));
+    }
 }
