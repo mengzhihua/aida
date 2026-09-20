@@ -21,7 +21,7 @@ GitHub Actions：`.github/workflows/package.yml` 在**每个 PR** 和 tag 上传
 
 用户下载入口是 [Releases](https://github.com/mengzhihua/aida/releases)，不需要 Rust。
 
-无问题的版本会自动发行：把 `Cargo.toml` 的 `version` 升一档，合并到 `main` 或 `cursor/rc-stm-peci-587c`。`package.yml` 发现还没有 `v$VERSION` tag 时，会再编一次、跑 `cargo test` 和 `smoke-dist.sh`，**全部通过才**用 `softprops/action-gh-release` 打 tag 并挂上成品。已经发过的版本不会重复打包装。
+无问题的版本会自动发行：把 `Cargo.toml` 的 `version` 升一档，合并到 `main` 或 `cursor/rc-stm-peci-587c`。`package.yml` 发现还没有 `v$VERSION` tag 时，会再编一次、跑 `cargo test` 和 `smoke-dist.sh`，**全部通过才**用 `softprops/action-gh-release` 打 tag（`target_commitish` 为当前 SHA）并挂上成品。main 与栈顶共用一把 `concurrency` 锁；已经发过的版本不会覆盖别人的 tag。`./scripts/release.sh` 若本地同名 tag 不指向 HEAD 会直接失败。
 
 也可以手工打 tag（不要用 `gh release create` 挂未经自测的文件）：
 
