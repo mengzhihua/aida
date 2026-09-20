@@ -92,6 +92,7 @@ assert "family" in d, d.keys()
 assert d["family"] in ("debian", "rhel", "suse", "arch", "alpine", "unknown"), d["family"]
 assert isinstance(d.get("hints"), list) and d["hints"], d
 assert "gui_libs" in d
+assert "gui_need_glibc" in d and d["gui_need_glibc"]
 PY
   ok "$bin doctor + --json family=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["family"])' "$js")"
 }
@@ -110,6 +111,13 @@ if ((${#cli[@]})); then
   smoke_collect "$bin" cli
   smoke_bench "$bin" cli
   smoke_doctor "$bin" cli
+  set +e
+  "$bin" doctor --jsno >/dev/null 2>"$WORK/doctor-bad.err"
+  st=$?
+  set -e
+  [[ "$st" -eq 2 ]] || fail "$bin doctor --jsno 应退出 2，实际 $st"
+  grep -q "未知参数" "$WORK/doctor-bad.err" || fail "$bin doctor --jsno 应提示未知参数"
+  ok "$bin doctor 拒绝未知参数"
   if command -v file >/dev/null; then
     if [[ "$bin" == *-musl ]]; then
       file "$bin" | grep -qi 'static' || fail "$bin 文件名是 musl 但不是静态链接"
@@ -169,14 +177,19 @@ PY
   grep -qi "aida" "$WORK/bundle.html" || fail "bundle HTML 不含 AIDA"
   grep -qi "ID_LIKE" "$WORK/bundle.html" || fail "bundle HTML 不含 ID_LIKE"
   SMOKE_PREFIX="$WORK/install-prefix"
-  mkdir -p "$SMOKE_PREFIX"
+  mkdir -p "$SMOKE_PREFIX/bin" "$SMOKE_PREFIX/lib/aida"
+  echo leftover >"$SMOKE_PREFIX/bin/aida-gui-bin"
+  chmod +x "$SMOKE_PREFIX/bin/aida-gui-bin"
   PREFIX="$SMOKE_PREFIX" "$bundle/install.sh" >/dev/null
   [[ -x "$SMOKE_PREFIX/bin/aida" ]] || fail "install.sh 没有装出 bin/aida"
   [[ -x "$SMOKE_PREFIX/bin/aida-cli" ]] || fail "install.sh 没有装出 bin/aida-cli"
+  [[ ! -e "$SMOKE_PREFIX/bin/aida-gui-bin" ]] || fail "install.sh 留下了旧的 aida-gui-bin"
+  grep -q elevate "$SMOKE_PREFIX/bin/aida" || fail "安装入口没有处理 elevate"
   got="$("$SMOKE_PREFIX/bin/aida" version)"
   [[ "$got" == "aida $VERSION" ]] || fail "安装后 aida version 是 '$got'"
   "$SMOKE_PREFIX/bin/aida" doctor >/dev/null
-  ok "install.sh --prefix 后 aida doctor"
+  [[ -f "$SMOKE_PREFIX/lib/aida/GLIBC_GUI" ]] || fail "install.sh 没有装出 GLIBC_GUI"
+  ok "install.sh --prefix 后 aida doctor（并清掉 leftover GUI）"
   if [[ -f "$bundle/SHA256SUMS" ]]; then
     (cd "$bundle" && sha256sum -c SHA256SUMS) >/dev/null
     ok "bundle SHA256SUMS"

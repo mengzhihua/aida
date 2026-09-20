@@ -143,12 +143,21 @@ fn cmd_collect(args: &[String]) -> ExitCode {
 }
 
 fn cmd_doctor(args: &[String]) -> ExitCode {
-    let json = args.iter().any(|a| a == "--json");
-    if args.iter().any(|a| a == "-h" || a == "--help") {
-        eprintln!(
-            "aida doctor [--json]   检查发行版、glibc、GUI 库，给出 apt/dnf/yum 安装命令"
-        );
-        return ExitCode::SUCCESS;
+    let mut json = false;
+    for a in args {
+        match a.as_str() {
+            "--json" => json = true,
+            "-h" | "--help" => {
+                eprintln!(
+                    "aida doctor [--json]   检查发行版、glibc、GUI 库，给出 apt/dnf/yum 安装命令"
+                );
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("未知参数: {other}");
+                return ExitCode::from(2);
+            }
+        }
     }
     let ctx = ProbeCtx::live();
     let report = aida::doctor::collect(&ctx);

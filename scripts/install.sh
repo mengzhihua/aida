@@ -95,25 +95,50 @@ echo "==> 本机 ${PRETTY:-?}  id=${OS_ID:-?}  family=$FAMILY"
 echo "==> prefix $PREFIX"
 
 install_gui_deps() {
-  local cmd
-  cmd="$(aida_gui_install_cmd "$FAMILY")"
-  echo "==> GUI 运行库: $cmd"
-  if [[ "$cmd" == 需要* ]]; then
-    echo "note: 未能识别发行版，请按 README 手工安装 OpenGL/EGL 与 libxkbcommon" >&2
-    return 0
-  fi
-  # 拆成真实可执行的一组命令；rhel 的 “dnf || yum” 要在 shell 里跑。
-  if [[ "$(id -u)" -eq 0 ]]; then
-    cmd="${cmd#sudo }"
-    cmd="${cmd// || sudo / || }"
+  echo "==> GUI 运行库 family=$FAMILY"
+  echo "    $(aida_gui_install_cmd "$FAMILY")"
+  local sudo_cmd=()
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo_cmd=(sudo)
+    else
+      echo "note: 需要 root 或 sudo 才能装库。请手工执行：" >&2
+      echo "  $(aida_gui_install_cmd "$FAMILY")" >&2
+      return 0
+    fi
   fi
   set +e
-  bash -lc "$cmd"
+  case "$FAMILY" in
+    debian)
+      "${sudo_cmd[@]}" apt-get install -y libxkbcommon-x11-0 libegl1 libgl1 pkexec
+      ;;
+    rhel)
+      if command -v dnf >/dev/null 2>&1; then
+        "${sudo_cmd[@]}" dnf install -y libxkbcommon-x11 mesa-libEGL mesa-libGL polkit
+      else
+        "${sudo_cmd[@]}" yum install -y libxkbcommon-x11 mesa-libEGL mesa-libGL polkit
+      fi
+      ;;
+    suse)
+      "${sudo_cmd[@]}" zypper install -y libxkbcommon-x11-0 Mesa-libEGL1 Mesa-libGL1 polkit
+      ;;
+    arch)
+      "${sudo_cmd[@]}" pacman -S --needed --noconfirm libxkbcommon mesa polkit
+      ;;
+    alpine)
+      "${sudo_cmd[@]}" apk add --no-cache mesa-egl mesa-gl libxkbcommon libxkbcommon-x11 polkit
+      ;;
+    *)
+      echo "note: 未能识别发行版，请按 README 手工安装 OpenGL/EGL 与 libxkbcommon" >&2
+      set -e
+      return 0
+      ;;
+  esac
   local st=$?
   set -e
   if [[ $st -ne 0 ]]; then
-    echo "note: 包管理器未成功（缺 sudo / 无网）。请手工执行：" >&2
-    echo "  $cmd" >&2
+    echo "note: 包管理器未成功（缺权限 / 无网）。请手工执行：" >&2
+    echo "  $(aida_gui_install_cmd "$FAMILY")" >&2
     return 0
   fi
 }
@@ -176,7 +201,11 @@ else
   fi
 fi
 
-mkdir -p "$BIN"
+mkdir -p "$BIN" "$LIB"
+
+# 本次没带的旧产物不要留着，避免 0.41 GUI 跟 0.42 CLI 混用。
+rm -f "$BIN/aida-cli" "$BIN/aida-gui-bin" \
+  "$LIB/AIDA_Linux.AppImage" "$LIB/GLIBC_GUI"
 
 if [[ -n "$CLI_SRC" ]]; then
   install -m 0755 "$CLI_SRC" "$BIN/aida-cli"
@@ -194,7 +223,23 @@ if [[ -n "$GUI_SRC" ]]; then
   echo "gui bin:  $BIN/aida-gui-bin"
 fi
 
-# 统一入口：采集走 musl/CLI（CentOS 也能跑）；gui 走 AppImage 或本机编的 GUI。
+GLIBC_SRC=""
+if [[ -f "$ROOT/GLIBC_GUI" ]]; then
+  GLIBC_SRC="$ROOT/GLIBC_GUI"
+elif [[ -f "$PACK/GLIBC_GUI" ]]; then
+  GLIBC_SRC="$PACK/GLIBC_GUI"
+elif [[ -f "$ROOT/packaging/GLIBC_GUI" ]]; then
+  GLIBC_SRC="$ROOT/packaging/GLIBC_GUI"
+elif [[ -f "$ROOT/dist/GLIBC_GUI" ]]; then
+  GLIBC_SRC="$ROOT/dist/GLIBC_GUI"
+fi
+if [[ -n "$GLIBC_SRC" ]]; then
+  mkdir -p "$LIB"
+  install -m 0644 "$GLIBC_SRC" "$LIB/GLIBC_GUI"
+fi
+
+# 统一入口：采集走 musl/CLI（CentOS 也能跑）；gui / elevate gui 走 AppImage 或本机编的 GUI。
+# elevate 必须进 GUI 二进制：musl CLI 没有 gui feature，pkexec 后 current_exe 会变成 aida-cli。
 cat >"$BIN/aida" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -203,6 +248,34 @@ CLI="\$BIN_DIR/aida-cli"
 GUI_BIN="\$BIN_DIR/aida-gui-bin"
 APPIMAGE="${LIB}/AIDA_Linux.AppImage"
 cmd="\${1:-}"
+
+run_gui() {
+  export APPIMAGE_EXTRACT_AND_RUN="\${APPIMAGE_EXTRACT_AND_RUN:-1}"
+  if [[ -x "\$GUI_BIN" ]]; then
+    exec "\$GUI_BIN" "\$@"
+  fi
+  if [[ -e "\$APPIMAGE" ]]; then
+    exec "\$APPIMAGE" "\$@"
+  fi
+  echo "没有桌面 GUI。采集请用: \$CLI collect" >&2
+  echo "先跑: \$CLI doctor   （CentOS 等旧 glibc 请只用 CLI）" >&2
+  return 1
+}
+
+if [[ "\$cmd" == "elevate" ]]; then
+  shift
+  inner="\${1:-gui}"
+  if [[ "\$inner" == "gui" ]]; then
+    run_gui elevate "\$@"
+    exit 1
+  fi
+  if [[ -x "\$CLI" ]]; then
+    exec "\$CLI" elevate "\$@"
+  fi
+  run_gui elevate "\$@"
+  exit 1
+fi
+
 want_gui=0
 if [[ -z "\$cmd" ]]; then
   if [[ -n "\${DISPLAY:-}" || -n "\${WAYLAND_DISPLAY:-}" ]]; then
@@ -213,28 +286,18 @@ elif [[ "\$cmd" == "gui" ]]; then
   shift
 fi
 if [[ "\$want_gui" -eq 1 ]]; then
-  export APPIMAGE_EXTRACT_AND_RUN="\${APPIMAGE_EXTRACT_AND_RUN:-1}"
-  if [[ -x "\$GUI_BIN" ]]; then
-    exec "\$GUI_BIN" gui "\$@"
+  if [[ -n "\$cmd" && "\$cmd" == "gui" ]]; then
+    run_gui gui "\$@"
+  else
+    run_gui
   fi
-  if [[ -e "\$APPIMAGE" ]]; then
-    exec "\$APPIMAGE" gui "\$@"
-  fi
-  echo "没有桌面 GUI。采集请用: \$CLI collect" >&2
-  echo "先跑: \$CLI doctor   （CentOS 等旧 glibc 请只用 CLI）" >&2
   [[ -x "\$CLI" ]] && exec "\$CLI" "\$@"
   exit 1
 fi
 if [[ -x "\$CLI" ]]; then
   exec "\$CLI" "\$@"
 fi
-if [[ -x "\$GUI_BIN" ]]; then
-  exec "\$GUI_BIN" "\$@"
-fi
-if [[ -e "\$APPIMAGE" ]]; then
-  export APPIMAGE_EXTRACT_AND_RUN="\${APPIMAGE_EXTRACT_AND_RUN:-1}"
-  exec "\$APPIMAGE" "\$@"
-fi
+run_gui "\$@"
 echo "未找到 aida 二进制" >&2
 exit 1
 EOF

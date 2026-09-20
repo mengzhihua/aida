@@ -23,6 +23,8 @@ pub struct DoctorReport {
     pub wayland: bool,
     pub gui_libs: Vec<GuiLib>,
     pub gui_ok: bool,
+    /// 当前包桌面 GUI 需要的最低 glibc（包内 `GLIBC_GUI`，否则 `GUI_GLIBC_HINT`）。
+    pub gui_need_glibc: String,
     pub hints: Vec<String>,
 }
 
@@ -77,6 +79,7 @@ pub fn collect_with_lib_roots(ctx: &ProbeCtx, lib_roots: &[PathBuf]) -> DoctorRe
 
     let display = std::env::var_os("DISPLAY").is_some();
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let gui_need_glibc = load_gui_need_glibc();
 
     let mut hints = Vec::new();
     hints.push(format!(
@@ -85,12 +88,14 @@ pub fn collect_with_lib_roots(ctx: &ProbeCtx, lib_roots: &[PathBuf]) -> DoctorRe
     if musl {
         hints.push("本机是 musl。采集用随包 aida-cli 即可；桌面 GUI 请用 glibc AppImage 或在 glibc 发行版上跑。".into());
     } else if let Some(ref g) = glibc {
-        if glibc_less(g, GUI_GLIBC_HINT) {
+        if glibc_less(g, &gui_need_glibc) {
             hints.push(format!(
-                "本机 glibc {g} 低于常见 AppImage 构建目标 {GUI_GLIBC_HINT}。桌面 GUI 可能无法启动；采集请用 musl 静态 CLI（CentOS 7 / Ubuntu 16.04 也能跑）。"
+                "本机 glibc {g} 低于当前包桌面 GUI 所需 {gui_need_glibc}。桌面 GUI 可能无法启动；采集请用 musl 静态 CLI（CentOS 7 / Ubuntu 16.04 也能跑）。"
             ));
         } else {
-            hints.push(format!("本机 glibc {g}，桌面 AppImage 通常可运行。"));
+            hints.push(format!(
+                "本机 glibc {g}，对照本包 GUI 目标 {gui_need_glibc}，桌面 AppImage 通常可运行。"
+            ));
         }
     }
     if !gui_ok {
@@ -119,6 +124,7 @@ pub fn collect_with_lib_roots(ctx: &ProbeCtx, lib_roots: &[PathBuf]) -> DoctorRe
         wayland,
         gui_libs,
         gui_ok,
+        gui_need_glibc,
         hints,
     }
 }
@@ -138,6 +144,7 @@ pub fn format_text(r: &DoctorReport) -> String {
         (Some(g), _) => s.push_str(&format!("glibc: {g}\n")),
         _ => s.push_str("glibc: ?\n"),
     }
+    s.push_str(&format!("gui_need_glibc: {}\n", r.gui_need_glibc));
     s.push_str(&format!(
         "display={}  wayland={}\n",
         r.display, r.wayland
@@ -229,6 +236,45 @@ fn find_sub(hay: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     hay[start..].windows(needle.len()).position(|w| w == needle).map(|p| start + p)
 }
 
+fn load_gui_need_glibc() -> String {
+    for p in gui_need_glibc_paths() {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            if let Some(v) = parse_glibc_need_line(&text) {
+                return v;
+            }
+        }
+    }
+    GUI_GLIBC_HINT.to_string()
+}
+
+fn parse_glibc_need_line(text: &str) -> Option<String> {
+    let line = text.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if !line
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '.')
+    {
+        return None;
+    }
+    let mut parts = line.split('.');
+    parts.next()?.parse::<u32>().ok()?;
+    Some(line.to_string())
+}
+
+fn gui_need_glibc_paths() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            out.push(dir.join("GLIBC_GUI"));
+            out.push(dir.join("../lib/aida/GLIBC_GUI"));
+        }
+    }
+    out.push(PathBuf::from("GLIBC_GUI"));
+    out
+}
+
 fn has_musl_loader(lib_roots: &[PathBuf]) -> bool {
     lib_roots.iter().any(|r| {
         r.join("ld-musl-x86_64.so.1").exists()
@@ -287,6 +333,8 @@ mod tests {
     fn glibc_max_picks_highest() {
         let blob = b"xxGLIBC_2.2.5\0GLIBC_2.39\0GLIBC_2.17\0";
         assert_eq!(max_glibc_label(blob).as_deref(), Some("2.39"));
+        assert_eq!(parse_glibc_need_line("2.39\n# comment\n").as_deref(), Some("2.39"));
+        assert_eq!(parse_glibc_need_line("nope"), None);
     }
 
     #[test]
@@ -327,6 +375,7 @@ mod tests {
         assert_eq!(r.family, "rhel");
         assert!(!r.musl, "glibc 夹具不该被宿主机 musl-gcc 判成 musl OS");
         assert_eq!(r.glibc.as_deref(), Some("2.34"));
+        assert_eq!(r.gui_need_glibc.as_str(), GUI_GLIBC_HINT);
         assert!(r.hints.iter().any(|h| h.contains("dnf") || h.contains("yum")));
         assert!(
             r.hints.iter().any(|h| h.contains("低于") || h.contains("2.39")),
