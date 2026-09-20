@@ -279,6 +279,15 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"tpm\""));
     assert!(json.contains("\"ipv6_optimistic_dad\""));
     assert!(json.contains("\"ipv6_accept_source_route\""));
+    assert!(json.contains("\"oem_strings\""));
+    assert!(json.contains("\"bios_language\""));
+    assert!(json.contains("\"boot_status\""));
+    assert!(json.contains("\"tpm_devices\""));
+    assert!(json.contains("\"firmware_attributes\""));
+    assert!(json.contains("\"pci_epf\""));
+    assert!(json.contains("\"slimbus\""));
+    assert!(json.contains("\"ipv6_use_optimistic\""));
+    assert!(json.contains("\"ipv6_ignore_routes_with_linkdown\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),

@@ -915,6 +915,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("ptp", &snap.buses.ptp),
         ("pps", &snap.buses.pps),
         ("tpm", &snap.buses.tpm),
+        ("firmware_attributes", &snap.buses.firmware_attributes),
+        ("pci_epf", &snap.buses.pci_epf),
+        ("slimbus", &snap.buses.slimbus),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1419,7 +1422,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1510,7 +1513,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("1") => "1 乐观".into(),
             _ => snap.net.ipv6_optimistic_dad.display(),
         },
-        crate::probes::net::ipv6_accept_source_route_display(&snap.net.ipv6_accept_source_route)
+        crate::probes::net::ipv6_accept_source_route_display(&snap.net.ipv6_accept_source_route),
+        match snap.net.ipv6_use_optimistic.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 用乐观".into(),
+            _ => snap.net.ipv6_use_optimistic.display(),
+        },
+        match snap.net.ipv6_ignore_routes_with_linkdown.value.as_deref() {
+            Some("0") => "0 留".into(),
+            Some("1") => "1 忽略".into(),
+            _ => snap.net.ipv6_ignore_routes_with_linkdown.display(),
+        }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1678,6 +1691,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">v6_srcrt iface {}</p>",
             esc(&snap.net.ipv6_accept_source_route_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_use_optimistic_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">use_optimistic iface {}</p>",
+            esc(&snap.net.ipv6_use_optimistic_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_ignore_routes_with_linkdown_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">linkdown iface {}</p>",
+            esc(&snap.net.ipv6_ignore_routes_with_linkdown_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2814,6 +2839,40 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.oem_strings.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 11 OEM</p>");
+        html.push_str("<table><tr><th>字符串</th></tr>");
+        for s in snap.dmi.oem_strings.iter().take(16) {
+            html.push_str(&format!("<tr><td>{}</td></tr>", esc(s)));
+        }
+        html.push_str("</table>");
+    }
+    if snap.dmi.bios_language.is_some() || !snap.dmi.bios_languages.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">SMBIOS Type 13 语言 {} [{}]</p>",
+            esc(snap.dmi.bios_language.as_deref().unwrap_or("—")),
+            esc(&snap.dmi.bios_languages.join(" "))
+        ));
+    }
+    if let Some(st) = &snap.dmi.boot_status {
+        html.push_str(&format!(
+            "<p class=\"muted\">SMBIOS Type 32 启动 {}</p>",
+            esc(st)
+        ));
+    }
+    if !snap.dmi.tpm_devices.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 43 TPM</p>");
+        html.push_str("<table><tr><th>厂商</th><th>规格</th><th>描述</th></tr>");
+        for t in &snap.dmi.tpm_devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(t.vendor.as_deref().unwrap_or("—")),
+                esc(t.spec.as_deref().unwrap_or("—")),
+                esc(t.description.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -3009,6 +3068,28 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "—".into()),
                 if p.present { "present" } else { "missing" }
+            ),
+        ));
+    }
+    if !snap.dmi.oem_strings.is_empty() {
+        dmi.push(pair(
+            "OEM",
+            snap.dmi.oem_strings.iter().take(8).cloned().collect::<Vec<_>>().join(" | "),
+        ));
+    }
+    if let Some(lang) = &snap.dmi.bios_language {
+        dmi.push(pair("BIOS 语言", lang.clone()));
+    }
+    if let Some(st) = &snap.dmi.boot_status {
+        dmi.push(pair("启动状态", st.clone()));
+    }
+    for t in snap.dmi.tpm_devices.iter().take(4) {
+        dmi.push(pair(
+            t.vendor.as_deref().unwrap_or("TPM"),
+            format!(
+                "{}  {}",
+                t.spec.as_deref().unwrap_or("—"),
+                t.description.as_deref().unwrap_or("—")
             ),
         ));
     }

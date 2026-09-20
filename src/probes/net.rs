@@ -291,6 +291,12 @@ pub struct NetReport {
     /// `>= 0` 接受 routing header type 2；`< 0` 拒绝。默认 `0` 不是关。
     pub ipv6_accept_source_route: Sample<String>,
     pub ipv6_accept_source_route_dev: Vec<String>,
+    /// `1` 在 optimistic DAD 完成前就使用该地址。
+    pub ipv6_use_optimistic: Sample<String>,
+    pub ipv6_use_optimistic_dev: Vec<String>,
+    /// `1` 忽略链路 down 的路由。
+    pub ipv6_ignore_routes_with_linkdown: Sample<String>,
+    pub ipv6_ignore_routes_with_linkdown_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -902,6 +908,21 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_source_route",
         v6_srcrt_all.as_deref(),
     );
+    let ipv6_use_optimistic =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/use_optimistic"));
+    let use_opt_all = ipv6_use_optimistic.value.clone();
+    let ipv6_use_optimistic_dev =
+        conf_dev_diffs(ctx, "ipv6", "use_optimistic", use_opt_all.as_deref());
+    let ipv6_ignore_routes_with_linkdown = access::read_trimmed(
+        ctx.proc_path("sys/net/ipv6/conf/all/ignore_routes_with_linkdown"),
+    );
+    let linkdown_all = ipv6_ignore_routes_with_linkdown.value.clone();
+    let ipv6_ignore_routes_with_linkdown_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "ignore_routes_with_linkdown",
+        linkdown_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1139,6 +1160,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_optimistic_dad_dev,
                 ipv6_accept_source_route,
                 ipv6_accept_source_route_dev,
+                ipv6_use_optimistic,
+                ipv6_use_optimistic_dev,
+                ipv6_ignore_routes_with_linkdown,
+                ipv6_ignore_routes_with_linkdown_dev,
                 notes,
             };
         }
@@ -1484,6 +1509,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_optimistic_dad_dev,
         ipv6_accept_source_route,
         ipv6_accept_source_route_dev,
+        ipv6_use_optimistic,
+        ipv6_use_optimistic_dev,
+        ipv6_ignore_routes_with_linkdown,
+        ipv6_ignore_routes_with_linkdown_dev,
         notes,
     }
 }
@@ -2591,6 +2620,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/use_optimistic"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ignore_routes_with_linkdown"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2786,6 +2825,11 @@ mod tests {
         assert_eq!(r.ipv6_suppress_frag_ndisc.value.as_deref(), Some("1"));
         assert_eq!(r.ipv6_optimistic_dad.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_source_route.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_use_optimistic.value.as_deref(), Some("0"));
+        assert_eq!(
+            r.ipv6_ignore_routes_with_linkdown.value.as_deref(),
+            Some("0")
+        );
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -3026,6 +3070,26 @@ mod tests {
             "-1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/use_optimistic"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/use_optimistic"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ignore_routes_with_linkdown"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/ignore_routes_with_linkdown"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3221,6 +3285,23 @@ mod tests {
             r.ipv6_accept_source_route_dev.iter().any(|s| s == "lo:-1"),
             "lo accept_source_route=-1 must differ from conf/all: {:?}",
             r.ipv6_accept_source_route_dev
+        );
+        assert_eq!(r.ipv6_use_optimistic.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_use_optimistic_dev.iter().any(|s| s == "lo:1"),
+            "lo use_optimistic=1 must differ from conf/all: {:?}",
+            r.ipv6_use_optimistic_dev
+        );
+        assert_eq!(
+            r.ipv6_ignore_routes_with_linkdown.value.as_deref(),
+            Some("0")
+        );
+        assert!(
+            r.ipv6_ignore_routes_with_linkdown_dev
+                .iter()
+                .any(|s| s == "lo:1"),
+            "lo ignore_routes_with_linkdown=1 must differ from conf/all: {:?}",
+            r.ipv6_ignore_routes_with_linkdown_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
