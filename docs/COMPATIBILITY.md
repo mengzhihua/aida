@@ -275,6 +275,10 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 251. **`drop_unicast_in_l2_multicast` / `force_tllao` 只列出与 `conf/all` 不同的接口。** `1` 分别表示丢掉 L2 组播里的单播、NS 强制带目标链路层地址。不要用 `default` 顶替已有 iface。
 252. **`sched_schedstats=0` 表示不额外导出调度统计。** 无 `CONFIG_SCHEDSTATS` 时为 NotFound，不是失败。`traceoff_on_warning=0` 表示 WARN 时不关掉 tracing；无 tracing 时 NotFound。
 253. **无问题的版本自动发 GitHub Release。** 合并到 `main` / 栈顶且还没有 `v$VERSION` tag 时，`package.yml` 先跑 `cargo test` 和成品 smoke，通过才打 tag（指向当前 SHA，不是默认 `main`）并挂 tar.gz / AppImage / musl CLI。main 与栈顶发版共用一把锁，已有 tag 不覆盖。不要用 `gh release create` 挂未经自测的文件。`./scripts/release.sh --push` 只推指向 HEAD 的 tag。
+254. **SMBIOS Type 16/17 按 DSP0134 偏移解析。** Type 17 速度在 `0x15`、类型在 `0x12`、外形在 `0x0E`；厂商/序列/料号用字符串号（`0`=未用），不要按 strings 数组下标猜。空槽 `size=0` 显示 empty，不是采集失败。没有 I2C SPD dump（不调用 decode-dimms）。
+255. **空的 firewire / greybus / rapidio 表示没有对应硬件。** FireWire / RapidIO 先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
+256. **`accept_untracked_na` / `proxy_ndp` 只列出与 `conf/all` 不同的接口。** `1` 分别表示接受未跟踪 Neighbor Advertisement、开启 NDP 代理。不要用 `default` 顶替已有 iface。
+257. **`kernel.arch` 是内核自称的架构字符串（常为 `x86_64`）。** 无该键时 NotFound，不是失败；与 `cpu_byteorder` / `address_bits` 不要混。
 
 ## 测试方案
 
