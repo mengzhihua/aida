@@ -234,6 +234,17 @@ pub struct NetReport {
     pub ipv6_accept_ra_rt_info_max_plen: Sample<u64>,
     /// 与 `conf/all` 不同的接口。
     pub ipv6_accept_ra_rt_info_max_plen_dev: Vec<String>,
+    /// delayed ACK 的 ping-pong 阈值。
+    pub tcp_pingpong_thresh: Sample<u64>,
+    /// `1` 表示重传时合并相邻 SKB。
+    pub tcp_retrans_collapse: Sample<String>,
+    /// MTU 探测间隔（秒），与 `tcp_mtu_probing` 成对。
+    pub tcp_probe_interval: Sample<u64>,
+    pub tcp_probe_threshold: Sample<u64>,
+    /// `0` 忽略 RA Router Preference，`1` 接受。
+    pub ipv6_accept_ra_rtr_pref: Sample<String>,
+    /// 与 `conf/all` 不同的接口。
+    pub ipv6_accept_ra_rtr_pref_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -730,6 +741,20 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "accept_ra_rt_info_max_plen",
         ra_rt_max_all.as_deref(),
     );
+    let tcp_pingpong_thresh = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_pingpong_thresh"));
+    let tcp_retrans_collapse =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_retrans_collapse"));
+    let tcp_probe_interval = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_probe_interval"));
+    let tcp_probe_threshold = access::read_u64(ctx.proc_path("sys/net/ipv4/tcp_probe_threshold"));
+    let ipv6_accept_ra_rtr_pref =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_ra_rtr_pref"));
+    let ra_rtr_pref_all = ipv6_accept_ra_rtr_pref.value.clone();
+    let ipv6_accept_ra_rtr_pref_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_ra_rtr_pref",
+        ra_rtr_pref_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -933,6 +958,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 tcp_plb_suspend_rto_sec,
                 ipv6_accept_ra_rt_info_max_plen,
                 ipv6_accept_ra_rt_info_max_plen_dev,
+                tcp_pingpong_thresh,
+                tcp_retrans_collapse,
+                tcp_probe_interval,
+                tcp_probe_threshold,
+                ipv6_accept_ra_rtr_pref,
+                ipv6_accept_ra_rtr_pref_dev,
                 notes,
             };
         }
@@ -1244,6 +1275,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         tcp_plb_suspend_rto_sec,
         ipv6_accept_ra_rt_info_max_plen,
         ipv6_accept_ra_rt_info_max_plen_dev,
+        tcp_pingpong_thresh,
+        tcp_retrans_collapse,
+        tcp_probe_interval,
+        tcp_probe_threshold,
+        ipv6_accept_ra_rtr_pref,
+        ipv6_accept_ra_rtr_pref_dev,
         notes,
     }
 }
@@ -2202,6 +2239,15 @@ mod tests {
             "0\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_pingpong_thresh"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_retrans_collapse"), "1\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_probe_interval"), "600\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_probe_threshold"), "8\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_rtr_pref"),
+            "1\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -2373,6 +2419,11 @@ mod tests {
         assert_eq!(r.tcp_plb_rehash_rounds.value, Some(12));
         assert_eq!(r.tcp_plb_suspend_rto_sec.value, Some(60));
         assert_eq!(r.ipv6_accept_ra_rt_info_max_plen.value, Some(0));
+        assert_eq!(r.tcp_pingpong_thresh.value, Some(1));
+        assert_eq!(r.tcp_retrans_collapse.value.as_deref(), Some("1"));
+        assert_eq!(r.tcp_probe_interval.value, Some(600));
+        assert_eq!(r.tcp_probe_threshold.value, Some(8));
+        assert_eq!(r.ipv6_accept_ra_rtr_pref.value.as_deref(), Some("1"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2493,6 +2544,16 @@ mod tests {
             "64\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_ra_rtr_pref"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_ra_rtr_pref"),
+            "0\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2607,6 +2668,12 @@ mod tests {
                 .any(|s| s == "lo:64"),
             "lo accept_ra_rt_info_max_plen=64 must differ from conf/all: {:?}",
             r.ipv6_accept_ra_rt_info_max_plen_dev
+        );
+        assert_eq!(r.ipv6_accept_ra_rtr_pref.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_accept_ra_rtr_pref_dev.iter().any(|s| s == "lo:0"),
+            "lo accept_ra_rtr_pref=0 must differ from conf/all: {:?}",
+            r.ipv6_accept_ra_rtr_pref_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

@@ -243,6 +243,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"tcp_allowed_congestion\""));
     assert!(json.contains("\"tcp_plb_idle_rehash_rounds\""));
     assert!(json.contains("\"nr_hugepages\""));
+    assert!(json.contains("\"vduse\""));
+    assert!(json.contains("\"mux\""));
+    assert!(json.contains("\"soundwire\""));
+    assert!(json.contains("\"tcp_pingpong_thresh\""));
+    assert!(json.contains("\"acpi_video_flags\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
