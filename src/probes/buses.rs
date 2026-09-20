@@ -142,6 +142,12 @@ pub struct BusesReport {
     pub pci_epf: Vec<String>,
     /// MIPI Slimbus：先 `bus/slimbus/devices`，再 `class/slimbus`。
     pub slimbus: Vec<String>,
+    /// Memory Stick：先 `bus/memstick/devices`，再 `class/memstick_host`。
+    pub memstick: Vec<String>,
+    /// SIOX 串行 IO 扩展：先 `bus/siox/devices`，再 `class/siox`。
+    pub siox: Vec<String>,
+    /// MIPI HSI：先 `bus/hsi/devices`，再 `class/hsi`。
+    pub hsi: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -890,6 +896,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let memstick = list_alt_dirs(
+        ctx,
+        "bus/memstick/devices",
+        "class/memstick_host",
+        8,
+        "memstick",
+        &mut notes,
+        &mut missing,
+    );
+    let siox = list_alt_dirs(
+        ctx,
+        "bus/siox/devices",
+        "class/siox",
+        8,
+        "siox",
+        &mut notes,
+        &mut missing,
+    );
+    let hsi = list_alt_dirs(
+        ctx,
+        "bus/hsi/devices",
+        "class/hsi",
+        8,
+        "hsi",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -993,6 +1026,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         firmware_attributes,
         pci_epf,
         slimbus,
+        memstick,
+        siox,
+        hsi,
         notes,
     }
 }
@@ -1802,6 +1838,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/firmware-attributes/thinklmi")).unwrap();
         fs::create_dir_all(root.join("sys/bus/pci-epf/devices/pci_epf_test.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/slimbus/devices/slim-0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/memstick/devices/ms0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/siox/devices/siox-0-0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/hsi/devices/hsi_char.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1906,6 +1945,9 @@ mod tests {
         assert_eq!(r.firmware_attributes, vec!["thinklmi".to_string()]);
         assert_eq!(r.pci_epf, vec!["pci_epf_test.0".to_string()]);
         assert_eq!(r.slimbus, vec!["slim-0".to_string()]);
+        assert_eq!(r.memstick, vec!["ms0".to_string()]);
+        assert_eq!(r.siox, vec!["siox-0-0".to_string()]);
+        assert_eq!(r.hsi, vec!["hsi_char.0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -3108,6 +3150,76 @@ mod tests {
                 inner.split('/').all(|s| s != "slimbus")
             })),
             "present slimbus must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_memstick_siox_hsi_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-memstick-siox-hsi-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"memstick") && labels.contains(&"siox") && labels.contains(&"hsi"),
+            "missing memstick/siox/hsi must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memstick_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-memstick-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/memstick/devices/ms0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.memstick, vec!["ms0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "memstick")
+            })),
+            "present memstick must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn memstick_host_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-memstick-host-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/memstick_host/memstick0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.memstick, vec!["memstick0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "memstick")
+            })),
+            "class/memstick_host must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

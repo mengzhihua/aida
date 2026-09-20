@@ -289,6 +289,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 265. **SMBIOS Type 11/13/32/43 按 DSP0134 偏移解析。** Type 11 Count 在 `0x04`，随后是 OEM 字符串。Type 13 当前语言是 `0x15` 字符串号（length≥`0x16`），Flags bit0 为缩写格式。Type 32 Boot Status 在 `0x0A`（`0`=No errors）。Type 43 Vendor ID 是 4 字节 ASCII，Major/Minor Spec 在 `0x08`/`0x09`。不调用 dmidecode。
 266. **空的 firmware_attributes / pci_epf / slimbus 表示没有对应硬件。** `firmware_attributes` 只看 `class/firmware-attributes`（连字符 ABI，ThinkLMI/Dell sysman）。pci_epf / Slimbus 先看 `bus/*/devices`，没有再看 `class/*`。IIO/NVMEM/LED 已在 periph/platform 采集，不要 leftover 重复。`PermissionDenied` 仍写 note。
 267. **`use_optimistic` / `ignore_routes_with_linkdown` 只列出与 `conf/all` 不同的接口。** 前者 `1` 在 optimistic DAD 完成前使用该地址；后者 `1` 忽略链路 down 的路由。不要用 `default` 顶替已有 iface。
+268. **SMBIOS Type 12/22/23/24 按 DSP0134 偏移解析。** Type 12 Count 在 `0x04`。Type 22 化学 BYTE `0x09`（`0x06`=Lithium-ion），设计容量 WORD `0x0A`（仅 `0` 未知，再乘 `0x16` 倍数），电压 WORD `0x0C`（`0` 未知）。Type 23 Capabilities `0x04` bit0 启用、bit5 看门狗、bits2:1 启动选项；Reset Count/Limit/Timeout 为 `0xFFFF` 表示未知。Type 24 Settings `0x04` 每两比特：`00` Disabled / `01` Enabled / `10` Not Implemented / `11` Unknown。不调用 dmidecode。
+269. **空的 memstick / siox / hsi 表示没有对应硬件。** Memory Stick 先看 `bus/memstick/devices`，没有再看 `class/memstick_host`（不是 `class/memstick`）。SIOX/HSI 先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
+270. **`ndisc_evict_nocarrier` / `disable_policy` 只列出与 `conf/all` 不同的接口。** 前者 `1` 在 NOCARRIER 时清邻居；后者 `1` 对该接口关闭 IPsec policy。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

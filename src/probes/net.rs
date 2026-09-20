@@ -297,6 +297,12 @@ pub struct NetReport {
     /// `1` 忽略链路 down 的路由。
     pub ipv6_ignore_routes_with_linkdown: Sample<String>,
     pub ipv6_ignore_routes_with_linkdown_dev: Vec<String>,
+    /// `1` 在 NOCARRIER 时清掉邻居表项。
+    pub ipv6_ndisc_evict_nocarrier: Sample<String>,
+    pub ipv6_ndisc_evict_nocarrier_dev: Vec<String>,
+    /// `1` 对该接口关闭 IPsec policy。
+    pub ipv6_disable_policy: Sample<String>,
+    pub ipv6_disable_policy_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -923,6 +929,21 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "ignore_routes_with_linkdown",
         linkdown_all.as_deref(),
     );
+    let ipv6_ndisc_evict_nocarrier = access::read_trimmed(
+        ctx.proc_path("sys/net/ipv6/conf/all/ndisc_evict_nocarrier"),
+    );
+    let evict_all = ipv6_ndisc_evict_nocarrier.value.clone();
+    let ipv6_ndisc_evict_nocarrier_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "ndisc_evict_nocarrier",
+        evict_all.as_deref(),
+    );
+    let ipv6_disable_policy =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_policy"));
+    let pol_all = ipv6_disable_policy.value.clone();
+    let ipv6_disable_policy_dev =
+        conf_dev_diffs(ctx, "ipv6", "disable_policy", pol_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1164,6 +1185,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_use_optimistic_dev,
                 ipv6_ignore_routes_with_linkdown,
                 ipv6_ignore_routes_with_linkdown_dev,
+                ipv6_ndisc_evict_nocarrier,
+                ipv6_ndisc_evict_nocarrier_dev,
+                ipv6_disable_policy,
+                ipv6_disable_policy_dev,
                 notes,
             };
         }
@@ -1513,6 +1538,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_use_optimistic_dev,
         ipv6_ignore_routes_with_linkdown,
         ipv6_ignore_routes_with_linkdown_dev,
+        ipv6_ndisc_evict_nocarrier,
+        ipv6_ndisc_evict_nocarrier_dev,
+        ipv6_disable_policy,
+        ipv6_disable_policy_dev,
         notes,
     }
 }
@@ -2630,6 +2659,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ndisc_evict_nocarrier"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/disable_policy"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2830,6 +2869,8 @@ mod tests {
             r.ipv6_ignore_routes_with_linkdown.value.as_deref(),
             Some("0")
         );
+        assert_eq!(r.ipv6_ndisc_evict_nocarrier.value.as_deref(), Some("1"));
+        assert_eq!(r.ipv6_disable_policy.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -3090,6 +3131,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ndisc_evict_nocarrier"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/ndisc_evict_nocarrier"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/disable_policy"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/disable_policy"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3302,6 +3363,20 @@ mod tests {
                 .any(|s| s == "lo:1"),
             "lo ignore_routes_with_linkdown=1 must differ from conf/all: {:?}",
             r.ipv6_ignore_routes_with_linkdown_dev
+        );
+        assert_eq!(r.ipv6_ndisc_evict_nocarrier.value.as_deref(), Some("1"));
+        assert!(
+            r.ipv6_ndisc_evict_nocarrier_dev
+                .iter()
+                .any(|s| s == "lo:0"),
+            "lo ndisc_evict_nocarrier=0 must differ from conf/all: {:?}",
+            r.ipv6_ndisc_evict_nocarrier_dev
+        );
+        assert_eq!(r.ipv6_disable_policy.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_disable_policy_dev.iter().any(|s| s == "lo:1"),
+            "lo disable_policy=1 must differ from conf/all: {:?}",
+            r.ipv6_disable_policy_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
