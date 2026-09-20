@@ -25,6 +25,8 @@ pub struct DmiInfo {
     pub chassis_vendor: Sample<String>,
     pub chassis_type: Sample<String>,
     pub smbios_records: Vec<SmbiosRecord>,
+    /// SMBIOS Type 16 物理内存阵列（容量上限 / ECC / 槽位数）。
+    pub memory_arrays: Vec<MemoryArray>,
     pub memory_devices: Vec<MemoryDevice>,
     pub notes: Vec<String>,
 }
@@ -38,12 +40,25 @@ pub struct SmbiosRecord {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct MemoryArray {
+    pub location: Option<String>,
+    pub ecc: Option<String>,
+    pub max_capacity_mb: Option<u64>,
+    pub devices: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct MemoryDevice {
     pub locator: Option<String>,
     pub bank: Option<String>,
     pub size_mb: Option<u64>,
     pub r#type: Option<String>,
+    pub form_factor: Option<String>,
     pub speed_mts: Option<u16>,
+    pub configured_mts: Option<u16>,
+    pub data_width: Option<u16>,
+    pub total_width: Option<u16>,
+    pub rank: Option<u8>,
     pub manufacturer: Option<String>,
     pub serial: Option<String>,
     pub part: Option<String>,
@@ -70,6 +85,7 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         chassis_vendor: field(&id, "chassis_vendor", id_exists),
         chassis_type: field(&id, "chassis_type", id_exists),
         smbios_records: Vec::new(),
+        memory_arrays: Vec::new(),
         memory_devices: Vec::new(),
         notes: Vec::new(),
     };
@@ -79,6 +95,11 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         AccessKind::Ok => {
             if let Some(bytes) = table.value.as_deref() {
                 let parsed = parse_smbios(bytes);
+                info.memory_arrays = parsed
+                    .iter()
+                    .filter(|r| r.kind == 16)
+                    .filter_map(|r| array_from_raw(bytes, r))
+                    .collect();
                 info.memory_devices = parsed
                     .iter()
                     .filter(|r| r.kind == 17)
@@ -247,17 +268,40 @@ pub fn parse_smbios(buf: &[u8]) -> Vec<SmbiosRecord> {
     out
 }
 
-fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
-    // 再次扫描以拿到 formatted area。对 Type 17：
-    // 0x0c size u16, 0x12 form factor, 0x15 locator string#, 0x17 bank#,
-    // 0x12 speed u16 at 0x15? SMBIOS 2.1+ Memory Device:
-    // offset 0x0C size, 0x0E extended size later
-    // 0x12 form factor, 0x13 device set, 0x14 device locator string
-    // 0x15 bank locator string, 0x16 memory type, 0x17 type detail
-    // 0x18 speed u16
-    // 0x1A manufacturer string, 0x1B serial, 0x1C asset, 0x1D part
-    // 为稳妥起见只使用已经切出来的 strings，size 需要 formatted bytes。
-    // 这里做一次轻量重扫：按 handle 找结构。
+fn smbios_str(strings: &[String], idx: u8) -> Option<String> {
+    if idx == 0 {
+        return None;
+    }
+    strings
+        .get((idx as usize).saturating_sub(1))
+        .cloned()
+        .filter(|s| !s.is_empty())
+}
+
+fn next_smbios_struct(buf: &[u8], i: usize) -> Option<usize> {
+    let mut s = i;
+    loop {
+        if s >= buf.len() {
+            return Some(s);
+        }
+        if buf[s] == 0 {
+            s += 1;
+            if s >= buf.len() || buf[s] == 0 {
+                return Some(s + 1);
+            }
+            continue;
+        }
+        while s < buf.len() && buf[s] != 0 {
+            s += 1;
+        }
+        s += 1;
+        if s < buf.len() && buf[s] == 0 {
+            return Some(s + 1);
+        }
+    }
+}
+
+fn array_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryArray> {
     let mut i = 0usize;
     while i + 4 <= buf.len() {
         let kind = buf[i];
@@ -266,7 +310,68 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
             break;
         }
         let handle = u16::from_le_bytes([buf[i + 2], buf[i + 3]]);
-        if kind == 17 && handle == rec.handle && length >= 0x1A {
+        if kind == 16 && handle == rec.handle && length >= 0x0F {
+            let location = match buf[i + 0x04] {
+                0x03 => Some("System board".into()),
+                0x05 => Some("PCI add-on".into()),
+                other => Some(format!("0x{other:02x}")),
+            };
+            let ecc = match buf[i + 0x06] {
+                0x02 => Some("Unknown".into()),
+                0x03 => Some("None".into()),
+                0x04 => Some("Parity".into()),
+                0x05 => Some("Single-bit ECC".into()),
+                0x06 => Some("Multi-bit ECC".into()),
+                other => Some(format!("0x{other:02x}")),
+            };
+            let cap_raw = u32::from_le_bytes([
+                buf[i + 0x07],
+                buf[i + 0x08],
+                buf[i + 0x09],
+                buf[i + 0x0A],
+            ]);
+            let max_capacity_mb = if cap_raw == 0x8000_0000 && length >= 0x17 {
+                let ext = u64::from_le_bytes([
+                    buf[i + 0x0F],
+                    buf[i + 0x10],
+                    buf[i + 0x11],
+                    buf[i + 0x12],
+                    buf[i + 0x13],
+                    buf[i + 0x14],
+                    buf[i + 0x15],
+                    buf[i + 0x16],
+                ]);
+                Some(ext / 1024 / 1024)
+            } else if cap_raw == 0 {
+                None
+            } else {
+                Some(cap_raw as u64 / 1024)
+            };
+            let devices = u16::from_le_bytes([buf[i + 0x0D], buf[i + 0x0E]]);
+            return Some(MemoryArray {
+                location,
+                ecc,
+                max_capacity_mb,
+                devices: if devices == 0 { None } else { Some(devices) },
+            });
+        }
+        i = next_smbios_struct(buf, i + length)?;
+    }
+    None
+}
+
+fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
+    // Type 17（DSP0134）：0x0C size、0x0E form factor、0x10/0x11 locator 字符串号、
+    // 0x12 type、0x15 speed、0x17+ 厂商/序列/料号。不要按 strings 数组下标猜。
+    let mut i = 0usize;
+    while i + 4 <= buf.len() {
+        let kind = buf[i];
+        let length = buf[i + 1] as usize;
+        if length < 4 || i + length > buf.len() {
+            break;
+        }
+        let handle = u16::from_le_bytes([buf[i + 2], buf[i + 3]]);
+        if kind == 17 && handle == rec.handle && length >= 0x0F {
             let size_raw = u16::from_le_bytes([buf[i + 0x0C], buf[i + 0x0D]]);
             let size_mb = if size_raw == 0 || size_raw == 0xFFFF {
                 None
@@ -279,58 +384,104 @@ fn memory_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDevice> {
                 ]);
                 Some(ext as u64)
             } else if size_raw & 0x8000 != 0 {
-                Some((size_raw & 0x7FFF) as u64 / 1024) // KB -> MB
+                Some((size_raw & 0x7FFF) as u64 / 1024)
             } else {
                 Some(size_raw as u64)
             };
-            let speed = if length >= 0x1A {
-                let sp = u16::from_le_bytes([buf[i + 0x18], buf[i + 0x19]]);
+            let form_factor = Some(form_factor_name(buf[i + 0x0E]).to_string());
+            let locator = if length > 0x10 {
+                smbios_str(&rec.strings, buf[i + 0x10])
+            } else {
+                None
+            };
+            let bank = if length > 0x11 {
+                smbios_str(&rec.strings, buf[i + 0x11])
+            } else {
+                None
+            };
+            let mem_type = if length > 0x12 {
+                Some(memory_type_name(buf[i + 0x12]).to_string())
+            } else {
+                None
+            };
+            let speed_mts = if length >= 0x17 {
+                let sp = u16::from_le_bytes([buf[i + 0x15], buf[i + 0x16]]);
                 if sp == 0 { None } else { Some(sp) }
             } else {
                 None
             };
-            let mem_type = if length > 0x16 {
-                Some(memory_type_name(buf[i + 0x16]).to_string())
+            let manufacturer = if length > 0x17 {
+                smbios_str(&rec.strings, buf[i + 0x17])
+            } else {
+                None
+            };
+            let serial = if length > 0x18 {
+                smbios_str(&rec.strings, buf[i + 0x18])
+            } else {
+                None
+            };
+            let part = if length > 0x1A {
+                smbios_str(&rec.strings, buf[i + 0x1A])
+            } else {
+                None
+            };
+            let total_width = if length >= 0x0A {
+                let w = u16::from_le_bytes([buf[i + 0x08], buf[i + 0x09]]);
+                if w == 0 || w == 0xFFFF { None } else { Some(w) }
+            } else {
+                None
+            };
+            let data_width = if length >= 0x0C {
+                let w = u16::from_le_bytes([buf[i + 0x0A], buf[i + 0x0B]]);
+                if w == 0 || w == 0xFFFF { None } else { Some(w) }
+            } else {
+                None
+            };
+            let rank = if length > 0x1D {
+                let r = buf[i + 0x1D] & 0x0F;
+                if r == 0 { None } else { Some(r) }
+            } else {
+                None
+            };
+            let configured_mts = if length >= 0x22 {
+                let sp = u16::from_le_bytes([buf[i + 0x20], buf[i + 0x21]]);
+                if sp == 0 { None } else { Some(sp) }
             } else {
                 None
             };
             return Some(MemoryDevice {
-                locator: rec.strings.first().cloned(),
-                bank: rec.strings.get(1).cloned(),
+                locator,
+                bank,
                 size_mb,
                 r#type: mem_type,
-                speed_mts: speed,
-                manufacturer: rec.strings.get(2).cloned(),
-                serial: rec.strings.get(3).cloned(),
-                part: rec.strings.get(5).cloned(),
+                form_factor,
+                speed_mts,
+                configured_mts,
+                data_width,
+                total_width,
+                rank,
+                manufacturer,
+                serial,
+                part,
             });
         }
-        // skip strings like parse_smbios
-        let mut s = i + length;
-        loop {
-            if s >= buf.len() {
-                i = s;
-                break;
-            }
-            if buf[s] == 0 {
-                s += 1;
-                if s >= buf.len() || buf[s] == 0 {
-                    i = s + 1;
-                    break;
-                }
-                continue;
-            }
-            while s < buf.len() && buf[s] != 0 {
-                s += 1;
-            }
-            s += 1;
-            if s < buf.len() && buf[s] == 0 {
-                i = s + 1;
-                break;
-            }
-        }
+        i = next_smbios_struct(buf, i + length)?;
     }
     None
+}
+
+fn form_factor_name(t: u8) -> &'static str {
+    match t {
+        0x01 => "Other",
+        0x02 => "Unknown",
+        0x08 => "DIMM",
+        0x09 => "RIMM",
+        0x0D => "SODIMM",
+        0x0E => "SRIMM",
+        0x0F => "FB-DIMM",
+        0x10 => "Die",
+        _ => "Unknown",
+    }
 }
 
 fn memory_type_name(t: u8) -> &'static str {
@@ -364,5 +515,77 @@ mod tests {
         let recs = parse_smbios(&buf);
         assert!(recs.iter().any(|r| r.kind == 0 && r.strings.first().map(|s| s.as_str()) == Some("Vendor")));
         assert!(recs.iter().any(|r| r.kind == 127));
+    }
+
+    #[test]
+    fn type17_uses_string_numbers_and_spec_offsets() {
+        let mut rec = vec![0u8; 0x22];
+        rec[0] = 17;
+        rec[1] = 0x22;
+        rec[2] = 1;
+        rec[0x08] = 72;
+        rec[0x0A] = 64;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x20;
+        rec[0x0E] = 0x08;
+        rec[0x10] = 1;
+        rec[0x11] = 2;
+        rec[0x12] = 0x1A;
+        rec[0x15] = 0x80;
+        rec[0x16] = 0x0C;
+        rec[0x17] = 3;
+        rec[0x18] = 4;
+        rec[0x1A] = 5;
+        rec[0x1D] = 0x02;
+        rec[0x20] = 0x6A;
+        rec[0x21] = 0x0A;
+        rec.extend_from_slice(b"DIMM_A1\0BANK 0\0Samsung\0SN1\0M393A\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let mem = recs
+            .iter()
+            .find(|r| r.kind == 17)
+            .and_then(|r| memory_from_raw(&rec, r))
+            .expect("type 17");
+        assert_eq!(mem.locator.as_deref(), Some("DIMM_A1"));
+        assert_eq!(mem.bank.as_deref(), Some("BANK 0"));
+        assert_eq!(mem.size_mb, Some(8192));
+        assert_eq!(mem.r#type.as_deref(), Some("DDR4"));
+        assert_eq!(mem.form_factor.as_deref(), Some("DIMM"));
+        assert_eq!(mem.speed_mts, Some(3200));
+        assert_eq!(mem.configured_mts, Some(2666));
+        assert_eq!(mem.rank, Some(2));
+        assert_eq!(mem.data_width, Some(64));
+        assert_eq!(mem.total_width, Some(72));
+        assert_eq!(mem.manufacturer.as_deref(), Some("Samsung"));
+        assert_eq!(mem.serial.as_deref(), Some("SN1"));
+        assert_eq!(mem.part.as_deref(), Some("M393A"));
+    }
+
+    #[test]
+    fn type16_memory_array_capacity_and_ecc() {
+        let mut rec = vec![0u8; 0x0F];
+        rec[0] = 16;
+        rec[1] = 0x0F;
+        rec[0x04] = 0x03;
+        rec[0x06] = 0x05;
+        rec[0x07] = 0x00;
+        rec[0x08] = 0x00;
+        rec[0x09] = 0x00;
+        rec[0x0A] = 0x02;
+        rec[0x0D] = 4;
+        rec[0x0E] = 0;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let arr = recs
+            .iter()
+            .find(|r| r.kind == 16)
+            .and_then(|r| array_from_raw(&rec, r))
+            .expect("type 16");
+        assert_eq!(arr.location.as_deref(), Some("System board"));
+        assert_eq!(arr.ecc.as_deref(), Some("Single-bit ECC"));
+        assert_eq!(arr.max_capacity_mb, Some(32 * 1024));
+        assert_eq!(arr.devices, Some(4));
     }
 }

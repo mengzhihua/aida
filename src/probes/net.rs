@@ -273,6 +273,12 @@ pub struct NetReport {
     /// `1` 在 NS 里强制带目标链路层地址选项。
     pub ipv6_force_tllao: Sample<String>,
     pub ipv6_force_tllao_dev: Vec<String>,
+    /// `1` 丢掉未经跟踪的 Neighbor Advertisement。
+    pub ipv6_accept_untracked_na: Sample<String>,
+    pub ipv6_accept_untracked_na_dev: Vec<String>,
+    /// `1` 做 NDP 代理。
+    pub ipv6_proxy_ndp: Sample<String>,
+    pub ipv6_proxy_ndp_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -831,6 +837,18 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/force_tllao"));
     let tllao_all = ipv6_force_tllao.value.clone();
     let ipv6_force_tllao_dev = conf_dev_diffs(ctx, "ipv6", "force_tllao", tllao_all.as_deref());
+    let ipv6_accept_untracked_na =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/accept_untracked_na"));
+    let untracked_all = ipv6_accept_untracked_na.value.clone();
+    let ipv6_accept_untracked_na_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "accept_untracked_na",
+        untracked_all.as_deref(),
+    );
+    let ipv6_proxy_ndp = access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/proxy_ndp"));
+    let proxy_ndp_all = ipv6_proxy_ndp.value.clone();
+    let ipv6_proxy_ndp_dev = conf_dev_diffs(ctx, "ipv6", "proxy_ndp", proxy_ndp_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1056,6 +1074,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_drop_unicast_in_l2_multicast_dev,
                 ipv6_force_tllao,
                 ipv6_force_tllao_dev,
+                ipv6_accept_untracked_na,
+                ipv6_accept_untracked_na_dev,
+                ipv6_proxy_ndp,
+                ipv6_proxy_ndp_dev,
                 notes,
             };
         }
@@ -1389,6 +1411,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_drop_unicast_in_l2_multicast_dev,
         ipv6_force_tllao,
         ipv6_force_tllao_dev,
+        ipv6_accept_untracked_na,
+        ipv6_accept_untracked_na_dev,
+        ipv6_proxy_ndp,
+        ipv6_proxy_ndp_dev,
         notes,
     }
 }
@@ -2466,6 +2492,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_untracked_na"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/proxy_ndp"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2655,6 +2691,8 @@ mod tests {
             Some("0")
         );
         assert_eq!(r.ipv6_force_tllao.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_accept_untracked_na.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_proxy_ndp.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2835,6 +2873,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/accept_untracked_na"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/accept_untracked_na"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/proxy_ndp"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/proxy_ndp"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2994,6 +3052,18 @@ mod tests {
             r.ipv6_force_tllao_dev.iter().any(|s| s == "lo:1"),
             "lo force_tllao=1 must differ from conf/all: {:?}",
             r.ipv6_force_tllao_dev
+        );
+        assert_eq!(r.ipv6_accept_untracked_na.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_accept_untracked_na_dev.iter().any(|s| s == "lo:1"),
+            "lo accept_untracked_na=1 must differ from conf/all: {:?}",
+            r.ipv6_accept_untracked_na_dev
+        );
+        assert_eq!(r.ipv6_proxy_ndp.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_proxy_ndp_dev.iter().any(|s| s == "lo:1"),
+            "lo proxy_ndp=1 must differ from conf/all: {:?}",
+            r.ipv6_proxy_ndp_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

@@ -166,6 +166,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.dmi.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
+    html_dmi_memory(&mut html, snap);
 
     section(&mut html, "固件");
     kv(
@@ -272,6 +273,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
         ],
     );
+    html_dmi_memory(&mut html, snap);
     if !snap.zmem.zram.is_empty() {
         html.push_str("<table><tr><th>zram</th><th>disksize</th><th>algo</th><th>orig</th><th>compr</th></tr>");
         for z in &snap.zmem.zram {
@@ -795,6 +797,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("iommu", &snap.buses.iommu),
         ("hid", &snap.buses.hid),
         ("memory", &snap.buses.memory),
+        ("firewire", &snap.buses.firewire),
+        ("greybus", &snap.buses.greybus),
+        ("rapidio", &snap.buses.rapidio),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1299,7 +1304,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1368,6 +1373,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 关".into(),
             Some("1") => "1 强制".into(),
             _ => snap.net.ipv6_force_tllao.display(),
+        },
+        match snap.net.ipv6_accept_untracked_na.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 接受".into(),
+            _ => snap.net.ipv6_accept_untracked_na.display(),
+        },
+        match snap.net.ipv6_proxy_ndp.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 代理".into(),
+            _ => snap.net.ipv6_proxy_ndp.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1500,6 +1515,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">force_tllao iface {}</p>",
             esc(&snap.net.ipv6_force_tllao_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_accept_untracked_na_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">untracked_na iface {}</p>",
+            esc(&snap.net.ipv6_accept_untracked_na_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_proxy_ndp_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">proxy_ndp iface {}</p>",
+            esc(&snap.net.ipv6_proxy_ndp_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2015,7 +2042,8 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "arch",
                 format!(
-                    "{} {}-bit profiling {}",
+                    "{} {} {}-bit profiling {}",
+                    snap.sysctl.kernel_arch.display(),
                     snap.software.cpu_byteorder.display(),
                     snap.software.address_bits.display(),
                     snap.software.profiling.display()
@@ -2281,7 +2309,8 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "bootloader",
                 format!(
-                    "type {} version {} firmware_sysfs {}/{} real_root {} schedstats {} traceoff_warn {}",
+                    "arch {} type {} version {} firmware_sysfs {}/{} real_root {} schedstats {} traceoff_warn {}",
+                    snap.sysctl.kernel_arch.display(),
                     snap.sysctl.bootloader_type.display(),
                     snap.sysctl.bootloader_version.display(),
                     match snap.sysctl.firmware_force_sysfs_fallback.value.as_deref() {
@@ -2479,6 +2508,62 @@ fn alert_level_label(level: AlertLevel) -> &'static str {
 
 fn opt_f(v: Option<f64>) -> String {
     v.map(|x| format!("{x:.3}")).unwrap_or_else(|| "—".into())
+}
+
+fn html_dmi_memory(html: &mut String, snap: &HardwareSnapshot) {
+    if !snap.dmi.memory_arrays.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 16 物理内存阵列</p>");
+        html.push_str("<table><tr><th>位置</th><th>ECC</th><th>最大容量</th><th>槽位</th></tr>");
+        for a in &snap.dmi.memory_arrays {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(a.location.as_deref().unwrap_or("—")),
+                esc(a.ecc.as_deref().unwrap_or("—")),
+                a.max_capacity_mb
+                    .map(|n| format!("{n} MB"))
+                    .unwrap_or_else(|| "—".into()),
+                a.devices
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.memory_devices.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 17 / SPD-like</p>");
+        html.push_str("<table><tr><th>槽位</th><th>Bank</th><th>容量</th><th>类型</th><th>外形</th><th>速度</th><th>配置</th><th>数据/总宽</th><th>Rank</th><th>厂商</th><th>序列号</th><th>料号</th></tr>");
+        for m in &snap.dmi.memory_devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(m.locator.as_deref().unwrap_or("—")),
+                esc(m.bank.as_deref().unwrap_or("—")),
+                m.size_mb
+                    .map(|n| format!("{n} MB"))
+                    .unwrap_or_else(|| "empty".into()),
+                esc(m.r#type.as_deref().unwrap_or("—")),
+                esc(m.form_factor.as_deref().unwrap_or("—")),
+                m.speed_mts
+                    .map(|n| format!("{n} MT/s"))
+                    .unwrap_or_else(|| "—".into()),
+                m.configured_mts
+                    .map(|n| format!("{n} MT/s"))
+                    .unwrap_or_else(|| "—".into()),
+                match (m.data_width, m.total_width) {
+                    (Some(d), Some(t)) => format!("{d}/{t}"),
+                    (Some(d), None) => d.to_string(),
+                    (None, Some(t)) => format!("/{t}"),
+                    _ => "—".into(),
+                },
+                m.rank
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                esc(m.manufacturer.as_deref().unwrap_or("—")),
+                esc(m.serial.as_deref().unwrap_or("—")),
+                esc(m.part.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {

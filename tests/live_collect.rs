@@ -258,6 +258,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"ipv6_force_tllao\""));
     assert!(json.contains("\"sched_schedstats\""));
     assert!(json.contains("\"traceoff_on_warning\""));
+    assert!(json.contains("\"memory_arrays\""));
+    assert!(json.contains("\"firewire\""));
+    assert!(json.contains("\"ipv6_accept_untracked_na\""));
+    assert!(json.contains("\"ipv6_proxy_ndp\""));
+    assert!(json.contains("\"kernel_arch\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),

@@ -624,12 +624,49 @@ impl AidaApp {
                 .value
                 .map(|v| crate::export::format_bytes(v * 1024))
                 .unwrap_or_else(|| "—".into());
+        kv(
+            ui,
+            self.t("内存", "Memory"),
+            &format!(
+                "{}  (avail {avail})",
+                crate::export::format_bytes(kb * 1024)
+            ),
+        );
+        }
+        if !self.snap.dmi.memory_devices.is_empty() || !self.snap.dmi.memory_arrays.is_empty() {
+            let populated = self
+                .snap
+                .dmi
+                .memory_devices
+                .iter()
+                .filter(|m| m.size_mb.unwrap_or(0) > 0)
+                .count();
+            let from_arrays: usize = self
+                .snap
+                .dmi
+                .memory_arrays
+                .iter()
+                .filter_map(|a| a.devices.map(|n| n as usize))
+                .sum();
+            let slots = from_arrays.max(self.snap.dmi.memory_devices.len());
+            let mut kinds: Vec<String> = Vec::new();
+            for m in &self.snap.dmi.memory_devices {
+                if let Some(t) = m.r#type.as_deref() {
+                    if !kinds.iter().any(|k| k == t) {
+                        kinds.push(t.to_string());
+                    }
+                }
+            }
             kv(
                 ui,
-                self.t("内存", "Memory"),
+                self.t("内存插槽", "DIMM slots"),
                 &format!(
-                    "{}  (avail {avail})",
-                    crate::export::format_bytes(kb * 1024)
+                    "{populated} / {slots}{}",
+                    if kinds.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  {}", kinds.join(" "))
+                    }
                 ),
             );
         }
@@ -1067,6 +1104,7 @@ impl AidaApp {
                 ),
             );
         }
+        self.ui_dmi_memory(ui);
         kv(
             ui,
             "vmstat",
@@ -1337,26 +1375,56 @@ impl AidaApp {
         for n in &self.snap.dmi.notes {
             ui.colored_label(Color32::from_rgb(255, 179, 71), n);
         }
-        if !self.snap.dmi.memory_devices.is_empty() {
-            ui.separator();
-            ui.strong(self.t("内存插槽 (SMBIOS Type 17)", "Memory devices"));
-            for m in &self.snap.dmi.memory_devices {
-                ui.label(format!(
-                    "{} {} {:?} MB {:?} {:?}",
-                    m.locator.as_deref().unwrap_or("?"),
-                    m.r#type.as_deref().unwrap_or("?"),
-                    m.size_mb,
-                    m.speed_mts,
-                    m.part
-                ));
-            }
-        }
+        self.ui_dmi_memory(ui);
         if !self.snap.dmi.smbios_records.is_empty() {
             ui.collapsing("SMBIOS records", |ui| {
                 for r in &self.snap.dmi.smbios_records {
                     ui.label(format!("[{}] {} {:?}", r.kind_name, r.handle, r.strings));
                 }
             });
+        }
+    }
+
+    fn ui_dmi_memory(&self, ui: &mut egui::Ui) {
+        if self.snap.dmi.memory_arrays.is_empty() && self.snap.dmi.memory_devices.is_empty() {
+            return;
+        }
+        ui.separator();
+        if !self.snap.dmi.memory_arrays.is_empty() {
+            ui.strong(self.t(
+                "物理内存阵列 (SMBIOS Type 16)",
+                "Physical memory array",
+            ));
+            for (i, a) in self.snap.dmi.memory_arrays.iter().enumerate() {
+                kv(
+                    ui,
+                    &format!("array {i}"),
+                    &format!(
+                        "{}  ECC {}  max {}  slots {}",
+                        a.location.as_deref().unwrap_or("—"),
+                        a.ecc.as_deref().unwrap_or("—"),
+                        a.max_capacity_mb
+                            .map(|n| format!("{n} MB"))
+                            .unwrap_or_else(|| "—".into()),
+                        a.devices
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "—".into())
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.memory_devices.is_empty() {
+            ui.strong(self.t(
+                "内存模组 / SPD (SMBIOS Type 17)",
+                "DIMM / SPD-like",
+            ));
+            for m in &self.snap.dmi.memory_devices {
+                kv(
+                    ui,
+                    m.locator.as_deref().unwrap_or("?"),
+                    &dimm_line(m),
+                );
+            }
         }
     }
 
@@ -2366,7 +2434,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2439,6 +2507,16 @@ impl AidaApp {
                     Some("0") => "0 关".into(),
                     Some("1") => "1 强制".into(),
                     _ => self.snap.net.ipv6_force_tllao.display(),
+                },
+                match self.snap.net.ipv6_accept_untracked_na.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    Some("1") => "1 接受".into(),
+                    _ => self.snap.net.ipv6_accept_untracked_na.display(),
+                },
+                match self.snap.net.ipv6_proxy_ndp.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    Some("1") => "1 代理".into(),
+                    _ => self.snap.net.ipv6_proxy_ndp.display(),
                 }
             ),
         );
@@ -2617,6 +2695,20 @@ impl AidaApp {
                 ui,
                 "force_tllao iface",
                 &self.snap.net.ipv6_force_tllao_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_accept_untracked_na_dev.is_empty() {
+            kv(
+                ui,
+                "untracked_na iface",
+                &self.snap.net.ipv6_accept_untracked_na_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_proxy_ndp_dev.is_empty() {
+            kv(
+                ui,
+                "proxy_ndp iface",
+                &self.snap.net.ipv6_proxy_ndp_dev.join("  "),
             );
         }
         kv(
@@ -3226,6 +3318,9 @@ impl AidaApp {
             ("iommu", &self.snap.buses.iommu),
             ("hid", &self.snap.buses.hid),
             ("memory", &self.snap.buses.memory),
+            ("firewire", &self.snap.buses.firewire),
+            ("greybus", &self.snap.buses.greybus),
+            ("rapidio", &self.snap.buses.rapidio),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
@@ -3252,7 +3347,8 @@ impl AidaApp {
             ui,
             "arch",
             &format!(
-                "{}  {}-bit  profiling {}",
+                "{}  {}  {}-bit  profiling {}",
+                self.snap.sysctl.kernel_arch.display(),
                 self.snap.software.cpu_byteorder.display(),
                 self.snap.software.address_bits.display(),
                 self.snap.software.profiling.display()
@@ -3684,7 +3780,8 @@ impl AidaApp {
             ui,
             "bootloader",
             &format!(
-                "type {}  version {}  firmware_sysfs {}/{}  real_root {}  schedstats {}  traceoff_warn {}",
+                "arch {}  type {}  version {}  firmware_sysfs {}/{}  real_root {}  schedstats {}  traceoff_warn {}",
+                self.snap.sysctl.kernel_arch.display(),
                 self.snap.sysctl.bootloader_type.display(),
                 self.snap.sysctl.bootloader_version.display(),
                 match self.snap.sysctl.firmware_force_sysfs_fallback.value.as_deref() {
@@ -4218,6 +4315,40 @@ fn kv_name_list(
     } else if let Some(n) = notes.iter().find(|s| s.contains(path_frag)) {
         kv(ui, label, n);
     }
+}
+
+fn dimm_line(m: &crate::probes::dmi::MemoryDevice) -> String {
+    let size = m
+        .size_mb
+        .map(|n| format!("{n} MB"))
+        .unwrap_or_else(|| "empty".into());
+    let speed = match (m.speed_mts, m.configured_mts) {
+        (Some(s), Some(c)) if s != c => format!("{s}/{c} MT/s"),
+        (Some(s), _) => format!("{s} MT/s"),
+        (None, Some(c)) => format!("cfg {c} MT/s"),
+        _ => "—".into(),
+    };
+    let width = match (m.data_width, m.total_width) {
+        (Some(d), Some(t)) => format!("{d}/{t} bit"),
+        (Some(d), None) => format!("{d} bit"),
+        (None, Some(t)) => format!("total {t} bit"),
+        _ => "—".into(),
+    };
+    format!(
+        "{}  {}  {} {}  {}  {}  {}  {}  {}  {}",
+        m.bank.as_deref().unwrap_or("—"),
+        size,
+        m.r#type.as_deref().unwrap_or("?"),
+        m.form_factor.as_deref().unwrap_or(""),
+        speed,
+        width,
+        m.rank
+            .map(|r| format!("rank {r}"))
+            .unwrap_or_else(|| "—".into()),
+        m.manufacturer.as_deref().unwrap_or("—"),
+        m.serial.as_deref().unwrap_or("—"),
+        m.part.as_deref().unwrap_or("—"),
+    )
 }
 
 fn kv(ui: &mut egui::Ui, k: &str, v: &str) {

@@ -216,6 +216,8 @@ pub struct SysctlReport {
     pub sched_schedstats: Sample<String>,
     /// `0` 表示 WARN 时不关掉 tracing。无 tracing 时 NotFound。
     pub traceoff_on_warning: Sample<String>,
+    /// `kernel.arch`，与 `uname -m` 同类，不调用 uname。
+    pub kernel_arch: Sample<String>,
     pub sysvipc_shm: usize,
     pub sysvipc_sem: usize,
     pub sysvipc_msg: usize,
@@ -499,6 +501,7 @@ pub fn collect(ctx: &ProbeCtx) -> SysctlReport {
         real_root_dev: access::read_u64(ctx.proc_path("sys/kernel/real-root-dev")),
         sched_schedstats: access::read_trimmed(ctx.proc_path("sys/kernel/sched_schedstats")),
         traceoff_on_warning: access::read_trimmed(ctx.proc_path("sys/kernel/traceoff_on_warning")),
+        kernel_arch: access::read_trimmed(ctx.proc_path("sys/kernel/arch")),
         sysvipc_shm: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/shm"))),
         sysvipc_sem: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/sem"))),
         sysvipc_msg: count_table_rows(&access::read_trimmed(ctx.proc_path("sysvipc/msg"))),
@@ -878,6 +881,7 @@ mod tests {
         fs::write(root.join("proc/sys/kernel/real-root-dev"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/sched_schedstats"), "0\n").unwrap();
         fs::write(root.join("proc/sys/kernel/traceoff_on_warning"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/arch"), "x86_64\n").unwrap();
         fs::write(
             root.join("proc/sys/kernel/shmmax"),
             "18446744073692774399\n",
@@ -1033,6 +1037,7 @@ mod tests {
         assert_eq!(r.real_root_dev.value, Some(0));
         assert_eq!(r.sched_schedstats.value.as_deref(), Some("0"));
         assert_eq!(r.traceoff_on_warning.value.as_deref(), Some("0"));
+        assert_eq!(r.kernel_arch.value.as_deref(), Some("x86_64"));
         assert_eq!(r.shmmax.value.as_deref(), Some("18446744073692774399"));
         assert_eq!(r.shmmni.value, Some(4096));
         assert_eq!(r.mqueue_queues_max.value, Some(256));
