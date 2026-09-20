@@ -838,40 +838,53 @@ fn port_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PortConnector> {
     let internal = smbios_str(&rec.strings, buf[i + 0x04]);
     let external = smbios_str(&rec.strings, buf[i + 0x06]);
     let conn = buf[i + 0x07];
-    let connector = Some(connector_type_name(if conn == 0 { buf[i + 0x05] } else { conn }).into());
+    let connector = Some(connector_type_name(if conn == 0 { buf[i + 0x05] } else { conn }));
     Some(PortConnector {
         internal,
         external,
         connector,
-        port: Some(port_type_name(buf[i + 0x08]).into()),
+        port: Some(port_type_name(buf[i + 0x08])),
     })
 }
 
-fn connector_type_name(t: u8) -> &'static str {
+/// DSP0134 Table 42 Connector Types。未知编号保留十六进制，不折叠成 Other。
+fn connector_type_name(t: u8) -> String {
     match t {
-        0x00 => "None",
-        0x0A => "DB-9 female",
-        0x0B => "DB-9 male",
-        0x11 => "PS/2",
-        0x12 => "USB",
-        0x1F => "RJ-45",
-        0x20 => "IEEE 1394",
-        0x21 => "SAS/SATA",
-        0x22 => "USB-C",
-        _ => "Other",
+        0x00 => "None".into(),
+        0x08 => "DB-9 male".into(),
+        0x09 => "DB-9 female".into(),
+        0x0A => "RJ-11".into(),
+        0x0B => "RJ-45".into(),
+        0x0F => "PS/2".into(),
+        0x12 => "USB".into(),
+        0x1F => "Mini-jack".into(),
+        0x21 => "IEEE 1394".into(),
+        0x22 => "SAS/SATA".into(),
+        0x23 => "USB-C".into(),
+        0xFF => "Other".into(),
+        n => format!("0x{n:02X}"),
     }
 }
 
-fn port_type_name(t: u8) -> &'static str {
+/// DSP0134 Table 43 Port Types。未知编号保留十六进制。
+fn port_type_name(t: u8) -> String {
     match t {
-        0x00 => "None",
-        0x01 => "Parallel",
-        0x08 => "USB",
-        0x09 => "Access Bus",
-        0x10 => "Network",
-        0x1F => "SAS/SATA",
-        0x20 => "USB Type-C",
-        _ => "Other",
+        0x00 => "None".into(),
+        0x01 => "Parallel".into(),
+        0x08 => "Serial 16550".into(),
+        0x09 => "Serial 16550A".into(),
+        0x0D => "Keyboard".into(),
+        0x0E => "Mouse".into(),
+        0x10 => "USB".into(),
+        0x11 => "FireWire".into(),
+        0x16 => "Access Bus".into(),
+        0x1D => "Audio".into(),
+        0x1F => "Network".into(),
+        0x20 => "SATA".into(),
+        0x21 => "SAS".into(),
+        0x23 => "Thunderbolt".into(),
+        0xFF => "Other".into(),
+        n => format!("0x{n:02X}"),
     }
 }
 
@@ -926,11 +939,8 @@ fn psu_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PowerSupply> {
         return None;
     }
     let max = word(buf, i, 0x0C);
-    let max_watts = if max == 0 || max == 0x8000 {
-        None
-    } else {
-        Some(max)
-    };
+    // DSP0134：仅 8000h 表示未知；0 仍是 0 W。
+    let max_watts = if max == 0x8000 { None } else { Some(max) };
     let ch = word(buf, i, 0x0E);
     Some(PowerSupply {
         location: smbios_str(&rec.strings, buf[i + 0x05]),
@@ -1526,7 +1536,7 @@ mod tests {
         usb[0x05] = 0x12;
         usb[0x06] = 2;
         usb[0x07] = 0x12;
-        usb[0x08] = 0x08;
+        usb[0x08] = 0x10;
         usb.extend_from_slice(b"JUSB1\0USB3_1\0\0");
         rec.extend(usb);
         let mut lan = vec![0u8; 0x09];
@@ -1535,8 +1545,8 @@ mod tests {
         lan[2] = 2;
         lan[0x04] = 1;
         lan[0x06] = 2;
-        lan[0x07] = 0x1F;
-        lan[0x08] = 0x10;
+        lan[0x07] = 0x0B;
+        lan[0x08] = 0x1F;
         lan.extend_from_slice(b"JLAN1\0LAN1\0\0");
         rec.extend(lan);
         rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
@@ -1569,7 +1579,7 @@ mod tests {
         rec[0x04] = 1;
         rec[0x05] = 0x12;
         rec[0x07] = 0x00;
-        rec[0x08] = 0x08;
+        rec[0x08] = 0x10;
         rec.extend_from_slice(b"JUSB2\0\0");
         rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
         let recs = parse_smbios(&rec);
@@ -1582,6 +1592,18 @@ mod tests {
         assert!(p.external.is_none());
         assert_eq!(p.connector.as_deref(), Some("USB"));
         assert_eq!(p.port.as_deref(), Some("USB"));
+    }
+
+    #[test]
+    fn type8_spec_codes_are_not_shifted() {
+        assert_eq!(connector_type_name(0x0B), "RJ-45");
+        assert_eq!(connector_type_name(0x1F), "Mini-jack");
+        assert_eq!(connector_type_name(0x23), "USB-C");
+        assert_eq!(port_type_name(0x08), "Serial 16550");
+        assert_eq!(port_type_name(0x10), "USB");
+        assert_eq!(port_type_name(0x1F), "Network");
+        assert_eq!(connector_type_name(0x40), "0x40");
+        assert_eq!(port_type_name(0x30), "0x30");
     }
 
     #[test]
@@ -1631,5 +1653,41 @@ mod tests {
         assert_eq!(p.manufacturer.as_deref(), Some("Corsair"));
         assert_eq!(p.max_watts, Some(300));
         assert!(p.present);
+    }
+
+    #[test]
+    fn type39_zero_watts_is_zero_not_unknown() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 39;
+        rec[1] = 0x10;
+        rec[0x06] = 1;
+        rec.extend_from_slice(b"PS-0\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 39)
+            .and_then(|r| psu_from_raw(&rec, r))
+            .expect("type 39");
+        assert_eq!(p.max_watts, Some(0));
+    }
+
+    #[test]
+    fn type39_8000h_watts_is_unknown() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 39;
+        rec[1] = 0x10;
+        rec[0x06] = 1;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec.extend_from_slice(b"PS-U\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 39)
+            .and_then(|r| psu_from_raw(&rec, r))
+            .expect("type 39");
+        assert_eq!(p.max_watts, None);
     }
 }

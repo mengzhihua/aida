@@ -2680,11 +2680,9 @@ impl AidaApp {
                     Some("1") => "1 乐观".into(),
                     _ => self.snap.net.ipv6_optimistic_dad.display(),
                 },
-                match self.snap.net.ipv6_accept_source_route.value.as_deref() {
-                    Some("0") => "0 关".into(),
-                    Some("1") => "1 接受".into(),
-                    _ => self.snap.net.ipv6_accept_source_route.display(),
-                }
+                crate::probes::net::ipv6_accept_source_route_display(
+                    &self.snap.net.ipv6_accept_source_route,
+                )
             ),
         );
         kv(

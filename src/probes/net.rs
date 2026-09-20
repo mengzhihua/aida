@@ -288,7 +288,7 @@ pub struct NetReport {
     /// `1` 允许 Optimistic DAD（地址未完成 DAD 也可使用）。
     pub ipv6_optimistic_dad: Sample<String>,
     pub ipv6_optimistic_dad_dev: Vec<String>,
-    /// `1` 接受 IPv6 源路由头。
+    /// `>= 0` 接受 routing header type 2；`< 0` 拒绝。默认 `0` 不是关。
     pub ipv6_accept_source_route: Sample<String>,
     pub ipv6_accept_source_route_dev: Vec<String>,
     pub notes: Vec<String>,
@@ -305,6 +305,19 @@ pub fn ping_group_range_display(sample: &Sample<String>) -> String {
             if min > max {
                 return format!("{min} {max} 无特权ping");
             }
+        }
+    }
+    sample.display()
+}
+
+/// IPv6 `accept_source_route` 是整数：`>=0` 接受 RH type 2（默认 0），`<0` 拒绝。
+pub fn ipv6_accept_source_route_display(sample: &Sample<String>) -> String {
+    if let Some(raw) = sample.value.as_deref() {
+        if let Ok(n) = raw.trim().parse::<i64>() {
+            if n < 0 {
+                return format!("{n} 拒RH");
+            }
+            return format!("{n} RH2");
         }
     }
     sample.display()
@@ -3010,7 +3023,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv6/conf/lo/accept_source_route"),
-            "1\n",
+            "-1\n",
         )
         .unwrap();
         let ctx = ProbeCtx {
@@ -3205,8 +3218,8 @@ mod tests {
         );
         assert_eq!(r.ipv6_accept_source_route.value.as_deref(), Some("0"));
         assert!(
-            r.ipv6_accept_source_route_dev.iter().any(|s| s == "lo:1"),
-            "lo accept_source_route=1 must differ from conf/all: {:?}",
+            r.ipv6_accept_source_route_dev.iter().any(|s| s == "lo:-1"),
+            "lo accept_source_route=-1 must differ from conf/all: {:?}",
             r.ipv6_accept_source_route_dev
         );
         let _ = fs::remove_dir_all(&root);
@@ -3288,5 +3301,15 @@ mod tests {
         assert_eq!(ping_group_range_display(&open), "0 2147483647");
         let missing = Sample::<String>::missing("ping_group_range");
         assert!(ping_group_range_display(&missing).contains("不存在"));
+    }
+
+    #[test]
+    fn ipv6_accept_source_route_zero_is_rh2_not_off() {
+        let zero = Sample::ok("0".into(), "accept_source_route");
+        assert_eq!(ipv6_accept_source_route_display(&zero), "0 RH2");
+        let pos = Sample::ok("2".into(), "accept_source_route");
+        assert_eq!(ipv6_accept_source_route_display(&pos), "2 RH2");
+        let neg = Sample::ok("-1".into(), "accept_source_route");
+        assert_eq!(ipv6_accept_source_route_display(&neg), "-1 拒RH");
     }
 }
