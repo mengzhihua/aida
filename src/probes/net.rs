@@ -263,6 +263,16 @@ pub struct NetReport {
     /// `1` 丢掉未经请求的 Neighbor Advertisement。
     pub ipv6_drop_unsolicited_na: Sample<String>,
     pub ipv6_drop_unsolicited_na_dev: Vec<String>,
+    /// `0` 表示 FACK 关闭（现代内核常与 SACK 合并，键仍在）。
+    pub tcp_fack: Sample<String>,
+    /// `0` 表示不走低延迟小包路径（偏吞吐）。
+    pub tcp_low_latency: Sample<String>,
+    /// `1` 丢掉 L2 组播/广播里的单播 IPv6。
+    pub ipv6_drop_unicast_in_l2_multicast: Sample<String>,
+    pub ipv6_drop_unicast_in_l2_multicast_dev: Vec<String>,
+    /// `1` 在 NS 里强制带目标链路层地址选项。
+    pub ipv6_force_tllao: Sample<String>,
+    pub ipv6_force_tllao_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -805,6 +815,22 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "drop_unsolicited_na",
         drop_na_all.as_deref(),
     );
+    let tcp_fack = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_fack"));
+    let tcp_low_latency = access::read_trimmed(ctx.proc_path("sys/net/ipv4/tcp_low_latency"));
+    let ipv6_drop_unicast_in_l2_multicast = access::read_trimmed(
+        ctx.proc_path("sys/net/ipv6/conf/all/drop_unicast_in_l2_multicast"),
+    );
+    let drop_l2_all = ipv6_drop_unicast_in_l2_multicast.value.clone();
+    let ipv6_drop_unicast_in_l2_multicast_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "drop_unicast_in_l2_multicast",
+        drop_l2_all.as_deref(),
+    );
+    let ipv6_force_tllao =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/force_tllao"));
+    let tllao_all = ipv6_force_tllao.value.clone();
+    let ipv6_force_tllao_dev = conf_dev_diffs(ctx, "ipv6", "force_tllao", tllao_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1024,6 +1050,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_accept_redirects_dev,
                 ipv6_drop_unsolicited_na,
                 ipv6_drop_unsolicited_na_dev,
+                tcp_fack,
+                tcp_low_latency,
+                ipv6_drop_unicast_in_l2_multicast,
+                ipv6_drop_unicast_in_l2_multicast_dev,
+                ipv6_force_tllao,
+                ipv6_force_tllao_dev,
                 notes,
             };
         }
@@ -1351,6 +1383,12 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_accept_redirects_dev,
         ipv6_drop_unsolicited_na,
         ipv6_drop_unsolicited_na_dev,
+        tcp_fack,
+        tcp_low_latency,
+        ipv6_drop_unicast_in_l2_multicast,
+        ipv6_drop_unicast_in_l2_multicast_dev,
+        ipv6_force_tllao,
+        ipv6_force_tllao_dev,
         notes,
     }
 }
@@ -2415,6 +2453,18 @@ mod tests {
             "0\n",
         )
         .unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_fack"), "0\n").unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_low_latency"), "0\n").unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/drop_unicast_in_l2_multicast"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/force_tllao"),
+            "0\n",
+        )
+        .unwrap();
         fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
@@ -2598,6 +2648,13 @@ mod tests {
         assert_eq!(r.ipv6_accept_ra_from_local.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_accept_redirects.value.as_deref(), Some("1"));
         assert_eq!(r.ipv6_drop_unsolicited_na.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_fack.value.as_deref(), Some("0"));
+        assert_eq!(r.tcp_low_latency.value.as_deref(), Some("0"));
+        assert_eq!(
+            r.ipv6_drop_unicast_in_l2_multicast.value.as_deref(),
+            Some("0")
+        );
+        assert_eq!(r.ipv6_force_tllao.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -2758,6 +2815,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/drop_unicast_in_l2_multicast"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/drop_unicast_in_l2_multicast"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/force_tllao"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/force_tllao"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -2900,6 +2977,23 @@ mod tests {
                 .any(|s| s == "lo:1"),
             "lo drop_unsolicited_na=1 must differ from conf/all: {:?}",
             r.ipv6_drop_unsolicited_na_dev
+        );
+        assert_eq!(
+            r.ipv6_drop_unicast_in_l2_multicast.value.as_deref(),
+            Some("0")
+        );
+        assert!(
+            r.ipv6_drop_unicast_in_l2_multicast_dev
+                .iter()
+                .any(|s| s == "lo:1"),
+            "lo drop_unicast_in_l2_multicast=1 must differ from conf/all: {:?}",
+            r.ipv6_drop_unicast_in_l2_multicast_dev
+        );
+        assert_eq!(r.ipv6_force_tllao.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_force_tllao_dev.iter().any(|s| s == "lo:1"),
+            "lo force_tllao=1 must differ from conf/all: {:?}",
+            r.ipv6_force_tllao_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

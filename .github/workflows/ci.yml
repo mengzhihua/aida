@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, cursor/rc-stm-peci-587c]
 
 env:
   CARGO_TERM_COLOR: always

@@ -792,6 +792,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("wakeup", &snap.buses.wakeup),
         ("msr", &snap.buses.msr),
         ("dpll", &snap.buses.dpll),
+        ("iommu", &snap.buses.iommu),
+        ("hid", &snap.buses.hid),
+        ("memory", &snap.buses.memory),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1193,7 +1196,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         snap.net.ip_dynaddr.display()
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">thin_linear {} limit_out {} comp_sack {} fwd_prio {} fib_notify {} echo_probe {} fwmark {} ndisc_notify {} early_demux {}/{} sack_delay {}ns sack_slack {}ns app_win {} tfo_blackhole {}s base_mss {} min_snd_mss {} reorder {} recovery {} max_reorder {} tso_div {} udp_demux {} syn_linear {} fwd_pmtu {} no_ssthresh {} min_rtt_wlen {} mtu_floor {} tso_rtt_log {} udp_rmem_min {} udp_wmem_min {} shrink_win {} l3mdev {} migrate_req {} reflect_tos {} rto_min {}us plb {} udp_l3mdev {} backlog_ack {} fwmark_reflect {} signed_win {} stdurg {} ulp {} plb_cong {} plb_idle {} plb_rehash {} plb_rto {}s pingpong {} retrans_collapse {} probe_int {} probe_th {} ehash {} child_ehash {} udp_hash {} autobind {}</p>",
+        "<p class=\"muted\">thin_linear {} limit_out {} comp_sack {} fwd_prio {} fib_notify {} echo_probe {} fwmark {} ndisc_notify {} early_demux {}/{} sack_delay {}ns sack_slack {}ns app_win {} tfo_blackhole {}s base_mss {} min_snd_mss {} reorder {} recovery {} max_reorder {} tso_div {} udp_demux {} syn_linear {} fwd_pmtu {} no_ssthresh {} min_rtt_wlen {} mtu_floor {} tso_rtt_log {} udp_rmem_min {} udp_wmem_min {} shrink_win {} l3mdev {} migrate_req {} reflect_tos {} rto_min {}us plb {} udp_l3mdev {} backlog_ack {} fwmark_reflect {} signed_win {} stdurg {} ulp {} plb_cong {} plb_idle {} plb_rehash {} plb_rto {}s pingpong {} retrans_collapse {} probe_int {} probe_th {} ehash {} child_ehash {} udp_hash {} autobind {} fack {} low_lat {}</p>",
         snap.net.tcp_thin_linear_timeouts.display(),
         snap.net.tcp_limit_output_bytes.display(),
         snap.net.tcp_comp_sack_nr.display(),
@@ -1285,10 +1288,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         match snap.net.ip_autobind_reuse.value.as_deref() {
             Some("0") => "0 关".into(),
             _ => snap.net.ip_autobind_reuse.display(),
+        },
+        match snap.net.tcp_fack.value.as_deref() {
+            Some("0") => "0 关".into(),
+            _ => snap.net.tcp_fack.display(),
+        },
+        match snap.net.tcp_low_latency.value.as_deref() {
+            Some("0") => "0 吞吐".into(),
+            _ => snap.net.tcp_low_latency.display(),
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1347,6 +1358,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 留".into(),
             Some("1") => "1 丢".into(),
             _ => snap.net.ipv6_drop_unsolicited_na.display(),
+        },
+        match snap.net.ipv6_drop_unicast_in_l2_multicast.value.as_deref() {
+            Some("0") => "0 留".into(),
+            Some("1") => "1 丢".into(),
+            _ => snap.net.ipv6_drop_unicast_in_l2_multicast.display(),
+        },
+        match snap.net.ipv6_force_tllao.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 强制".into(),
+            _ => snap.net.ipv6_force_tllao.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1467,6 +1488,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">drop_unsolicited_na iface {}</p>",
             esc(&snap.net.ipv6_drop_unsolicited_na_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_drop_unicast_in_l2_multicast_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">drop_unicast_l2mcast iface {}</p>",
+            esc(&snap.net.ipv6_drop_unicast_in_l2_multicast_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_force_tllao_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">force_tllao iface {}</p>",
+            esc(&snap.net.ipv6_force_tllao_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2248,7 +2281,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "bootloader",
                 format!(
-                    "type {} version {} firmware_sysfs {}/{} real_root {}",
+                    "type {} version {} firmware_sysfs {}/{} real_root {} schedstats {} traceoff_warn {}",
                     snap.sysctl.bootloader_type.display(),
                     snap.sysctl.bootloader_version.display(),
                     match snap.sysctl.firmware_force_sysfs_fallback.value.as_deref() {
@@ -2262,6 +2295,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                     match snap.sysctl.real_root_dev.value {
                         Some(0) => "0".into(),
                         _ => snap.sysctl.real_root_dev.display(),
+                    },
+                    match snap.sysctl.sched_schedstats.value.as_deref() {
+                        Some("0") => "0 关".into(),
+                        _ => snap.sysctl.sched_schedstats.display(),
+                    },
+                    match snap.sysctl.traceoff_on_warning.value.as_deref() {
+                        Some("0") => "0 关".into(),
+                        _ => snap.sysctl.traceoff_on_warning.display(),
                     }
                 ),
             ),

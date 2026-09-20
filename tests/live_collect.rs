@@ -253,6 +253,11 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"peci\""));
     assert!(json.contains("\"tcp_ehash_entries\""));
     assert!(json.contains("\"bootloader_type\""));
+    assert!(json.contains("\"tcp_fack\""));
+    assert!(json.contains("\"tcp_low_latency\""));
+    assert!(json.contains("\"ipv6_force_tllao\""));
+    assert!(json.contains("\"sched_schedstats\""));
+    assert!(json.contains("\"traceoff_on_warning\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),
