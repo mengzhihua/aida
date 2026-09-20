@@ -82,6 +82,12 @@ pub struct BusesReport {
     pub auxiliary: Vec<String>,
     /// USB monitor（`class/usbmon`）。
     pub usbmon: Vec<String>,
+    /// Generic Counter：先 `bus/counter/devices`，再 `class/counter`。
+    pub counter: Vec<String>,
+    /// DisplayPort AUX（`class/drm_dp_aux_dev`）。
+    pub drm_dp_aux_dev: Vec<String>,
+    /// MHI：先 `bus/mhi/devices`，再 `class/mhi`。
+    pub mhi: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -591,6 +597,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    // Generic Counter 真实 ABI 是 bus（sysfs-bus-counter）；没有独立 `class/counter` 时不要当成缺失。
+    let counter = list_alt_dirs(
+        ctx,
+        "bus/counter/devices",
+        "class/counter",
+        8,
+        "counter",
+        &mut notes,
+        &mut missing,
+    );
+    let drm_dp_aux_dev = list_optional_names(
+        ctx.sys_path("class/drm_dp_aux_dev"),
+        8,
+        "drm_dp_aux_dev",
+        &mut notes,
+        &mut missing,
+    );
+    // MHI 真实 ABI 是 bus；没有独立 `class/mhi` 时不要当成缺失。
+    let mhi = list_alt_dirs(
+        ctx,
+        "bus/mhi/devices",
+        "class/mhi",
+        8,
+        "mhi",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -664,6 +697,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         uio,
         auxiliary,
         usbmon,
+        counter,
+        drm_dp_aux_dev,
+        mhi,
         notes,
     }
 }
@@ -1443,6 +1479,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/uio/uio0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/auxiliary/devices/intel_vsec.telemetry.0")).unwrap();
         fs::create_dir_all(root.join("sys/class/usbmon/usbmon0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/counter/devices/counter0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/drm_dp_aux_dev/drm_dp_aux0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/mhi/devices/mhi0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1517,6 +1556,9 @@ mod tests {
         assert_eq!(r.uio, vec!["uio0".to_string()]);
         assert_eq!(r.auxiliary, vec!["intel_vsec.telemetry.0".to_string()]);
         assert_eq!(r.usbmon, vec!["usbmon0".to_string()]);
+        assert_eq!(r.counter, vec!["counter0".to_string()]);
+        assert_eq!(r.drm_dp_aux_dev, vec!["drm_dp_aux0".to_string()]);
+        assert_eq!(r.mhi, vec!["mhi0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2043,6 +2085,79 @@ mod tests {
         assert!(
             labels.contains(&"uio") && labels.contains(&"auxiliary") && labels.contains(&"usbmon"),
             "missing uio/auxiliary/usbmon must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn mhi_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-mhi-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/mhi/devices/mhi0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.mhi, vec!["mhi0".to_string()]);
+        assert!(
+            r.notes
+                .iter()
+                .all(|n| leftover_note(n).is_none_or(|inner| inner.split('/').all(|s| s != "mhi"))),
+            "bus/mhi must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn counter_from_bus_without_class() {
+        let root = std::env::temp_dir().join(format!("aida-counter-bus-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/counter/devices/counter0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.counter, vec!["counter0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n)
+                .is_none_or(|inner| inner.split('/').all(|s| s != "counter"))),
+            "bus/counter must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_counter_dpaux_mhi_when_classes_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "aida-counter-dpaux-mhi-miss-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"counter")
+                && labels.contains(&"drm_dp_aux_dev")
+                && labels.contains(&"mhi"),
+            "missing counter/drm_dp_aux_dev/mhi must leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

@@ -13,3 +13,12 @@ aida_version() {
 aida_arch() {
   uname -m
 }
+
+# AppStream `<release date>`。可复现构建用 SOURCE_DATE_EPOCH。
+aida_date() {
+  if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
+    date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%d
+  else
+    date -u +%Y-%m-%d
+  fi
+}

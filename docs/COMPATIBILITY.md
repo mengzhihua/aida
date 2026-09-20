@@ -238,7 +238,15 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 216. **空的 uio / auxiliary / usbmon 表示没有对应硬件。** auxiliary 先看 `bus/auxiliary/devices`，没有再看 `class/auxiliary`。`PermissionDenied` 仍写 note。
 217. **不要读 `vm.stat_refresh`。** 那是一次性触发器，不是状态。
 218. **`nr_overcommit_hugepages=0` 表示不额外 overcommit hugepage。** `lowmem_reserve_ratio` 是各 zone 预留比例，保留原文。
-219. **AppImage / CLI 版本号只维护在 `Cargo.toml`。** `./scripts/package.sh` 读它生成 `AIDA_Linux-<ver>-<arch>.AppImage` 与 `aida-cli-<ver>-<arch>-{musl|gnu}`。linuxdeploy 缓存在 `.cache/`，不要提交。无 FUSE 时必须 `APPIMAGE_EXTRACT_AND_RUN=1`。GUI 不要 musl 静态。
+219. **AppImage / CLI 版本号只维护在 `Cargo.toml`。** `./scripts/package.sh` 读它生成 `AIDA_Linux-<ver>-<arch>.AppImage` 与 `aida-cli-<ver>-<arch>-musl` 或 `-gnu`。linuxdeploy 缓存在 `.cache/`，不要提交。无 FUSE 时必须 `APPIMAGE_EXTRACT_AND_RUN=1`。GUI 不要 musl 静态。metainfo 的 `<release>` 必须带 `date`（`@DATE@`，默认 UTC 当天）；AppDir 只放 `com.aida.linux.metainfo.xml`，桌面文件用 `com.aida.linux.desktop`，与 component id 一致。新镜像 `aida version` 通过后才替换 `dist/` 里上次成功的 AppImage；`SHA256SUMS` 只计入本次成功的产物。
+220. **musl 的 `ioctl` request 是 `c_int`，glibc 是 `c_ulong`。** NVMe SMART 的 `NVME_IOCTL_ADMIN_CMD` 要用 `as _` 传入，不要写死 `c_ulong` 形参。
+221. **`tcp_workaround_signed_windows=0` 表示按 RFC 处理窗口缩放。** `1` 才绕过有符号窗口。
+222. **`tcp_stdurg=0` 表示 BSD 紧急指针。** `1` 才是 RFC 793。
+223. **`tcp_available_ulp` 是可用的 TCP ULP 名（常为 `mptcp`）。** 空或缺失不是失败。
+224. **`tcp_plb_cong_thresh` 是 PLB 拥塞阈值。** 与 `tcp_plb_enabled` 成对。
+225. **`accept_ra_rt_info_min_plen` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。
+226. **空的 counter / drm_dp_aux_dev / mhi 表示没有对应硬件。** Counter 先看 `bus/counter/devices`，没有再看 `class/counter`。MHI 先看 `bus/mhi/devices`，没有再看 `class/mhi`。`PermissionDenied` 仍写 note。
+227. **`nr_hugepages_mempolicy=0` 表示 hugepage 计数不按 NUMA mempolicy 节点拆。** 不是采集失败。
 
 ## 测试方案
 

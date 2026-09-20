@@ -21,9 +21,12 @@ cargo build --release --features gui
 mkdir -p "$BIN" "$APP" "$ICON" "$META"
 install -m 0755 "$ROOT/target/release/aida" "$BIN/aida"
 # 菜单启动用绝对路径，不依赖 ~/.local/bin 是否在 PATH。
-sed "s|^Exec=aida |Exec=$BIN/aida |" "$ROOT/packaging/aida.desktop" >"$APP/aida.desktop"
+sed "s|^Exec=aida |Exec=$BIN/aida |" "$ROOT/packaging/aida.desktop" \
+  >"$APP/com.aida.linux.desktop"
 install -m 0644 "$ROOT/packaging/aida.svg" "$ICON/aida.svg"
-sed "s/@VERSION@/${VERSION}/g" "$ROOT/packaging/com.aida.linux.metainfo.xml" \
+DATE="${DATE:-$(aida_date)}"
+sed -e "s/@VERSION@/${VERSION}/g" -e "s/@DATE@/${DATE}/g" \
+  "$ROOT/packaging/com.aida.linux.metainfo.xml" \
   >"$META/com.aida.linux.metainfo.xml"
 
 # polkit 只读系统目录；用户级 PREFIX 装了也不会生效。
@@ -38,7 +41,7 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 echo "installed: $BIN/aida"
-echo "desktop:   $APP/aida.desktop"
+echo "desktop:   $APP/com.aida.linux.desktop"
 echo "run:       $BIN/aida gui"
 if [[ ":$PATH:" != *":$BIN:"* ]]; then
   echo "note: 把 $BIN 加进 PATH，例如 echo 'export PATH=\"$BIN:\$PATH\"' >> ~/.profile"
