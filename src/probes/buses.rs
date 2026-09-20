@@ -120,7 +120,7 @@ pub struct BusesReport {
     pub memory: Vec<String>,
     /// IEEE 1394：先 `bus/firewire/devices`，再 `class/firewire`。
     pub firewire: Vec<String>,
-    /// Greybus（`class/greybus`）。空 = 无模块化手机/调试硬件。
+    /// Greybus：先 `bus/greybus/devices`，再 `class/greybus`。
     pub greybus: Vec<String>,
     /// RapidIO：先 `bus/rapidio/devices`，再 `class/rapidio`。
     pub rapidio: Vec<String>,
@@ -781,8 +781,10 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
-    let greybus = list_optional_names(
-        ctx.sys_path("class/greybus"),
+    let greybus = list_alt_dirs(
+        ctx,
+        "bus/greybus/devices",
+        "class/greybus",
         8,
         "greybus",
         &mut notes,
@@ -1689,7 +1691,7 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/hid/devices/0003:046D:C52B.0001")).unwrap();
         fs::create_dir_all(root.join("sys/bus/memory/devices/memory0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/firewire/devices/fw0")).unwrap();
-        fs::create_dir_all(root.join("sys/class/greybus/gb0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/greybus/devices/1-1")).unwrap();
         fs::create_dir_all(root.join("sys/bus/rapidio/devices/00:00")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
@@ -1784,7 +1786,7 @@ mod tests {
         assert_eq!(r.hid, vec!["0003:046D:C52B.0001".to_string()]);
         assert_eq!(r.memory, vec!["memory0".to_string()]);
         assert_eq!(r.firewire, vec!["fw0".to_string()]);
-        assert_eq!(r.greybus, vec!["gb0".to_string()]);
+        assert_eq!(r.greybus, vec!["1-1".to_string()]);
         assert_eq!(r.rapidio, vec!["00:00".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
@@ -2752,6 +2754,29 @@ mod tests {
                 inner.split('/').all(|s| s != "firewire")
             })),
             "present firewire must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn greybus_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-gb-present-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/bus/greybus/devices/1-2")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.greybus, vec!["1-2".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "greybus")
+            })),
+            "present greybus must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

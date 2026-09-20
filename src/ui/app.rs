@@ -639,7 +639,7 @@ impl AidaApp {
                 .dmi
                 .memory_devices
                 .iter()
-                .filter(|m| m.size_mb.unwrap_or(0) > 0)
+                .filter(|m| m.installed)
                 .count();
             let from_arrays: usize = self
                 .snap
@@ -4318,10 +4318,7 @@ fn kv_name_list(
 }
 
 fn dimm_line(m: &crate::probes::dmi::MemoryDevice) -> String {
-    let size = m
-        .size_mb
-        .map(|n| format!("{n} MB"))
-        .unwrap_or_else(|| "empty".into());
+    let size = m.size_label();
     let speed = match (m.speed_mts, m.configured_mts) {
         (Some(s), Some(c)) if s != c => format!("{s}/{c} MT/s"),
         (Some(s), _) => format!("{s} MT/s"),

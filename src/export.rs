@@ -2537,9 +2537,7 @@ fn html_dmi_memory(html: &mut String, snap: &HardwareSnapshot) {
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 esc(m.locator.as_deref().unwrap_or("—")),
                 esc(m.bank.as_deref().unwrap_or("—")),
-                m.size_mb
-                    .map(|n| format!("{n} MB"))
-                    .unwrap_or_else(|| "empty".into()),
+                m.size_label(),
                 esc(m.r#type.as_deref().unwrap_or("—")),
                 esc(m.form_factor.as_deref().unwrap_or("—")),
                 m.speed_mts
