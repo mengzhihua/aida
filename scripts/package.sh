@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# 一次打出 CLI +（可选）AppImage，方便以后拷走。
+# 一次打出 CLI +（可选）AppImage + 可拷走的 tar.gz。每一轮开发结束都要跑。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=version.sh
 source "$ROOT/scripts/version.sh"
 VERSION="${VERSION:-$(aida_version "$ROOT")}"
+ARCH="${ARCH:-$(aida_arch)}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 mkdir -p "$OUT_DIR"
 
@@ -16,33 +17,23 @@ echo "==> AIDA Linux $VERSION  packing into $OUT_DIR"
 appimage_ok=0
 if "$ROOT/scripts/build-appimage.sh"; then
   appimage_ok=1
+  unset AIDA_BUNDLE_SKIP_APPIMAGE || true
 else
-  echo "warning: AppImage 失败（常见于缺 FUSE/GL 库）。CLI 仍在 dist/" >&2
+  echo "warning: AppImage 失败（常见于缺 FUSE/GL 库）。CLI 仍会打进安装包。" >&2
+  export AIDA_BUNDLE_SKIP_APPIMAGE=1
 fi
 
-echo
-echo "==> SHA256SUMS"
-(
-  cd "$OUT_DIR"
-  # 只对这一次成功的产物做校验和。AppImage 失败时 dist 里可能还留着上次的包，不要写进 SUMS。
-  shopt -s nullglob
-  files=(aida-cli-[0-9]*)
-  if [[ "$appimage_ok" -eq 1 ]]; then
-    files+=(AIDA_Linux-*.AppImage)
-  fi
-  if ((${#files[@]})); then
-    sha256sum "${files[@]}" | tee SHA256SUMS
-  fi
-  shopt -u nullglob
-) | sed 's/^/  /'
+"$ROOT/scripts/make-bundle.sh"
 
 echo
 echo "==> dist/"
 ls -lh "$OUT_DIR" | sed 's/^/  /'
 echo
+echo "安装包:   $OUT_DIR/aida-linux-${VERSION}-${ARCH}.tar.gz"
 echo "CLI:      $OUT_DIR/aida-cli"
 if [[ "$appimage_ok" -eq 1 ]]; then
-  echo "AppImage: $OUT_DIR/AIDA_Linux-${VERSION}-$(uname -m).AppImage"
-  echo "          APPIMAGE_EXTRACT_AND_RUN=1 $OUT_DIR/AIDA_Linux-${VERSION}-$(uname -m).AppImage collect"
+  echo "AppImage: $OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage"
+  echo "          APPIMAGE_EXTRACT_AND_RUN=1 $OUT_DIR/AIDA_Linux-${VERSION}-${ARCH}.AppImage collect"
 fi
 echo "本机安装: ./scripts/install.sh"
+echo "校验:     (cd $OUT_DIR && sha256sum -c SHA256SUMS)"

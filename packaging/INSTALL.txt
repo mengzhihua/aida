@@ -1,0 +1,19 @@
+AIDA Linux — 解压即可用，不需要安装 Rust。
+
+桌面（GUI）：
+  chmod +x run-gui.sh
+  ./run-gui.sh
+  # 等价于：
+  APPIMAGE_EXTRACT_AND_RUN=1 ./AIDA_Linux.AppImage gui
+
+服务器 / 无显示器：
+  chmod +x run-collect.sh aida-cli
+  ./run-collect.sh --html report.html
+  ./aida-cli bench --quick
+  ./aida-cli version
+
+本机装进菜单（需要已有 cargo 的开发机，不是这个 tar）：
+  源码树里运行 ./scripts/install.sh
+
+校验：
+  sha256sum -c SHA256SUMS

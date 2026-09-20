@@ -1,6 +1,6 @@
 # 打包与提权
 
-一次打出可带走的 CLI 和桌面 AppImage：
+每一轮开发结束都要打出可直接使用的安装包：
 
 ```bash
 ./scripts/package.sh
@@ -9,12 +9,13 @@ ls -lh dist/
 
 | 产物 | 脚本 | 说明 |
 | --- | --- | --- |
+| `dist/aida-linux-<ver>-<arch>.tar.gz` | `scripts/make-bundle.sh` | 解压即用：CLI + AppImage + `INSTALL.txt` + `run-gui.sh` |
 | `dist/aida-cli-<ver>-<arch>-musl` 或 `-gnu` | `scripts/build-cli.sh` | 无 GUI。有 musl 工具链则静态，否则 glibc `--no-default-features` |
 | `dist/AIDA_Linux-<ver>-<arch>.AppImage` | `scripts/build-appimage.sh` | GUI + CLI。版本取自 `Cargo.toml` |
-| `dist/SHA256SUMS` | `scripts/package.sh` | 上述产物的 sha256 |
+| `dist/SHA256SUMS` | `scripts/make-bundle.sh` | 上述产物的 sha256 |
 | `~/.local/bin/aida`（可选） | `scripts/install.sh` | 本机安装桌面文件与图标；菜单 `Exec` 写成绝对路径 |
 
-GitHub Actions：`.github/workflows/package.yml` 在 PR / tag 上传上述产物。tag `v*` 时再挂到 GitHub Release。工作流 `ci` 跑单元测试与 `live_collect`。
+GitHub Actions：`.github/workflows/package.yml` 在**每个 PR** 和 tag 上传 Artifact `aida-linux`（tar.gz + 二进制 + SHA256SUMS）。tag `v*` 时再挂到 GitHub Release。工作流 `ci` 跑单元测试与 `live_collect`。
 
 ## AppImage（GUI，glibc）
 
