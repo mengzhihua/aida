@@ -13,6 +13,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# PR 互不影响。main / 栈顶 / v* tag 共用一把锁，避免两个分支同时判定
+# 「还没有 v$VERSION」然后把不同提交的资产挂到同一个 Release。
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('aida-package-pr-{0}', github.event.pull_request.number) || 'aida-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -162,9 +168,26 @@ jobs:
         env:
           AIDA_SMOKE_REQUIRE: cli,appimage,tarball
         run: chmod +x scripts/smoke-dist.sh && ./scripts/smoke-dist.sh
-      - uses: softprops/action-gh-release@v2
+      - id: claim
+        name: skip if another commit already tagged this version
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.gate.outputs.tag }}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "publish=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            echo "tag ${TAG} already exists; not overwriting another commit's release"
+            echo "publish=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "publish=1" >> "$GITHUB_OUTPUT"
+      - if: steps.claim.outputs.publish == '1'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.gate.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
