@@ -17,11 +17,11 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 
 shopt -s nullglob
-cli_files=("$OUT_DIR"/aida-cli-[0-9]*)
+cli_files=("$OUT_DIR"/aida-cli-${VERSION}-*)
 if [[ "${AIDA_BUNDLE_SKIP_APPIMAGE:-}" == 1 ]]; then
   app_files=()
 else
-  app_files=("$OUT_DIR"/AIDA_Linux-*.AppImage)
+  app_files=("$OUT_DIR"/AIDA_Linux-${VERSION}-*.AppImage)
 fi
 shopt -u nullglob
 
@@ -90,7 +90,7 @@ ls -lh "$OUT_DIR/${BUNDLE_NAME}.tar.gz"
   cd "$OUT_DIR"
   shopt -s nullglob
   existing=()
-  for f in aida-cli-[0-9]* AIDA_Linux-*.AppImage "${BUNDLE_NAME}.tar.gz"; do
+  for f in "aida-cli-${VERSION}-"* "AIDA_Linux-${VERSION}-"*.AppImage "${BUNDLE_NAME}.tar.gz"; do
     [[ -e "$f" ]] || continue
     if [[ "${AIDA_BUNDLE_SKIP_APPIMAGE:-}" == 1 && "$f" == AIDA_Linux-*.AppImage ]]; then
       continue

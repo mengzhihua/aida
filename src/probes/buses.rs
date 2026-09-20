@@ -106,6 +106,12 @@ pub struct BusesReport {
     pub stm: Vec<String>,
     /// PECI：先 `bus/peci/devices`，再 `class/peci`。
     pub peci: Vec<String>,
+    /// PM wakeup 源（`class/wakeup`，`wakeupN`）。只列名，不读 event_count。
+    pub wakeup: Vec<String>,
+    /// x86 MSR 字符设备（`class/msr`，`msrN`）。只列名，不 dump `/dev/cpu/N/msr`。
+    pub msr: Vec<String>,
+    /// Data PLL（`class/dpll`）。空 = 无电信/同步硬件。
+    pub dpll: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -712,6 +718,21 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let wakeup = list_optional_names(
+        ctx.sys_path("class/wakeup"),
+        8,
+        "wakeup",
+        &mut notes,
+        &mut missing,
+    );
+    let msr = list_optional_names(ctx.sys_path("class/msr"), 8, "msr", &mut notes, &mut missing);
+    let dpll = list_optional_names(
+        ctx.sys_path("class/dpll"),
+        8,
+        "dpll",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -797,6 +818,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         rc,
         stm,
         peci,
+        wakeup,
+        msr,
+        dpll,
         notes,
     }
 }
@@ -1588,6 +1612,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/class/rc/rc0")).unwrap();
         fs::create_dir_all(root.join("sys/class/stm/dummy_stm.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/peci/devices/0-30")).unwrap();
+        fs::create_dir_all(root.join("sys/class/wakeup/wakeup0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/msr/msr0")).unwrap();
+        fs::create_dir_all(root.join("sys/class/dpll/dev0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1674,6 +1701,9 @@ mod tests {
         assert_eq!(r.rc, vec!["rc0".to_string()]);
         assert_eq!(r.stm, vec!["stm/dummy_stm.0".to_string()]);
         assert_eq!(r.peci, vec!["0-30".to_string()]);
+        assert_eq!(r.wakeup, vec!["wakeup0".to_string()]);
+        assert_eq!(r.msr, vec!["msr0".to_string()]);
+        assert_eq!(r.dpll, vec!["dev0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -2464,6 +2494,55 @@ mod tests {
         assert!(
             labels.contains(&"rc") && labels.contains(&"stm") && labels.contains(&"peci"),
             "missing rc/stm/peci must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_wakeup_msr_dpll_when_classes_missing() {
+        let root =
+            std::env::temp_dir().join(format!("aida-wakeup-msr-dpll-miss-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        fs::create_dir_all(root.join("sys/bus")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"wakeup") && labels.contains(&"msr") && labels.contains(&"dpll"),
+            "missing wakeup/msr/dpll must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn wakeup_msr_present_are_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-wakeup-msr-{}", std::process::id()));
+        fs::create_dir_all(root.join("sys/class/wakeup/wakeup3")).unwrap();
+        fs::create_dir_all(root.join("sys/class/msr/msr1")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.wakeup, vec!["wakeup3".to_string()]);
+        assert_eq!(r.msr, vec!["msr1".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "wakeup" && s != "msr")
+            })),
+            "present wakeup/msr must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

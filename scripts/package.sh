@@ -12,6 +12,19 @@ mkdir -p "$OUT_DIR"
 
 echo "==> AIDA Linux $VERSION  packing into $OUT_DIR"
 
+# 清掉上一版 leftover，避免 SHA256SUMS / smoke 扫到旧二进制。
+shopt -s nullglob
+for f in "$OUT_DIR"/aida-cli "$OUT_DIR"/aida-cli-* \
+  "$OUT_DIR"/AIDA_Linux-*.AppImage "$OUT_DIR"/aida-linux-*.tar.gz \
+  "$OUT_DIR"/SHA256SUMS; do
+  [[ -e "$f" ]] || continue
+  rm -f "$f"
+done
+for d in "$OUT_DIR"/aida-linux-*/; do
+  rm -rf "$d"
+done
+shopt -u nullglob
+
 "$ROOT/scripts/build-cli.sh"
 
 appimage_ok=0
