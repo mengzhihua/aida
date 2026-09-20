@@ -7,7 +7,7 @@
 | `access` | 读文件、翻译 `io::Error` 为 `AccessKind`、检测 uid/组 | 业务字段拼装 |
 | `probes::*` | 一类内核 ABI 一个文件 | `Command::new("lspci")` 之类外部进程 |
 | `snapshot` | 拼装 `HardwareSnapshot` | UI 字符串 |
-| `export` / `bench` | 纯函数，方便 CLI/GUI/测试共用 | 弹窗 |
+| `export` / `bench` | 纯函数，方便 CLI/GUI/测试共用 | 弹窗；不要为文本/CSV 再扫一遍内核 |
 | `ui` | egui 布局与 1Hz 刷新 | 直接 `fs::read_to_string` |
 
 ## 数据采集逻辑
@@ -75,6 +75,16 @@
 - 记录：GUI 开始/停止，把每次 live 采样写成 JSONL（`$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`）
 - 告警：对照 `*_max`/`*_crit`/`*_min`，状态变化写入 JSONL（`$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`）
 - 中文标签：若系统有 Noto/文泉驿等 CJK 字体则加载，否则回退英文，避免方块字
+
+## 报告导出
+
+`export` 在同一份 `HardwareSnapshot` 上生成：
+
+- JSON：全字段 + `access`/`source`/`hint`
+- HTML：单文件深色报告
+- 文本 / CSV / Markdown：同一份摘要清单（CPU/DMI/内存/GPU/传感器/存储/网络/PCI/USB/OS），对标 AIDA64 TXT/CSV。CSV 表头 `section,key,value`
+
+CLI：`aida collect --format text` 打 stdout；`--text`/`--csv`/`--md` 写文件。不要为换格式再采集一次。
 
 ## 提权
 

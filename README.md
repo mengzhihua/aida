@@ -68,6 +68,9 @@ ls -lh dist/
 | 桌面界面 | `aida gui` |
 | 采集 JSON | `aida collect` |
 | HTML 报告 | `aida collect --html aida-report.html` |
+| 文本报告（对标 AIDA64 TXT） | `aida collect --format text` 或 `--text aida-report.txt` |
+| CSV 表格 | `aida collect --csv aida-report.csv` |
+| Markdown | `aida collect --md aida-report.md` |
 | 微基准 | `aida bench --quick` |
 | 以管理员重开 GUI | `aida elevate gui` |
 | 版本 | `aida version` |
@@ -85,7 +88,7 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 - **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc` 等 leftover class（空 = 无硬件，不是失败）
 - **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
 - **占用**：GUI 前台约 1Hz 只刷新传感器和速率；TCP 表 / sysctl / 挂载用量约每 8 秒才扫一次；窗口失焦降到约 2.5s
-- **导出**：JSON（每个字段带 `access` / `source` / `hint`）和单文件 HTML
+- **导出**：JSON（每个字段带 `access` / `source` / `hint`）、单文件 HTML、可读文本、CSV、Markdown（一次采集可同时写出；`--format` 打印到 stdout，FILE=`-` 也是 stdout）
 - **基准**：CPU / 内存 / 磁盘相对分（`--quick` 约 200ms）
 
 刻意未做：GPU OpenCL/Vulkan 计算基准（会引入额外运行时，和可打包目标冲突）。

@@ -4270,6 +4270,24 @@ impl AidaApp {
                 Err(e) => self.export_msg = Some(e.to_string()),
             }
         }
+        if ui.button("TEXT → aida-report.txt").clicked() {
+            match std::fs::write("aida-report.txt", export::to_text(&self.snap)) {
+                Ok(()) => self.export_msg = Some("wrote aida-report.txt".into()),
+                Err(e) => self.export_msg = Some(e.to_string()),
+            }
+        }
+        if ui.button("CSV → aida-report.csv").clicked() {
+            match std::fs::write("aida-report.csv", export::to_csv(&self.snap)) {
+                Ok(()) => self.export_msg = Some("wrote aida-report.csv".into()),
+                Err(e) => self.export_msg = Some(e.to_string()),
+            }
+        }
+        if ui.button("Markdown → aida-report.md").clicked() {
+            match std::fs::write("aida-report.md", export::to_markdown(&self.snap)) {
+                Ok(()) => self.export_msg = Some("wrote aida-report.md".into()),
+                Err(e) => self.export_msg = Some(e.to_string()),
+            }
+        }
         if let Some(m) = &self.export_msg {
             ui.label(m);
         }
@@ -4301,8 +4319,8 @@ impl AidaApp {
             ui.colored_label(Color32::from_rgb(255, 100, 100), e);
         }
         ui.label(self.t(
-            "也可在终端: aida collect --html report.html",
-            "CLI: aida collect --html report.html",
+            "也可在终端: aida collect --format text  或  --html/--csv/--md FILE",
+            "CLI: aida collect --format text  or  --html/--csv/--md FILE",
         ));
     }
 }
