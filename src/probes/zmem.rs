@@ -46,6 +46,22 @@ pub fn collect(ctx: &ProbeCtx) -> ZmemReport {
     }
 }
 
+/// GUI 快路径：只更新已有 zram 的 mm_stat，不重枚举 /sys/block。
+pub fn refresh_runtime(report: &mut ZmemReport, ctx: &ProbeCtx) {
+    let root = ctx.sys_path("block");
+    for z in &mut report.zram {
+        let dir = root.join(&z.name);
+        let mm = access::read_trimmed(dir.join("mm_stat"));
+        let (orig, compr, used) = match mm.value.as_deref() {
+            Some(text) => parse_mm_stat(text),
+            None => (None, None, None),
+        };
+        z.orig_bytes = sample_or_missing(orig, &mm, "mm_stat.orig");
+        z.compr_bytes = sample_or_missing(compr, &mm, "mm_stat.compr");
+        z.mem_used = sample_or_missing(used, &mm, "mm_stat.mem_used");
+    }
+}
+
 fn read_zram(ctx: &ProbeCtx, notes: &mut Vec<String>) -> Vec<ZramDevice> {
     let root = ctx.sys_path("block");
     let names = match access::list_dir_names(&root) {

@@ -111,6 +111,61 @@ pub fn collect(ctx: &ProbeCtx) -> GpuReport {
     }
 }
 
+/// GUI 快路径：更新忙闲/显存/时钟/连接器状态，不重读 EDID、不扫 PCI 回退。
+pub fn refresh_runtime(report: &mut GpuReport, ctx: &ProbeCtx) {
+    let drm_root = ctx.sys_path("class/drm");
+    for dev in &mut report.devices {
+        if !is_card_name(&dev.id) {
+            continue;
+        }
+        let card_dir = drm_root.join(&dev.id);
+        let device = card_dir.join("device");
+        let mut busy = access::read_u64(device.join("gpu_busy_percent"));
+        if dev.driver == "i915" {
+            busy = first_ok(busy, access::read_u64(device.join("gt_busy_percent")));
+        }
+        dev.busy_percent = busy;
+        dev.vram_used_bytes = access::read_u64(device.join("mem_info_vram_used"));
+        match dev.driver.as_str() {
+            "amdgpu" => {
+                if let Some(mhz) =
+                    parse_pp_dpm_current(&access::read_trimmed(device.join("pp_dpm_sclk")))
+                {
+                    if let Some(c) = dev.clocks.iter_mut().find(|c| c.name == "sclk") {
+                        c.current_mhz = mhz;
+                    }
+                }
+                if let Some(mhz) =
+                    parse_pp_dpm_current(&access::read_trimmed(device.join("pp_dpm_mclk")))
+                {
+                    if let Some(c) = dev.clocks.iter_mut().find(|c| c.name == "mclk") {
+                        c.current_mhz = mhz;
+                    }
+                }
+            }
+            "i915" => {
+                if let Some(c) = dev.clocks.iter_mut().find(|c| c.name == "gt") {
+                    *c = i915_clock(&device, "gt");
+                }
+            }
+            "xe" => {
+                if let Some(c) = dev.clocks.iter_mut().find(|c| c.name == "gt") {
+                    c.current_mhz = first_u64(&[
+                        device.join("tile0/gt0/freq0/cur_freq"),
+                        device.join("gt/gt0/freq0/cur_freq"),
+                    ]);
+                }
+            }
+            _ => {}
+        }
+        for conn in &mut dev.connectors {
+            let p = drm_root.join(format!("{}-{}", dev.id, conn.name));
+            conn.status = access::read_trimmed(p.join("status"));
+            conn.enabled = access::read_trimmed(p.join("enabled"));
+        }
+    }
+}
+
 fn is_card_name(name: &str) -> bool {
     let rest = match name.strip_prefix("card") {
         Some(r) => r,

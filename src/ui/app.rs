@@ -20,6 +20,9 @@ use crate::record::StatusMeters;
 use crate::snapshot::HardwareSnapshot;
 
 const HISTORY: usize = 120;
+const FAST_POLL_MS: u64 = 1000;
+const BACKGROUND_POLL_MS: u64 = 2500;
+const SLOW_EVERY: u32 = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Nav {
@@ -78,6 +81,7 @@ struct AidaApp {
     nav: Nav,
     cjk: bool,
     last_poll: Instant,
+    poll_tick: u32,
     temps: HashMap<String, VecDeque<[f64; 2]>>,
     cpu_hist: VecDeque<[f64; 2]>,
     net_hist: HashMap<String, VecDeque<[f64; 2]>>,
@@ -120,6 +124,7 @@ impl AidaApp {
             nav: Nav::Summary,
             cjk,
             last_poll: Instant::now(),
+            poll_tick: 0,
             temps: HashMap::new(),
             cpu_hist: VecDeque::new(),
             net_hist: HashMap::new(),
@@ -136,12 +141,19 @@ impl AidaApp {
         tr(self.cjk, zh, en)
     }
 
-    fn poll_sensors(&mut self) {
-        if self.last_poll.elapsed() < Duration::from_millis(800) {
+    fn poll_sensors(&mut self, focused: bool) {
+        let interval = if focused {
+            Duration::from_millis(FAST_POLL_MS)
+        } else {
+            Duration::from_millis(BACKGROUND_POLL_MS)
+        };
+        if self.last_poll.elapsed() < interval {
             return;
         }
         let dt = self.last_poll.elapsed().as_secs_f64();
         self.last_poll = Instant::now();
+        self.poll_tick = self.poll_tick.saturating_add(1);
+        let full = focused && self.poll_tick % SLOW_EVERY == 0;
         self.snap.refresh_live(
             &self.ctx,
             &mut self.prev_stat,
@@ -149,6 +161,7 @@ impl AidaApp {
             &mut self.prev_disk,
             &mut self.prev_rapl,
             dt,
+            full,
         );
         let events = self
             .alert_log
@@ -212,6 +225,22 @@ impl AidaApp {
                 push_hist(self.rapl_hist.entry(label).or_default(), t, w);
             }
         }
+        let net_keys: std::collections::HashSet<String> = self
+            .snap
+            .net
+            .interfaces
+            .iter()
+            .flat_map(|i| [format!("{} RX", i.name), format!("{} TX", i.name)])
+            .collect();
+        self.net_hist.retain(|k, _| net_keys.contains(k));
+        let disk_keys: std::collections::HashSet<String> = self
+            .snap
+            .block
+            .devices
+            .iter()
+            .flat_map(|d| [format!("{} rd", d.name), format!("{} wr", d.name)])
+            .collect();
+        self.disk_hist.retain(|k, _| disk_keys.contains(k));
     }
 
     fn ui_status_strip(&mut self, ui: &mut egui::Ui) {
@@ -371,8 +400,13 @@ impl AidaApp {
 
 impl eframe::App for AidaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_sensors();
-        ctx.request_repaint_after(Duration::from_millis(500));
+        self.poll_sensors(ctx.input(|i| i.focused));
+        let wait = if ctx.input(|i| i.focused) {
+            FAST_POLL_MS
+        } else {
+            BACKGROUND_POLL_MS
+        };
+        ctx.request_repaint_after(Duration::from_millis(wait));
 
         egui::TopBottomPanel::top("priv").show(ctx, |ui| {
             let color = if self.snap.privilege.is_root {
