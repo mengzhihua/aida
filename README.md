@@ -16,7 +16,7 @@
 
 去哪下：
 
-1. **发版**：[GitHub Releases](https://github.com/mengzhihua/aida/releases)（打 `v*` tag 自动挂上）
+1. **发版**：[GitHub Releases](https://github.com/mengzhihua/aida/releases)（推送 `v*` tag 后，CI 自测通过再挂上 tar.gz / AppImage / musl CLI）
 2. **每个 PR / 每次开发**：Actions 工作流 [package](https://github.com/mengzhihua/aida/actions/workflows/package.yml) → 最新成功的 run → Artifact **`aida-linux`**
 
 ```bash

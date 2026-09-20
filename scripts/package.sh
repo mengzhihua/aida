@@ -25,6 +25,12 @@ fi
 
 "$ROOT/scripts/make-bundle.sh"
 
+if [[ "$appimage_ok" -eq 1 ]]; then
+  AIDA_SMOKE_REQUIRE=cli,appimage,tarball "$ROOT/scripts/smoke-dist.sh"
+else
+  AIDA_SMOKE_REQUIRE=cli,tarball "$ROOT/scripts/smoke-dist.sh"
+fi
+
 echo
 echo "==> dist/"
 ls -lh "$OUT_DIR" | sed 's/^/  /'
