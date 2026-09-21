@@ -296,7 +296,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 272. **空的 amba / fsi / ppdev 表示没有对应硬件。** AMBA 先看 `bus/amba/devices`，没有再看 `class/amba`。FSI 合并 `bus/fsi/devices` 与 `class/fsi-master`（连字符 ABI，不是 `class/fsi_master`）；bus 目录存在但为空仍回退 master class。`ppdev` 只看 `class/ppdev`。`PermissionDenied` 仍写 note。
 273. **`mc_forwarding` / `force_forwarding` 只列出与 `conf/all` 不同的接口。** 前者 `1` 启用 IPv6 组播转发（常由组播路由守护进程置位）；后者 `1` 即使 `forwarding=0` 也强制转发。不要用 `default` 顶替已有 iface。
 274. **GUI 默认打开置顶任务栏。** 无装饰、贴屏幕顶、`X11WindowType::Dock`、always-on-top。主窗口内条目标为「任务栏」，可取消勾选或点 × 关掉独立条。后端不支持多窗口时退回主窗内嵌条，不是采集失败。
-275. **GUI 默认写 JSONL 历史。** 启动读末尾最多 1800 条（约 30 分钟 @ 1Hz）；左侧「历史记录」画 CPU/MEM/NET/DISK/温度/load。暂停只停落盘，不清内存曲线。清空截断文件。缺文件当空历史，坏行跳过，不是失败。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
+275. **GUI 默认写 JSONL 历史。** 启动只读文件尾部最多 1800 条（约 30 分钟 @ 1Hz），超过预算则把磁盘裁成这一段；录满后每隔 256 条再裁。左侧「历史记录」画 CPU/MEM/NET/DISK/温度/load。暂停只停落盘，不清内存曲线。清空截断文件。缺文件当空历史，坏行跳过，不是失败。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
 
 ## 测试方案
 
