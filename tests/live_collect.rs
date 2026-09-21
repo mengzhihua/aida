@@ -297,6 +297,14 @@ fn live_snapshot_json_and_html() {
     assert!(json.contains("\"hsi\""));
     assert!(json.contains("\"ipv6_ndisc_evict_nocarrier\""));
     assert!(json.contains("\"ipv6_disable_policy\""));
+    assert!(json.contains("\"voltage_probes\""));
+    assert!(json.contains("\"cooling_devices\""));
+    assert!(json.contains("\"temperature_probes\""));
+    assert!(json.contains("\"amba\""));
+    assert!(json.contains("\"fsi\""));
+    assert!(json.contains("\"ppdev\""));
+    assert!(json.contains("\"ipv6_mc_forwarding\""));
+    assert!(json.contains("\"ipv6_force_forwarding\""));
     assert!(
         !snap.periph.pci_buses.is_empty()
             || snap.periph.dma_isa.iter().any(|c| c.name == "cascade"),

@@ -921,6 +921,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("memstick", &snap.buses.memstick),
         ("siox", &snap.buses.siox),
         ("hsi", &snap.buses.hsi),
+        ("amba", &snap.buses.amba),
+        ("fsi", &snap.buses.fsi),
+        ("ppdev", &snap.buses.ppdev),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1425,7 +1428,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1536,6 +1539,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 策略开".into(),
             Some("1") => "1 关策略".into(),
             _ => snap.net.ipv6_disable_policy.display(),
+        },
+        match snap.net.ipv6_mc_forwarding.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 组播转发".into(),
+            _ => snap.net.ipv6_mc_forwarding.display(),
+        },
+        match snap.net.ipv6_force_forwarding.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 强制转发".into(),
+            _ => snap.net.ipv6_force_forwarding.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1728,6 +1741,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">disable_policy iface {}</p>",
             esc(&snap.net.ipv6_disable_policy_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_mc_forwarding_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">mc_forwarding iface {}</p>",
+            esc(&snap.net.ipv6_mc_forwarding_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_force_forwarding_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">force_forwarding iface {}</p>",
+            esc(&snap.net.ipv6_force_forwarding_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2946,6 +2971,53 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
             esc(&h.front_panel_reset)
         ));
     }
+    if !snap.dmi.voltage_probes.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 26 电压</p>");
+        html.push_str("<table><tr><th>名称</th><th>位置</th><th>状态</th><th>最大</th><th>最小</th><th>标称</th></tr>");
+        for v in &snap.dmi.voltage_probes {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(v.description.as_deref().unwrap_or("—")),
+                esc(&v.location),
+                esc(&v.status),
+                v.max_mv.map(|n| format!("{n} mV")).unwrap_or_else(|| "—".into()),
+                v.min_mv.map(|n| format!("{n} mV")).unwrap_or_else(|| "—".into()),
+                v.nominal_mv.map(|n| format!("{n} mV")).unwrap_or_else(|| "—".into())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.cooling_devices.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 27 冷却</p>");
+        html.push_str("<table><tr><th>名称</th><th>类型</th><th>状态</th><th>组</th><th>转速</th></tr>");
+        for c in &snap.dmi.cooling_devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(c.description.as_deref().unwrap_or("—")),
+                esc(&c.kind),
+                esc(&c.status),
+                c.group,
+                c.nominal_rpm.map(|n| format!("{n} rpm")).unwrap_or_else(|| "—".into())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.temperature_probes.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 28 温度</p>");
+        html.push_str("<table><tr><th>名称</th><th>位置</th><th>状态</th><th>最大</th><th>最小</th><th>标称</th></tr>");
+        for t in &snap.dmi.temperature_probes {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(t.description.as_deref().unwrap_or("—")),
+                esc(&t.location),
+                esc(&t.status),
+                crate::probes::dmi::tenth_c_label(t.max_tenth_c),
+                crate::probes::dmi::tenth_c_label(t.min_tenth_c),
+                crate::probes::dmi::tenth_c_label(t.nominal_tenth_c)
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -3214,6 +3286,41 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             format!(
                 "power-on {}  admin {}  front {}",
                 h.power_on_password, h.administrator_password, h.front_panel_reset
+            ),
+        ));
+    }
+    for v in snap.dmi.voltage_probes.iter().take(8) {
+        dmi.push(pair(
+            v.description.as_deref().unwrap_or("电压"),
+            format!(
+                "{}  {}  {} / {}",
+                v.location,
+                v.status,
+                v.max_mv.map(|n| format!("{n} mV")).unwrap_or_else(|| "—".into()),
+                v.nominal_mv.map(|n| format!("{n} mV")).unwrap_or_else(|| "—".into())
+            ),
+        ));
+    }
+    for c in snap.dmi.cooling_devices.iter().take(8) {
+        dmi.push(pair(
+            c.description.as_deref().unwrap_or(c.kind.as_str()),
+            format!(
+                "{}  {}  {}",
+                c.status,
+                c.nominal_rpm.map(|n| format!("{n} rpm")).unwrap_or_else(|| "—".into()),
+                format!("group {}", c.group)
+            ),
+        ));
+    }
+    for t in snap.dmi.temperature_probes.iter().take(8) {
+        dmi.push(pair(
+            t.description.as_deref().unwrap_or("温度"),
+            format!(
+                "{}  {}  {} / {}",
+                t.location,
+                t.status,
+                crate::probes::dmi::tenth_c_label(t.max_tenth_c),
+                crate::probes::dmi::tenth_c_label(t.nominal_tenth_c)
             ),
         ));
     }
