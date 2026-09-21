@@ -7,7 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::probes::hwmon;
 use crate::snapshot::HardwareSnapshot;
@@ -29,7 +29,8 @@ pub struct StatusMeters {
     pub load_15: Option<f64>,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
 pub struct HistorySample {
     pub unix_ms: u64,
     pub cpu_pct: Option<f32>,
@@ -204,6 +205,9 @@ pub fn format_rate(bps: f64) -> String {
     }
 }
 
+/// GUI 历史页最多回放这么多样本（约 30 分钟 @ 1Hz）。
+pub const HISTORY_LOAD_CAP: usize = 1800;
+
 pub fn default_log_path() -> PathBuf {
     if let Ok(p) = std::env::var("AIDA_RECORD_LOG") {
         return PathBuf::from(p);
@@ -232,6 +236,37 @@ pub fn append_jsonl(path: &Path, samples: &[HistorySample]) -> Result<(), String
         writeln!(f, "{line}").map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// 读 JSONL 末尾最多 `cap` 条。缺文件当空历史，不是失败。坏行跳过。
+pub fn load_recent(path: &Path, cap: usize) -> Result<Vec<HistorySample>, String> {
+    if cap == 0 || !path.exists() {
+        return Ok(Vec::new());
+    }
+    let f = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut q = std::collections::VecDeque::with_capacity(cap.min(256));
+    for line in std::io::BufRead::lines(std::io::BufReader::new(f)) {
+        let line = line.map_err(|e| e.to_string())?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(s) = serde_json::from_str::<HistorySample>(line) else {
+            continue;
+        };
+        if q.len() == cap {
+            q.pop_front();
+        }
+        q.push_back(s);
+    }
+    Ok(q.into_iter().collect())
+}
+
+pub fn clear_jsonl(path: &Path) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, "").map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -345,6 +380,31 @@ mod tests {
         assert_eq!(text.lines().count(), 2);
         assert!(text.contains("\"cpu_pct\":10.0"));
         assert!(text.contains("\"unix_ms\":2"));
+        let loaded = load_recent(&path, 8).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].unix_ms, 1);
+        assert_eq!(loaded[1].cpu_pct, Some(10.0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_recent_keeps_tail_and_skips_garbage() {
+        let dir = std::env::temp_dir().join(format!("aida-record-tail-{}", std::process::id()));
+        let path = dir.join("history.jsonl");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            &path,
+            "not-json\n{\"unix_ms\":1,\"cpu_pct\":1.0}\n\n{\"unix_ms\":2,\"cpu_pct\":2.0}\n{\"unix_ms\":3,\"cpu_pct\":3.0}\n",
+        )
+        .unwrap();
+        let loaded = load_recent(&path, 2).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].unix_ms, 2);
+        assert_eq!(loaded[1].unix_ms, 3);
+        clear_jsonl(&path).unwrap();
+        assert_eq!(load_recent(&path, 8).unwrap().len(), 0);
+        let missing = dir.join("no-such.jsonl");
+        assert!(load_recent(&missing, 8).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

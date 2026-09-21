@@ -8,7 +8,7 @@
 //! - [`doctor`] 发行版 / glibc / GUI 库体检（apt 与 dnf/yum）
 //! - [`elevate`] pkexec/sudo 提权重启
 //! - [`alerts`] hwmon 阈值告警与 JSONL 日志
-//! - [`record`] CPU/内存/网络/磁盘/温度 JSONL 历史（对标 iStat Menus）
+//! - [`record`] 任务栏 JSONL 历史：默认记录，启动加载最近样本（对标 iStat Menus）
 
 pub mod access;
 pub mod alerts;

@@ -43,6 +43,7 @@ enum Nav {
     Platform,
     Numa,
     Software,
+    History,
     Bench,
     Export,
 }
@@ -76,6 +77,7 @@ struct AidaApp {
     record_path: PathBuf,
     record_err: Option<String>,
     record_samples: u64,
+    history: VecDeque<crate::record::HistorySample>,
     compact_bar: bool,
     compact_bar_shown: bool,
     nav: Nav,
@@ -105,6 +107,18 @@ impl AidaApp {
         let prev_net = Some(crate::probes::net::counters(&snap.net));
         let prev_disk = Some(crate::probes::block::counters(&snap.block));
         let prev_rapl = Some(crate::probes::rapl::counters(&snap.rapl));
+        let record_path = crate::record::default_log_path();
+        let mut record_err = None;
+        let history = match crate::record::load_recent(
+            &record_path,
+            crate::record::HISTORY_LOAD_CAP,
+        ) {
+            Ok(v) => VecDeque::from(v),
+            Err(e) => {
+                record_err = Some(e);
+                VecDeque::new()
+            }
+        };
         Self {
             ctx,
             snap,
@@ -115,11 +129,12 @@ impl AidaApp {
             alert_log: AlertLogger::default(),
             alert_log_path: crate::alerts::default_log_path(),
             alert_log_err: None,
-            recording: false,
-            record_path: crate::record::default_log_path(),
-            record_err: None,
+            recording: true,
+            record_path,
+            record_err,
             record_samples: 0,
-            compact_bar: false,
+            history,
+            compact_bar: true,
             compact_bar_shown: false,
             nav: Nav::Summary,
             cjk,
@@ -169,9 +184,13 @@ impl AidaApp {
         if let Err(e) = crate::alerts::append_jsonl(&self.alert_log_path, &events) {
             self.alert_log_err = Some(e);
         }
+        let sample =
+            StatusMeters::from_snapshot(&self.snap).to_sample(self.snap.collected_at_unix_ms);
+        if self.history.len() >= crate::record::HISTORY_LOAD_CAP {
+            self.history.pop_front();
+        }
+        self.history.push_back(sample.clone());
         if self.recording {
-            let sample =
-                StatusMeters::from_snapshot(&self.snap).to_sample(self.snap.collected_at_unix_ms);
             match crate::record::append_jsonl(&self.record_path, &[sample]) {
                 Ok(()) => {
                     self.record_samples = self.record_samples.saturating_add(1);
@@ -246,7 +265,7 @@ impl AidaApp {
     fn ui_status_strip(&mut self, ui: &mut egui::Ui) {
         let meters = StatusMeters::from_snapshot(&self.snap);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(self.t("状态", "Status")).strong());
+            ui.label(RichText::new(self.t("任务栏", "Taskbar")).strong());
             sparkline(
                 ui,
                 "istat_cpu_spark",
@@ -308,10 +327,20 @@ impl AidaApp {
                 ui.monospace(format!("LD {a:.2} {b:.2} {c:.2}"));
             }
             ui.separator();
+            if ui
+                .add(egui::Button::new(format!(
+                    "{} {}",
+                    self.t("历史", "History"),
+                    self.history.len()
+                )))
+                .clicked()
+            {
+                self.nav = Nav::History;
+            }
             let rec_label = if self.recording {
-                self.t("停止记录", "Stop record")
+                self.t("暂停记录", "Pause")
             } else {
-                self.t("开始记录", "Record")
+                self.t("继续记录", "Record")
             };
             if ui
                 .add(egui::Button::new(if self.recording {
@@ -332,7 +361,7 @@ impl AidaApp {
                     format!("REC {}", self.record_samples),
                 );
             }
-            let bar_label = self.t("置顶状态栏", "Always-on-top bar");
+            let bar_label = self.t("置顶任务栏", "Always-on-top bar");
             ui.checkbox(&mut self.compact_bar, bar_label);
         });
         if let Some(e) = &self.record_err {
@@ -354,20 +383,30 @@ impl AidaApp {
         let line = meters.compact_line();
         let recording = self.recording;
         let rec_n = self.record_samples;
+        let hist_n = self.history.len();
         let cjk = self.cjk;
         let mut keep_open = true;
+        let mut go_history = false;
+        let bar_w = ctx
+            .input(|i| i.screen_rect().width())
+            .max(720.0)
+            .min(1920.0);
         ctx.show_viewport_immediate(
             bar_id,
             egui::ViewportBuilder::default()
-                .with_title("AIDA")
-                .with_inner_size([720.0, 40.0])
-                .with_min_inner_size([420.0, 32.0])
-                .with_decorations(true)
+                .with_title(tr(cjk, "AIDA 任务栏", "AIDA taskbar"))
+                .with_inner_size([bar_w, 36.0])
+                .with_min_inner_size([480.0, 32.0])
+                .with_max_inner_size([4096.0, 40.0])
+                .with_position(egui::pos2(0.0, 0.0))
+                .with_decorations(false)
                 .with_always_on_top()
-                .with_resizable(true),
+                .with_window_type(egui::X11WindowType::Dock)
+                .with_resizable(false),
             |ctx, class| {
                 let mut draw = |ui: &mut egui::Ui| {
                     ui.horizontal(|ui| {
+                        ui.strong("AIDA");
                         ui.monospace(&line);
                         if recording {
                             ui.colored_label(
@@ -375,23 +414,46 @@ impl AidaApp {
                                 format!("REC {rec_n}"),
                             );
                         }
+                        if ui
+                            .small_button(format!("{} {hist_n}", tr(cjk, "历史", "Hist")))
+                            .clicked()
+                        {
+                            go_history = true;
+                        }
                         if ui.small_button("×").clicked() {
                             keep_open = false;
                         }
                     });
                 };
                 if class == egui::ViewportClass::Embedded {
-                    egui::Window::new(tr(cjk, "状态栏", "Status bar"))
+                    egui::Window::new(tr(cjk, "任务栏", "Taskbar"))
                         .id(egui::Id::new("istat-embed"))
-                        .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
+                        .anchor(egui::Align2::CENTER_TOP, [0.0, 4.0])
                         .collapsible(false)
                         .resizable(false)
                         .show(ctx, |ui| draw(ui));
                 } else {
-                    egui::CentralPanel::default().show(ctx, |ui| draw(ui));
+                    egui::CentralPanel::default()
+                        .frame(
+                            egui::Frame::none()
+                                .fill(Color32::from_rgb(18, 22, 28))
+                                .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+                        )
+                        .show(ctx, |ui| draw(ui));
                 }
             },
         );
+        ctx.send_viewport_cmd_to(
+            bar_id,
+            egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)),
+        );
+        ctx.send_viewport_cmd_to(
+            bar_id,
+            egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop),
+        );
+        if go_history {
+            self.nav = Nav::History;
+        }
         if !keep_open {
             self.compact_bar = false;
         }
@@ -444,9 +506,16 @@ impl eframe::App for AidaApp {
             ui.weak(crate::elevate::plan().summary);
         });
 
-        egui::TopBottomPanel::top("istat").show(ctx, |ui| {
-            self.ui_status_strip(ui);
-        });
+        egui::TopBottomPanel::top("istat")
+            .exact_height(36.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(18, 22, 28))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0)),
+            )
+            .show(ctx, |ui| {
+                self.ui_status_strip(ui);
+            });
         self.show_compact_bar(ctx);
 
         egui::SidePanel::left("tree")
@@ -513,6 +582,12 @@ impl eframe::App for AidaApp {
                 nav_btn(
                     ui,
                     &mut self.nav,
+                    Nav::History,
+                    tr(cjk, "历史记录", "History"),
+                );
+                nav_btn(
+                    ui,
+                    &mut self.nav,
                     Nav::Bench,
                     tr(cjk, "基准测试", "Benchmark"),
                 );
@@ -542,6 +617,7 @@ impl eframe::App for AidaApp {
             Nav::Platform => self.ui_platform(ui),
             Nav::Numa => self.ui_numa(ui),
             Nav::Software => self.ui_software(ui),
+            Nav::History => self.ui_history(ui),
             Nav::Bench => self.ui_bench(ui),
             Nav::Export => self.ui_export(ui),
         });
@@ -1868,14 +1944,11 @@ impl AidaApp {
             self.alert_log_path.display()
         ));
         ui.weak(format!(
-            "{}: {}{}",
+            "{}: {}  {} {}",
             self.t("记录", "Record"),
             self.record_path.display(),
-            if self.recording {
-                format!("  REC {}", self.record_samples)
-            } else {
-                String::new()
-            }
+            self.history.len(),
+            self.t("点", "pts")
         ));
         if let Some(e) = &self.alert_log_err {
             ui.colored_label(Color32::from_rgb(255, 100, 100), e);
@@ -4554,6 +4627,95 @@ impl AidaApp {
         });
     }
 
+    fn ui_history(&mut self, ui: &mut egui::Ui) {
+        ui.heading(self.t("历史记录", "History"));
+        ui.weak(self.record_path.display().to_string());
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "{} {}  {} {}",
+                self.t("显示", "Shown"),
+                self.history.len(),
+                self.t("本次写入", "session writes"),
+                self.record_samples
+            ));
+            let rec_label = if self.recording {
+                self.t("暂停记录", "Pause")
+            } else {
+                self.t("继续记录", "Resume")
+            };
+            if ui.button(rec_label).clicked() {
+                self.recording = !self.recording;
+                if self.recording {
+                    self.record_err = None;
+                }
+            }
+            if ui.button(self.t("清空历史", "Clear history")).clicked() {
+                match crate::record::clear_jsonl(&self.record_path) {
+                    Ok(()) => {
+                        self.history.clear();
+                        self.record_samples = 0;
+                        self.record_err = None;
+                    }
+                    Err(e) => self.record_err = Some(e),
+                }
+            }
+        });
+        if let Some(e) = &self.record_err {
+            ui.colored_label(Color32::from_rgb(255, 100, 100), e);
+        }
+        if self.history.is_empty() {
+            ui.weak(self.t(
+                "还没有采样。打开 GUI 后会自动写入 JSONL，并在本页画折线。",
+                "No samples yet. The GUI records JSONL automatically and plots it here.",
+            ));
+            return;
+        }
+        if let (Some(first), Some(last)) = (self.history.front(), self.history.back()) {
+            let span_s = last.unix_ms.saturating_sub(first.unix_ms) / 1000;
+            ui.weak(format!(
+                "{} {span_s}s   CPU {}   MEM {}",
+                self.t("跨度", "span"),
+                last.cpu_pct
+                    .map(|v| format!("{v:.1}%"))
+                    .unwrap_or_else(|| "—".into()),
+                last.mem_used_pct
+                    .map(|v| format!("{v:.0}%"))
+                    .unwrap_or_else(|| "—".into())
+            ));
+        }
+        let cpu = history_points(&self.history, |s| s.cpu_pct.map(|v| v as f64));
+        let mem = history_points(&self.history, |s| s.mem_used_pct.map(|v| v as f64));
+        let rx = history_points(&self.history, |s| s.net_rx_bps);
+        let tx = history_points(&self.history, |s| s.net_tx_bps);
+        let rd = history_points(&self.history, |s| s.disk_rd_bps);
+        let wr = history_points(&self.history, |s| s.disk_wr_bps);
+        let temp = history_points(&self.history, |s| s.temp_c);
+        let load = history_points(&self.history, |s| s.load_1);
+        Plot::new("hist_cpu_mem")
+            .height(180.0)
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot| {
+                plot.line(Line::new(cpu).name("CPU %"));
+                plot.line(Line::new(mem).name("MEM %"));
+            });
+        Plot::new("hist_net_disk")
+            .height(180.0)
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot| {
+                plot.line(Line::new(rx).name("NET RX"));
+                plot.line(Line::new(tx).name("NET TX"));
+                plot.line(Line::new(rd).name("DISK RD"));
+                plot.line(Line::new(wr).name("DISK WR"));
+            });
+        Plot::new("hist_temp_load")
+            .height(140.0)
+            .legend(egui_plot::Legend::default())
+            .show(ui, |plot| {
+                plot.line(Line::new(temp).name("°C"));
+                plot.line(Line::new(load).name("load1"));
+            });
+    }
+
     fn ui_bench(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.t("基准测试", "Benchmark"));
         ui.label(self.t(
@@ -4663,15 +4825,15 @@ impl AidaApp {
         }
         ui.separator();
         ui.label(self.t(
-            "指标记录（CPU/内存/网络/磁盘/温度 JSONL，对标 iStat Menus）",
-            "Metric recording (CPU/mem/net/disk/temp JSONL, iStat Menus-style)",
+            "指标记录默认开启，采样写入 JSONL；左侧「历史记录」回看折线。",
+            "Recording starts with the GUI. Open History in the tree to plot JSONL.",
         ));
         ui.weak(self.record_path.display().to_string());
         ui.horizontal(|ui| {
             let rec_label = if self.recording {
-                self.t("停止记录", "Stop record")
+                self.t("暂停记录", "Pause")
             } else {
-                self.t("开始记录", "Start record")
+                self.t("继续记录", "Resume")
             };
             if ui.button(rec_label).clicked() {
                 self.recording = !self.recording;
@@ -4682,7 +4844,10 @@ impl AidaApp {
                     format!("REC {}", self.record_samples),
                 );
             }
-            let bar_label = self.t("置顶状态栏", "Always-on-top bar");
+            if ui.button(self.t("打开历史页", "Open history")).clicked() {
+                self.nav = Nav::History;
+            }
+            let bar_label = self.t("置顶任务栏", "Always-on-top bar");
             ui.checkbox(&mut self.compact_bar, bar_label);
         });
         if let Some(e) = &self.record_err {
@@ -4693,6 +4858,19 @@ impl AidaApp {
             "CLI: aida collect --format text  or  --html/--csv/--md FILE",
         ));
     }
+}
+
+fn history_points(
+    samples: &VecDeque<crate::record::HistorySample>,
+    pick: impl Fn(&crate::record::HistorySample) -> Option<f64>,
+) -> PlotPoints {
+    let t0 = samples.front().map(|s| s.unix_ms).unwrap_or(0);
+    samples
+        .iter()
+        .filter_map(|s| {
+            pick(s).map(|y| [(s.unix_ms.saturating_sub(t0) as f64) / 1000.0, y])
+        })
+        .collect()
 }
 
 fn tr<'a>(cjk: bool, zh: &'a str, en: &'a str) -> &'a str {

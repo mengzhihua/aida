@@ -83,8 +83,8 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 
 - **硬件与拓扑**：CPU（拓扑 / cpuidle / 漏洞 / 利用率）、DMI / 主板、SMBIOS Type 4 处理器插座、Type 7 缓存、Type 8 端口连接器、Type 9 系统插槽、Type 11 OEM 字符串、Type 12 配置选项、Type 13 BIOS 语言、Type 22 便携电池、Type 23 系统复位、Type 24 硬件安全、Type 26 电压探头、Type 27 冷却装置、Type 28 温度探头、Type 32 启动状态、Type 39 电源、Type 41 板载设备、Type 43 TPM、Type 0 BIOS ROM/Release、Type 16/17 内存阵列与 DIMM（容量、外形、额定/配置速度、位宽、rank、厂商/序列/料号；对标 AIDA64 CPU/主板/Memory/SPD，不扫 I2C）、PCI/PCIe、NVMe、GPU/DRM、USB、输入设备、NUMA、virtio / KVM / IOMMU
 - **传感器**：hwmon + thermal，阈值告警写 JSONL；RAPL 瓦特、PSI、EDAC
-- **状态栏**：窗口内常驻 CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg；可选置顶窄条（对标 iStat Menus）
-- **记录**：GUI 开始/停止，采样追加到 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`
+- **任务栏**：窗口内常驻 CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg；默认置顶无边框窄条（对标 iStat Menus）
+- **历史记录**：默认写入 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`；启动加载最近约 30 分钟，左侧「历史记录」回看折线
 - **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc`、PTP、PPS、TPM、`firmware_attributes`、`pci_epf`、Slimbus、Memory Stick、SIOX、HSI、AMBA、FSI、`ppdev` 等 leftover class（空 = 无硬件，不是失败）
 - **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
 - **占用**：GUI 前台约 1Hz 只刷新传感器和速率；TCP 表 / sysctl / 挂载用量约每 8 秒才扫一次；窗口失焦降到约 2.5s
@@ -142,7 +142,7 @@ PolicyKit 策略：`packaging/polkit/com.aida.linux.policy`。细节见 [docs/PA
 | 变量 | 默认 | 含义 |
 | --- | --- | --- |
 | `AIDA_ALERT_LOG` | `$XDG_STATE_HOME/aida/alerts.jsonl` | 传感器越限 JSONL |
-| `AIDA_RECORD_LOG` | `$XDG_STATE_HOME/aida/history.jsonl` | 状态栏历史 JSONL |
+| `AIDA_RECORD_LOG` | `$XDG_STATE_HOME/aida/history.jsonl` | 任务栏历史 JSONL |
 
 ## 打包约定
 
@@ -158,7 +158,7 @@ PolicyKit 策略：`packaging/polkit/com.aida.linux.policy`。细节见 [docs/PA
 
 ```
                   ┌──────────── GUI (egui) ────────────┐
-                  │  树形菜单 / iStat 状态栏 / 详情表 / 折线图 / 导出  │
+                  │  树形菜单 / 任务栏 / 历史记录 / 详情表 / 折线图 / 导出  │
                   └───────────────┬────────────────────┘
                                   │ HardwareSnapshot
 ┌──────── CLI ────────┐           │
@@ -195,7 +195,7 @@ cargo test --no-default-features --lib
 | `src/snapshot.rs` | 拼装快照与 `refresh_live` |
 | `src/export.rs` / `src/bench.rs` | JSON/HTML、微基准 |
 | `src/ui/app.rs` | egui |
-| `src/record.rs` / `src/alerts.rs` | 状态栏历史、阈值告警 |
+| `src/record.rs` / `src/alerts.rs` | 任务栏历史 JSONL、阈值告警 |
 | `src/elevate.rs` | pkexec / sudo |
 | `src/doctor.rs` | 发行版 family / glibc / GUI `.so`，给出 apt 或 dnf/yum |
 | `scripts/` `packaging/` | AppImage、CLI、`install.sh`、桌面文件、polkit |

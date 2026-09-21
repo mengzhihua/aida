@@ -59,7 +59,7 @@ AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmi
 
 用法:
   aida                              有图形会话则 GUI，否则打印 JSON
-  aida gui                          桌面界面（状态栏 / 传感器折线 / 导出）
+  aida gui                          桌面界面（任务栏 / 历史记录 / 传感器折线 / 导出）
   aida collect [--format json|html|text|csv|md]
                [--json FILE] [--html FILE] [--text FILE] [--csv FILE] [--md FILE]
                FILE 为 - 时写到 stdout（可与 --format 并存，按出现顺序追加）。
@@ -70,7 +70,7 @@ AIDA Linux {} — 硬件检测与监控（只读 /proc /sys /dev，不调用 dmi
 
 环境:
   AIDA_ALERT_LOG    传感器越限 JSONL（默认 ~/.local/state/aida/alerts.jsonl）
-  AIDA_RECORD_LOG   状态栏历史 JSONL（默认 ~/.local/state/aida/history.jsonl）
+  AIDA_RECORD_LOG   任务栏历史 JSONL（默认 ~/.local/state/aida/history.jsonl）
 
 权限: 缺权限标 permission_denied，不填假数据。DMI 序列号 / NVMe SMART 通常要
 root 或 disk 组。桌面提权用 `aida elevate gui`，不要对 GUI 裸 sudo 以免丢掉 DISPLAY。
