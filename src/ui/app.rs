@@ -737,6 +737,20 @@ impl AidaApp {
                 &self.snap.dmi.oem_strings.len().to_string(),
             );
         }
+        if !self.snap.dmi.batteries.is_empty() {
+            kv(
+                ui,
+                self.t("电池", "Battery"),
+                &self.snap.dmi.batteries.len().to_string(),
+            );
+        }
+        if let Some(h) = &self.snap.dmi.hardware_security {
+            kv(
+                ui,
+                self.t("硬件安全", "Hardware security"),
+                &format!("power-on {}  admin {}", h.power_on_password, h.administrator_password),
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -1573,6 +1587,60 @@ impl AidaApp {
                     ),
                 );
             }
+        }
+        if !self.snap.dmi.config_options.is_empty() {
+            ui.strong(self.t("配置选项 (Type 12)", "System configuration"));
+            for s in self.snap.dmi.config_options.iter().take(16) {
+                ui.label(s);
+            }
+        }
+        if !self.snap.dmi.batteries.is_empty() {
+            ui.strong(self.t("便携电池 (Type 22)", "Portable battery"));
+            for b in &self.snap.dmi.batteries {
+                kv(
+                    ui,
+                    b.name.as_deref().unwrap_or("BAT"),
+                    &format!(
+                        "{}  {}  {}  {}",
+                        b.manufacturer.as_deref().unwrap_or("—"),
+                        b.chemistry.as_deref().unwrap_or("—"),
+                        b.design_capacity_mwh
+                            .map(|n| format!("{n} mWh"))
+                            .unwrap_or_else(|| "—".into()),
+                        b.design_voltage_mv
+                            .map(|n| format!("{n} mV"))
+                            .unwrap_or_else(|| "—".into())
+                    ),
+                );
+            }
+        }
+        if let Some(r) = &self.snap.dmi.system_reset {
+            kv(
+                ui,
+                self.t("系统复位 (Type 23)", "System reset"),
+                &format!(
+                    "{}  watchdog {}  {}  {}/{}  {} min",
+                    if r.enabled { "enabled" } else { "disabled" },
+                    if r.watchdog { "yes" } else { "no" },
+                    r.boot_option,
+                    r.reset_count.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                    r.reset_limit.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                    r.timeout_min.map(|n| n.to_string()).unwrap_or_else(|| "—".into())
+                ),
+            );
+        }
+        if let Some(h) = &self.snap.dmi.hardware_security {
+            kv(
+                ui,
+                self.t("硬件安全 (Type 24)", "Hardware security"),
+                &format!(
+                    "power-on {}  keyboard {}  admin {}  front {}",
+                    h.power_on_password,
+                    h.keyboard_password,
+                    h.administrator_password,
+                    h.front_panel_reset
+                ),
+            );
         }
         if !self.snap.dmi.smbios_records.is_empty() {
             ui.collapsing("SMBIOS records", |ui| {
@@ -2632,7 +2700,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2739,6 +2807,16 @@ impl AidaApp {
                     Some("0") => "0 留".into(),
                     Some("1") => "1 忽略".into(),
                     _ => self.snap.net.ipv6_ignore_routes_with_linkdown.display(),
+                },
+                match self.snap.net.ipv6_ndisc_evict_nocarrier.value.as_deref() {
+                    Some("0") => "0 留".into(),
+                    Some("1") => "1 清邻居".into(),
+                    _ => self.snap.net.ipv6_ndisc_evict_nocarrier.display(),
+                },
+                match self.snap.net.ipv6_disable_policy.value.as_deref() {
+                    Some("0") => "0 策略开".into(),
+                    Some("1") => "1 关策略".into(),
+                    _ => self.snap.net.ipv6_disable_policy.display(),
                 }
             ),
         );
@@ -2973,6 +3051,20 @@ impl AidaApp {
                 ui,
                 "linkdown iface",
                 &self.snap.net.ipv6_ignore_routes_with_linkdown_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_ndisc_evict_nocarrier_dev.is_empty() {
+            kv(
+                ui,
+                "ndisc_evict_nocarrier iface",
+                &self.snap.net.ipv6_ndisc_evict_nocarrier_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_disable_policy_dev.is_empty() {
+            kv(
+                ui,
+                "disable_policy iface",
+                &self.snap.net.ipv6_disable_policy_dev.join("  "),
             );
         }
         kv(
@@ -3594,6 +3686,9 @@ impl AidaApp {
             ("firmware_attributes", &self.snap.buses.firmware_attributes),
             ("pci_epf", &self.snap.buses.pci_epf),
             ("slimbus", &self.snap.buses.slimbus),
+            ("memstick", &self.snap.buses.memstick),
+            ("siox", &self.snap.buses.siox),
+            ("hsi", &self.snap.buses.hsi),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));

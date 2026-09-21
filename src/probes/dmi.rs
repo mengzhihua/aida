@@ -50,6 +50,14 @@ pub struct DmiInfo {
     pub boot_status: Option<String>,
     /// SMBIOS Type 43 TPM 设备（与 sysfs class/tpm 互补）。
     pub tpm_devices: Vec<TpmSmbios>,
+    /// SMBIOS Type 12 系统配置选项（跳线/开关字符串）。
+    pub config_options: Vec<String>,
+    /// SMBIOS Type 22 便携电池。
+    pub batteries: Vec<PortableBattery>,
+    /// SMBIOS Type 23 系统复位 / 看门狗。
+    pub system_reset: Option<SystemReset>,
+    /// SMBIOS Type 24 硬件安全（开机/管理员密码状态）。
+    pub hardware_security: Option<HardwareSecurity>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -138,6 +146,10 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         bios_languages: Vec::new(),
         boot_status: None,
         tpm_devices: Vec::new(),
+        config_options: Vec::new(),
+        batteries: Vec::new(),
+        system_reset: None,
+        hardware_security: None,
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -216,6 +228,26 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| tpm_from_raw(bytes, r))
                     .take(4)
                     .collect();
+                info.config_options = parsed
+                    .iter()
+                    .filter(|r| r.kind == 12)
+                    .flat_map(|r| config_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.batteries = parsed
+                    .iter()
+                    .filter(|r| r.kind == 22)
+                    .filter_map(|r| battery_from_raw(bytes, r))
+                    .take(4)
+                    .collect();
+                info.system_reset = parsed
+                    .iter()
+                    .find(|r| r.kind == 23)
+                    .and_then(|r| reset_from_raw(bytes, r));
+                info.hardware_security = parsed
+                    .iter()
+                    .find(|r| r.kind == 24)
+                    .and_then(|r| hwsec_from_raw(bytes, r));
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -318,7 +350,11 @@ fn kind_name(kind: u8) -> String {
         8 => "Port Connector",
         9 => "System Slot",
         11 => "OEM Strings",
+        12 => "System Configuration Options",
         13 => "BIOS Language",
+        22 => "Portable Battery",
+        23 => "System Reset",
+        24 => "Hardware Security",
         16 => "Memory Array",
         17 => "Memory Device",
         19 => "Memory Mapped Address",
@@ -461,6 +497,36 @@ pub struct TpmSmbios {
     pub vendor: Option<String>,
     pub spec: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PortableBattery {
+    pub location: Option<String>,
+    pub manufacturer: Option<String>,
+    pub name: Option<String>,
+    pub chemistry: Option<String>,
+    /// 设计容量 mWh；DSP0134 仅 `0` 表示未知。
+    pub design_capacity_mwh: Option<u32>,
+    /// 设计电压 mV；`0` 表示未知。
+    pub design_voltage_mv: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SystemReset {
+    pub enabled: bool,
+    pub watchdog: bool,
+    pub boot_option: String,
+    pub reset_count: Option<u16>,
+    pub reset_limit: Option<u16>,
+    pub timeout_min: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HardwareSecurity {
+    pub power_on_password: String,
+    pub keyboard_password: String,
+    pub administrator_password: String,
+    pub front_panel_reset: String,
 }
 
 fn next_smbios_struct(buf: &[u8], i: usize) -> Option<usize> {
@@ -1074,6 +1140,123 @@ fn tpm_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<TpmSmbios> {
         spec: Some(format!("{}.{}", buf[i + 0x08], buf[i + 0x09])),
         description: smbios_str(&rec.strings, buf[i + 0x12]),
     })
+}
+
+fn config_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Vec<String> {
+    let Some(i) = rec_offset(buf, rec) else {
+        return Vec::new();
+    };
+    let length = buf[i + 1] as usize;
+    if length < 0x05 || i + length > buf.len() {
+        return Vec::new();
+    }
+    let n = buf[i + 0x04] as usize;
+    rec.strings.iter().take(n.min(16)).cloned().collect()
+}
+
+fn battery_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PortableBattery> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x10 || i + length > buf.len() {
+        return None;
+    }
+    let raw_cap = word(buf, i, 0x0A);
+    let mul = if length >= 0x16 {
+        let m = buf[i + 0x15];
+        if m == 0 { 1u32 } else { m as u32 }
+    } else {
+        1
+    };
+    let chem = buf[i + 0x09];
+    let chemistry = if chem == 0x02 && length >= 0x15 {
+        smbios_str(&rec.strings, buf[i + 0x14])
+            .or_else(|| Some(battery_chemistry_name(chem)))
+    } else {
+        Some(battery_chemistry_name(chem))
+    };
+    Some(PortableBattery {
+        location: smbios_str(&rec.strings, buf[i + 0x04]),
+        manufacturer: smbios_str(&rec.strings, buf[i + 0x05]),
+        name: smbios_str(&rec.strings, buf[i + 0x08]),
+        chemistry,
+        design_capacity_mwh: if raw_cap == 0 {
+            None
+        } else {
+            Some(raw_cap as u32 * mul)
+        },
+        design_voltage_mv: {
+            let v = word(buf, i, 0x0C);
+            if v == 0 { None } else { Some(v) }
+        },
+    })
+}
+
+fn battery_chemistry_name(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Lead Acid".into(),
+        0x04 => "Nickel Cadmium".into(),
+        0x05 => "Nickel metal hydride".into(),
+        0x06 => "Lithium-ion".into(),
+        0x07 => "Zinc air".into(),
+        0x08 => "Lithium Polymer".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn reset_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<SystemReset> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0D || i + length > buf.len() {
+        return None;
+    }
+    let cap = buf[i + 0x04];
+    Some(SystemReset {
+        enabled: cap & 0x01 != 0,
+        watchdog: cap & 0x20 != 0,
+        boot_option: reset_boot_option((cap >> 1) & 0x03).into(),
+        reset_count: word_unknown(word(buf, i, 0x05)),
+        reset_limit: word_unknown(word(buf, i, 0x07)),
+        timeout_min: word_unknown(word(buf, i, 0x0B)),
+    })
+}
+
+fn word_unknown(v: u16) -> Option<u16> {
+    if v == 0xFFFF { None } else { Some(v) }
+}
+
+fn reset_boot_option(t: u8) -> &'static str {
+    match t {
+        0 => "Reserved",
+        1 => "Operating System",
+        2 => "System utilities",
+        _ => "Do not reboot",
+    }
+}
+
+fn hwsec_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<HardwareSecurity> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x05 || i + length > buf.len() {
+        return None;
+    }
+    let s = buf[i + 0x04];
+    Some(HardwareSecurity {
+        power_on_password: hw_sec_status(s >> 6).into(),
+        keyboard_password: hw_sec_status(s >> 4).into(),
+        administrator_password: hw_sec_status(s >> 2).into(),
+        front_panel_reset: hw_sec_status(s).into(),
+    })
+}
+
+fn hw_sec_status(v: u8) -> &'static str {
+    match v & 0x03 {
+        0 => "Disabled",
+        1 => "Enabled",
+        2 => "Not Implemented",
+        _ => "Unknown",
+    }
 }
 
 fn slot_type_name(t: u8) -> &'static str {
@@ -1906,6 +2089,204 @@ mod tests {
         assert_eq!(
             recs.iter().find(|r| r.kind == 43).map(|r| r.kind_name.as_str()),
             Some("TPM Device")
+        );
+    }
+
+    #[test]
+    fn type12_config_options() {
+        let mut rec = vec![0u8; 0x05];
+        rec[0] = 12;
+        rec[1] = 0x05;
+        rec[0x04] = 2;
+        rec.extend_from_slice(b"Jumper J1: closed\0SW1: on\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let opts = recs
+            .iter()
+            .find(|r| r.kind == 12)
+            .map(|r| config_from_raw(&rec, r))
+            .expect("type 12");
+        assert_eq!(
+            opts,
+            vec!["Jumper J1: closed".to_string(), "SW1: on".to_string()]
+        );
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 12).map(|r| r.kind_name.as_str()),
+            Some("System Configuration Options")
+        );
+    }
+
+    #[test]
+    fn type22_lithium_ion_capacity_and_voltage() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 22;
+        rec[1] = 0x1A;
+        rec[0x04] = 1;
+        rec[0x05] = 2;
+        rec[0x08] = 3;
+        rec[0x09] = 0x06;
+        rec[0x0A] = 0xC0;
+        rec[0x0B] = 0x12; // 4800 mWh
+        rec[0x0C] = 0x5C;
+        rec[0x0D] = 0x2B; // 11100 mV
+        rec[0x15] = 1;
+        rec.extend_from_slice(b"BAT0\0SMP\0DELL 1F22\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let b = recs
+            .iter()
+            .find(|r| r.kind == 22)
+            .and_then(|r| battery_from_raw(&rec, r))
+            .expect("type 22");
+        assert_eq!(b.location.as_deref(), Some("BAT0"));
+        assert_eq!(b.manufacturer.as_deref(), Some("SMP"));
+        assert_eq!(b.name.as_deref(), Some("DELL 1F22"));
+        assert_eq!(b.chemistry.as_deref(), Some("Lithium-ion"));
+        assert_eq!(b.design_capacity_mwh, Some(4800));
+        assert_eq!(b.design_voltage_mv, Some(11100));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 22).map(|r| r.kind_name.as_str()),
+            Some("Portable Battery")
+        );
+    }
+
+    #[test]
+    fn type22_zero_capacity_is_unknown() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 22;
+        rec[1] = 0x10;
+        rec[0x09] = 0x02;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let b = recs
+            .iter()
+            .find(|r| r.kind == 22)
+            .and_then(|r| battery_from_raw(&rec, r))
+            .expect("type 22");
+        assert_eq!(b.design_capacity_mwh, None);
+        assert_eq!(b.design_voltage_mv, None);
+        assert_eq!(b.chemistry.as_deref(), Some("Unknown"));
+    }
+
+    #[test]
+    fn type22_multiplier_is_at_0x15_not_oem() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 22;
+        rec[1] = 0x1A;
+        rec[0x0A] = 0xC0;
+        rec[0x0B] = 0x12; // 4800
+        rec[0x15] = 2;
+        rec[0x16] = 0x80; // OEM, must not multiply
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let b = recs
+            .iter()
+            .find(|r| r.kind == 22)
+            .and_then(|r| battery_from_raw(&rec, r))
+            .expect("type 22");
+        assert_eq!(b.design_capacity_mwh, Some(9600));
+    }
+
+    #[test]
+    fn type22_unknown_chemistry_uses_sbds_string() {
+        let mut rec = vec![0u8; 0x1A];
+        rec[0] = 22;
+        rec[1] = 0x1A;
+        rec[0x04] = 1;
+        rec[0x05] = 2;
+        rec[0x08] = 3;
+        rec[0x09] = 0x02;
+        rec[0x14] = 4;
+        rec.extend_from_slice(b"BAT0\0SMP\0NAME\0LION\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let b = recs
+            .iter()
+            .find(|r| r.kind == 22)
+            .and_then(|r| battery_from_raw(&rec, r))
+            .expect("type 22");
+        assert_eq!(b.chemistry.as_deref(), Some("LION"));
+    }
+
+    #[test]
+    fn type23_watchdog_enabled_os_boot() {
+        let mut rec = vec![0u8; 0x0D];
+        rec[0] = 23;
+        rec[1] = 0x0D;
+        rec[0x04] = 0x23; // enabled + OS boot + watchdog
+        rec[0x05] = 3;
+        rec[0x06] = 0;
+        rec[0x07] = 5;
+        rec[0x08] = 0;
+        rec[0x0B] = 10;
+        rec[0x0C] = 0;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let r = recs
+            .iter()
+            .find(|r| r.kind == 23)
+            .and_then(|r| reset_from_raw(&rec, r))
+            .expect("type 23");
+        assert!(r.enabled);
+        assert!(r.watchdog);
+        assert_eq!(r.boot_option, "Operating System");
+        assert_eq!(r.reset_count, Some(3));
+        assert_eq!(r.reset_limit, Some(5));
+        assert_eq!(r.timeout_min, Some(10));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 23).map(|r| r.kind_name.as_str()),
+            Some("System Reset")
+        );
+    }
+
+    #[test]
+    fn type23_ffff_count_is_unknown() {
+        let mut rec = vec![0u8; 0x0D];
+        rec[0] = 23;
+        rec[1] = 0x0D;
+        rec[0x05] = 0xFF;
+        rec[0x06] = 0xFF;
+        rec[0x07] = 0xFF;
+        rec[0x08] = 0xFF;
+        rec[0x0B] = 0xFF;
+        rec[0x0C] = 0xFF;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let r = recs
+            .iter()
+            .find(|r| r.kind == 23)
+            .and_then(|r| reset_from_raw(&rec, r))
+            .expect("type 23");
+        assert_eq!(r.reset_count, None);
+        assert_eq!(r.reset_limit, None);
+        assert_eq!(r.timeout_min, None);
+    }
+
+    #[test]
+    fn type24_password_status_nibbles() {
+        let mut rec = vec![0u8; 0x05];
+        rec[0] = 24;
+        rec[1] = 0x05;
+        rec[0x04] = 0x64; // power-on Enabled, keyboard Not Implemented, admin Enabled, front Disabled
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let h = recs
+            .iter()
+            .find(|r| r.kind == 24)
+            .and_then(|r| hwsec_from_raw(&rec, r))
+            .expect("type 24");
+        assert_eq!(h.power_on_password, "Enabled");
+        assert_eq!(h.keyboard_password, "Not Implemented");
+        assert_eq!(h.administrator_password, "Enabled");
+        assert_eq!(h.front_panel_reset, "Disabled");
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 24).map(|r| r.kind_name.as_str()),
+            Some("Hardware Security")
         );
     }
 }
