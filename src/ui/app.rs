@@ -388,9 +388,14 @@ impl AidaApp {
         let mut keep_open = true;
         let mut go_history = false;
         let bar_w = ctx
-            .input(|i| i.screen_rect().width())
-            .max(720.0)
-            .min(1920.0);
+            .input(|i| {
+                i.viewport()
+                    .monitor_size
+                    .map(|s| s.x)
+                    .filter(|w| *w > 1.0)
+                    .unwrap_or_else(|| i.screen_rect().width())
+            })
+            .max(720.0);
         ctx.show_viewport_immediate(
             bar_id,
             egui::ViewportBuilder::default()
@@ -446,6 +451,10 @@ impl AidaApp {
         ctx.send_viewport_cmd_to(
             bar_id,
             egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)),
+        );
+        ctx.send_viewport_cmd_to(
+            bar_id,
+            egui::ViewportCommand::InnerSize(egui::vec2(bar_w, 36.0)),
         );
         ctx.send_viewport_cmd_to(
             bar_id,
