@@ -148,6 +148,12 @@ pub struct BusesReport {
     pub siox: Vec<String>,
     /// MIPI HSI：先 `bus/hsi/devices`，再 `class/hsi`。
     pub hsi: Vec<String>,
+    /// ARM AMBA：先 `bus/amba/devices`，再 `class/amba`。
+    pub amba: Vec<String>,
+    /// IBM FSI：合并 `bus/fsi/devices` 与 `class/fsi-master`。
+    pub fsi: Vec<String>,
+    /// 并口用户态（`class/ppdev`）。
+    pub ppdev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -923,6 +929,32 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let amba = list_alt_dirs(
+        ctx,
+        "bus/amba/devices",
+        "class/amba",
+        8,
+        "amba",
+        &mut notes,
+        &mut missing,
+    );
+    // FSI master class 是连字符 `fsi-master`；空 bus 仍回退 class。
+    let fsi = list_merge_dirs(
+        ctx,
+        "bus/fsi/devices",
+        "class/fsi-master",
+        8,
+        "fsi",
+        &mut notes,
+        &mut missing,
+    );
+    let ppdev = list_optional_names(
+        ctx.sys_path("class/ppdev"),
+        8,
+        "ppdev",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1029,6 +1061,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         memstick,
         siox,
         hsi,
+        amba,
+        fsi,
+        ppdev,
         notes,
     }
 }
@@ -1875,6 +1910,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/memstick/devices/ms0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/siox/devices/siox-0-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/hsi/devices/hsi_char.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/amba/devices/e0000000.uart")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/fsi/devices/00:00:00:06")).unwrap();
+        fs::create_dir_all(root.join("sys/class/ppdev/parport0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -1982,6 +2020,9 @@ mod tests {
         assert_eq!(r.memstick, vec!["ms0".to_string()]);
         assert_eq!(r.siox, vec!["siox-0-0".to_string()]);
         assert_eq!(r.hsi, vec!["hsi_char.0".to_string()]);
+        assert_eq!(r.amba, vec!["e0000000.uart".to_string()]);
+        assert_eq!(r.fsi, vec!["00:00:00:06".to_string()]);
+        assert_eq!(r.ppdev, vec!["parport0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -3278,6 +3319,150 @@ mod tests {
                 inner.split('/').all(|s| s != "memstick")
             })),
             "empty bus plus class/memstick_host must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_amba_fsi_ppdev_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-amba-fsi-ppdev-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"amba") && labels.contains(&"fsi") && labels.contains(&"ppdev"),
+            "missing amba/fsi/ppdev must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn amba_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-amba-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/amba/devices/e0000000.uart")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.amba, vec!["e0000000.uart".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "amba")
+            })),
+            "present amba must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fsi_master_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-fsi-master-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class/fsi-master/fsi0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.fsi, vec!["fsi0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "fsi")
+            })),
+            "class/fsi-master must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fsi_underscore_class_still_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-fsi-underscore-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class/fsi_master/fsi0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert!(r.fsi.is_empty());
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        assert!(
+            inner.split('/').any(|s| s == "fsi"),
+            "underscore class/fsi_master must still leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fsi_empty_bus_falls_back_to_master_class() {
+        let root = std::env::temp_dir().join(format!("aida-fsi-empty-bus-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/fsi/devices")).unwrap();
+        fs::create_dir_all(root.join("sys/class/fsi-master/fsi0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.fsi, vec!["fsi0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "fsi")
+            })),
+            "empty bus plus class/fsi-master must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ppdev_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ppdev-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class/ppdev/parport0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ppdev, vec!["parport0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "ppdev")
+            })),
+            "present ppdev must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

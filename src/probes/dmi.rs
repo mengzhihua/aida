@@ -58,6 +58,12 @@ pub struct DmiInfo {
     pub system_reset: Option<SystemReset>,
     /// SMBIOS Type 24 硬件安全（开机/管理员密码状态）。
     pub hardware_security: Option<HardwareSecurity>,
+    /// SMBIOS Type 26 电压探头（毫伏；`0x8000` 未知）。
+    pub voltage_probes: Vec<VoltageProbe>,
+    /// SMBIOS Type 27 冷却装置（风扇/热管；转速 `0x8000` 未知）。
+    pub cooling_devices: Vec<CoolingDevice>,
+    /// SMBIOS Type 28 温度探头（十分之一摄氏度；`0x8000` 未知）。
+    pub temperature_probes: Vec<TemperatureProbe>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -150,6 +156,9 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         batteries: Vec::new(),
         system_reset: None,
         hardware_security: None,
+        voltage_probes: Vec::new(),
+        cooling_devices: Vec::new(),
+        temperature_probes: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -248,6 +257,24 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .iter()
                     .find(|r| r.kind == 24)
                     .and_then(|r| hwsec_from_raw(bytes, r));
+                info.voltage_probes = parsed
+                    .iter()
+                    .filter(|r| r.kind == 26)
+                    .filter_map(|r| voltage_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.cooling_devices = parsed
+                    .iter()
+                    .filter(|r| r.kind == 27)
+                    .filter_map(|r| cooling_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.temperature_probes = parsed
+                    .iter()
+                    .filter(|r| r.kind == 28)
+                    .filter_map(|r| temperature_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -355,6 +382,9 @@ fn kind_name(kind: u8) -> String {
         22 => "Portable Battery",
         23 => "System Reset",
         24 => "Hardware Security",
+        26 => "Voltage Probe",
+        27 => "Cooling Device",
+        28 => "Temperature Probe",
         16 => "Memory Array",
         17 => "Memory Device",
         19 => "Memory Mapped Address",
@@ -527,6 +557,44 @@ pub struct HardwareSecurity {
     pub keyboard_password: String,
     pub administrator_password: String,
     pub front_panel_reset: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VoltageProbe {
+    pub description: Option<String>,
+    pub location: String,
+    pub status: String,
+    /// 最大可读电压 mV；DSP0134 仅 `0x8000` 表示未知。
+    pub max_mv: Option<u16>,
+    pub min_mv: Option<u16>,
+    pub nominal_mv: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoolingDevice {
+    pub description: Option<String>,
+    pub kind: String,
+    pub status: String,
+    pub group: u8,
+    pub probe_handle: u16,
+    /// 额定转速 rpm；`0x8000` 表示未知或非旋转装置。
+    pub nominal_rpm: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TemperatureProbe {
+    pub description: Option<String>,
+    pub location: String,
+    pub status: String,
+    /// 最大可读温度，单位 0.1 °C；仅 `0x8000` 未知。
+    pub max_tenth_c: Option<i16>,
+    pub min_tenth_c: Option<i16>,
+    pub nominal_tenth_c: Option<i16>,
+}
+
+pub fn tenth_c_label(v: Option<i16>) -> String {
+    v.map(|n| format!("{:.1} °C", n as f32 / 10.0))
+        .unwrap_or_else(|| "—".into())
 }
 
 fn next_smbios_struct(buf: &[u8], i: usize) -> Option<usize> {
@@ -1257,6 +1325,133 @@ fn hw_sec_status(v: u8) -> &'static str {
         2 => "Not Implemented",
         _ => "Unknown",
     }
+}
+
+/// Type 26/27/28 探头 WORD：仅 `0x8000` 表示未知（`0` 仍是 0）。
+fn probe_word_unknown(v: u16) -> Option<u16> {
+    if v == 0x8000 { None } else { Some(v) }
+}
+
+fn probe_temp_unknown(v: u16) -> Option<i16> {
+    if v == 0x8000 { None } else { Some(v as i16) }
+}
+
+fn probe_status(v: u8) -> String {
+    match (v >> 5) & 0x07 {
+        1 => "Other".into(),
+        2 => "Unknown".into(),
+        3 => "OK".into(),
+        4 => "Non-critical".into(),
+        5 => "Critical".into(),
+        6 => "Non-recoverable".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+/// Type 26 Table 96 + Type 28 Table 100 位置枚举（后者更完整）。
+fn probe_location(v: u8) -> String {
+    match v & 0x1F {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Processor".into(),
+        0x04 => "Disk".into(),
+        0x05 => "Peripheral Bay".into(),
+        0x06 => "System Management Module".into(),
+        0x07 => "Motherboard".into(),
+        0x08 => "Memory Module".into(),
+        0x09 => "Processor Module".into(),
+        0x0A => "Power Unit".into(),
+        0x0B => "Add-in Card".into(),
+        0x0C => "Front Panel Board".into(),
+        0x0D => "Back Panel Board".into(),
+        0x0E => "Power System Board".into(),
+        0x0F => "Drive Back Plane".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn cooling_type_name(v: u8) -> String {
+    match v & 0x1F {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Fan".into(),
+        0x04 => "Centrifugal Blower".into(),
+        0x05 => "Chip Fan".into(),
+        0x06 => "Cabinet Fan".into(),
+        0x07 => "Power Supply Fan".into(),
+        0x08 => "Heat Pipe".into(),
+        0x09 => "Integrated Refrigeration".into(),
+        0x10 => "Active Cooling".into(),
+        0x11 => "Passive Cooling".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn voltage_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<VoltageProbe> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x14 || i + length > buf.len() {
+        return None;
+    }
+    let loc = buf[i + 0x05];
+    Some(VoltageProbe {
+        description: smbios_str(&rec.strings, buf[i + 0x04]),
+        location: probe_location(loc),
+        status: probe_status(loc),
+        max_mv: probe_word_unknown(word(buf, i, 0x06)),
+        min_mv: probe_word_unknown(word(buf, i, 0x08)),
+        nominal_mv: if length > 0x14 {
+            probe_word_unknown(word(buf, i, 0x14))
+        } else {
+            None
+        },
+    })
+}
+
+fn cooling_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<CoolingDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0C || i + length > buf.len() {
+        return None;
+    }
+    let ts = buf[i + 0x06];
+    Some(CoolingDevice {
+        description: if length >= 0x0F {
+            smbios_str(&rec.strings, buf[i + 0x0E])
+        } else {
+            None
+        },
+        kind: cooling_type_name(ts),
+        status: probe_status(ts),
+        group: buf[i + 0x07],
+        probe_handle: word(buf, i, 0x04),
+        nominal_rpm: if length > 0x0C {
+            probe_word_unknown(word(buf, i, 0x0C))
+        } else {
+            None
+        },
+    })
+}
+
+fn temperature_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<TemperatureProbe> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x14 || i + length > buf.len() {
+        return None;
+    }
+    let loc = buf[i + 0x05];
+    Some(TemperatureProbe {
+        description: smbios_str(&rec.strings, buf[i + 0x04]),
+        location: probe_location(loc),
+        status: probe_status(loc),
+        max_tenth_c: probe_temp_unknown(word(buf, i, 0x06)),
+        min_tenth_c: probe_temp_unknown(word(buf, i, 0x08)),
+        nominal_tenth_c: if length > 0x14 {
+            probe_temp_unknown(word(buf, i, 0x14))
+        } else {
+            None
+        },
+    })
 }
 
 fn slot_type_name(t: u8) -> &'static str {
@@ -2288,5 +2483,185 @@ mod tests {
             recs.iter().find(|r| r.kind == 24).map(|r| r.kind_name.as_str()),
             Some("Hardware Security")
         );
+    }
+
+    #[test]
+    fn type26_motherboard_ok_nominal_mv() {
+        let mut rec = vec![0u8; 0x16];
+        rec[0] = 26;
+        rec[1] = 0x16;
+        rec[0x04] = 1;
+        rec[0x05] = 0x67; // OK + Motherboard
+        rec[0x06] = 0xE0;
+        rec[0x07] = 0x2E; // 12000 mV
+        rec[0x08] = 0x00;
+        rec[0x09] = 0x80; // min unknown
+        rec[0x0A] = 0x00;
+        rec[0x0B] = 0x80;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec[0x0E] = 0x00;
+        rec[0x0F] = 0x80;
+        rec[0x14] = 0xE0;
+        rec[0x15] = 0x2E;
+        rec.extend_from_slice(b"VCORE\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let v = recs
+            .iter()
+            .find(|r| r.kind == 26)
+            .and_then(|r| voltage_from_raw(&rec, r))
+            .expect("type 26");
+        assert_eq!(v.description.as_deref(), Some("VCORE"));
+        assert_eq!(v.location, "Motherboard");
+        assert_eq!(v.status, "OK");
+        assert_eq!(v.max_mv, Some(12000));
+        assert_eq!(v.min_mv, None);
+        assert_eq!(v.nominal_mv, Some(12000));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 26).map(|r| r.kind_name.as_str()),
+            Some("Voltage Probe")
+        );
+    }
+
+    #[test]
+    fn type26_zero_mv_is_zero_not_unknown() {
+        let mut rec = vec![0u8; 0x14];
+        rec[0] = 26;
+        rec[1] = 0x14;
+        rec[0x05] = 0x83; // Non-critical + Processor
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let v = recs
+            .iter()
+            .find(|r| r.kind == 26)
+            .and_then(|r| voltage_from_raw(&rec, r))
+            .expect("type 26");
+        assert_eq!(v.max_mv, Some(0));
+        assert_eq!(v.min_mv, Some(0));
+        assert_eq!(v.nominal_mv, None);
+        assert_eq!(v.location, "Processor");
+        assert_eq!(v.status, "Non-critical");
+    }
+
+    #[test]
+    fn type27_fan_nominal_rpm_and_description() {
+        let mut rec = vec![0u8; 0x0F];
+        rec[0] = 27;
+        rec[1] = 0x0F;
+        rec[0x04] = 0x28;
+        rec[0x05] = 0x00; // probe handle 0x0028
+        rec[0x06] = 0x63; // OK + Fan
+        rec[0x07] = 1;
+        rec[0x0C] = 0xB8;
+        rec[0x0D] = 0x0B; // 3000 rpm
+        rec[0x0E] = 1;
+        rec.extend_from_slice(b"CPU Fan\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 27)
+            .and_then(|r| cooling_from_raw(&rec, r))
+            .expect("type 27");
+        assert_eq!(c.description.as_deref(), Some("CPU Fan"));
+        assert_eq!(c.kind, "Fan");
+        assert_eq!(c.status, "OK");
+        assert_eq!(c.group, 1);
+        assert_eq!(c.probe_handle, 0x0028);
+        assert_eq!(c.nominal_rpm, Some(3000));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 27).map(|r| r.kind_name.as_str()),
+            Some("Cooling Device")
+        );
+    }
+
+    #[test]
+    fn type27_8000_rpm_is_unknown_and_desc_needs_0x0f() {
+        let mut rec = vec![0u8; 0x0E];
+        rec[0] = 27;
+        rec[1] = 0x0E;
+        rec[0x06] = 0xA1; // Critical + Other
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 27)
+            .and_then(|r| cooling_from_raw(&rec, r))
+            .expect("type 27");
+        assert_eq!(c.nominal_rpm, None);
+        assert_eq!(c.description, None);
+        assert_eq!(c.kind, "Other");
+        assert_eq!(c.status, "Critical");
+    }
+
+    #[test]
+    fn type28_processor_temp_tenths() {
+        let mut rec = vec![0u8; 0x16];
+        rec[0] = 28;
+        rec[1] = 0x16;
+        rec[0x04] = 1;
+        rec[0x05] = 0x63; // OK + Processor
+        rec[0x06] = 0x90;
+        rec[0x07] = 0x01; // 40.0 °C
+        rec[0x08] = 0xCE;
+        rec[0x09] = 0xFF; // -5.0 °C
+        rec[0x0A] = 0x00;
+        rec[0x0B] = 0x80;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec[0x0E] = 0x00;
+        rec[0x0F] = 0x80;
+        rec[0x14] = 0x7C;
+        rec[0x15] = 0x01; // 38.0 °C
+        rec.extend_from_slice(b"CPU\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let t = recs
+            .iter()
+            .find(|r| r.kind == 28)
+            .and_then(|r| temperature_from_raw(&rec, r))
+            .expect("type 28");
+        assert_eq!(t.description.as_deref(), Some("CPU"));
+        assert_eq!(t.location, "Processor");
+        assert_eq!(t.status, "OK");
+        assert_eq!(t.max_tenth_c, Some(400));
+        assert_eq!(t.min_tenth_c, Some(-50));
+        assert_eq!(t.nominal_tenth_c, Some(380));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 28).map(|r| r.kind_name.as_str()),
+            Some("Temperature Probe")
+        );
+    }
+
+    #[test]
+    fn type28_8000_is_unknown() {
+        let mut rec = vec![0u8; 0x16];
+        rec[0] = 28;
+        rec[1] = 0x16;
+        rec[0x05] = 0x87; // Non-critical + Motherboard
+        rec[0x06] = 0x00;
+        rec[0x07] = 0x80;
+        rec[0x08] = 0x00;
+        rec[0x09] = 0x80;
+        rec[0x14] = 0x00;
+        rec[0x15] = 0x80;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let t = recs
+            .iter()
+            .find(|r| r.kind == 28)
+            .and_then(|r| temperature_from_raw(&rec, r))
+            .expect("type 28");
+        assert_eq!(t.max_tenth_c, None);
+        assert_eq!(t.min_tenth_c, None);
+        assert_eq!(t.nominal_tenth_c, None);
+        assert_eq!(t.location, "Motherboard");
+        assert_eq!(t.status, "Non-critical");
     }
 }

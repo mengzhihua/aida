@@ -303,6 +303,12 @@ pub struct NetReport {
     /// `1` 对该接口关闭 IPsec policy。
     pub ipv6_disable_policy: Sample<String>,
     pub ipv6_disable_policy_dev: Vec<String>,
+    /// `1` 启用 IPv6 组播转发（常由组播路由守护进程置位）。
+    pub ipv6_mc_forwarding: Sample<String>,
+    pub ipv6_mc_forwarding_dev: Vec<String>,
+    /// `1` 即使 `forwarding=0` 也强制转发。
+    pub ipv6_force_forwarding: Sample<String>,
+    pub ipv6_force_forwarding_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -944,6 +950,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let pol_all = ipv6_disable_policy.value.clone();
     let ipv6_disable_policy_dev =
         conf_dev_diffs(ctx, "ipv6", "disable_policy", pol_all.as_deref());
+    let ipv6_mc_forwarding =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/mc_forwarding"));
+    let mc_all = ipv6_mc_forwarding.value.clone();
+    let ipv6_mc_forwarding_dev =
+        conf_dev_diffs(ctx, "ipv6", "mc_forwarding", mc_all.as_deref());
+    let ipv6_force_forwarding =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/force_forwarding"));
+    let force_fwd_all = ipv6_force_forwarding.value.clone();
+    let ipv6_force_forwarding_dev =
+        conf_dev_diffs(ctx, "ipv6", "force_forwarding", force_fwd_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1189,6 +1205,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_ndisc_evict_nocarrier_dev,
                 ipv6_disable_policy,
                 ipv6_disable_policy_dev,
+                ipv6_mc_forwarding,
+                ipv6_mc_forwarding_dev,
+                ipv6_force_forwarding,
+                ipv6_force_forwarding_dev,
                 notes,
             };
         }
@@ -1542,6 +1562,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_ndisc_evict_nocarrier_dev,
         ipv6_disable_policy,
         ipv6_disable_policy_dev,
+        ipv6_mc_forwarding,
+        ipv6_mc_forwarding_dev,
+        ipv6_force_forwarding,
+        ipv6_force_forwarding_dev,
         notes,
     }
 }
@@ -2669,6 +2693,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/mc_forwarding"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/force_forwarding"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2871,6 +2905,8 @@ mod tests {
         );
         assert_eq!(r.ipv6_ndisc_evict_nocarrier.value.as_deref(), Some("1"));
         assert_eq!(r.ipv6_disable_policy.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_mc_forwarding.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_force_forwarding.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -3151,6 +3187,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/mc_forwarding"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/mc_forwarding"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/force_forwarding"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/force_forwarding"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3377,6 +3433,18 @@ mod tests {
             r.ipv6_disable_policy_dev.iter().any(|s| s == "lo:1"),
             "lo disable_policy=1 must differ from conf/all: {:?}",
             r.ipv6_disable_policy_dev
+        );
+        assert_eq!(r.ipv6_mc_forwarding.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_mc_forwarding_dev.iter().any(|s| s == "lo:1"),
+            "lo mc_forwarding=1 must differ from conf/all: {:?}",
+            r.ipv6_mc_forwarding_dev
+        );
+        assert_eq!(r.ipv6_force_forwarding.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_force_forwarding_dev.iter().any(|s| s == "lo:1"),
+            "lo force_forwarding=1 must differ from conf/all: {:?}",
+            r.ipv6_force_forwarding_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

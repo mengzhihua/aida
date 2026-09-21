@@ -292,6 +292,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 268. **SMBIOS Type 12/22/23/24 按 DSP0134 偏移解析。** Type 12 Count 在 `0x04`。Type 22 化学 BYTE `0x09`（`0x06`=Lithium-ion；`0x02` Unknown 时读 SBDS 字符串 `0x14`），设计容量 WORD `0x0A`（仅 `0` 未知，再乘 `0x15` 倍数，不是 `0x16` OEM），电压 WORD `0x0C`（`0` 未知）。Type 23 Capabilities `0x04` bit0 启用、bit5 看门狗、bits2:1 启动选项；Reset Count/Limit/Timeout 为 `0xFFFF` 表示未知。Type 24 Settings `0x04` 每两比特：`00` Disabled / `01` Enabled / `10` Not Implemented / `11` Unknown。不调用 dmidecode。
 269. **空的 memstick / siox / hsi 表示没有对应硬件。** Memory Stick 合并 `bus/memstick/devices` 与 `class/memstick_host`（不是 `class/memstick`）；bus 目录存在但为空仍回退 host class。SIOX/HSI 先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
 270. **`ndisc_evict_nocarrier` / `disable_policy` 只列出与 `conf/all` 不同的接口。** 前者 `1` 在 NOCARRIER 时清邻居；后者 `1` 对该接口关闭 IPsec policy。不要用 `default` 顶替已有 iface。
+271. **SMBIOS Type 26/27/28 按 DSP0134 偏移解析。** Type 26/28 描述字符串 `0x04`，Location and Status `0x05`（bits7:5 状态、bits4:0 位置）；WORD 最大/最小/分辨率/公差/精度仅 `0x8000` 未知（`0` 仍是 0）。Type 26 单位毫伏；Type 28 是十分之一摄氏度（有符号）。Nominal 在 `0x14`（length>`0x14`）。Type 27 Temperature Probe Handle `0x04`，Device Type and Status `0x06`（`0x03`=Fan），Cooling Unit Group `0x07`；Nominal Speed `0x0C` rpm（length>`0x0C`，`0x8000` 未知或非旋转）；Description 字符串号 `0x0E`（length≥`0x0F`）。不调用 dmidecode。
+272. **空的 amba / fsi / ppdev 表示没有对应硬件。** AMBA 先看 `bus/amba/devices`，没有再看 `class/amba`。FSI 合并 `bus/fsi/devices` 与 `class/fsi-master`（连字符 ABI，不是 `class/fsi_master`）；bus 目录存在但为空仍回退 master class。`ppdev` 只看 `class/ppdev`。`PermissionDenied` 仍写 note。
+273. **`mc_forwarding` / `force_forwarding` 只列出与 `conf/all` 不同的接口。** 前者 `1` 启用 IPv6 组播转发（常由组播路由守护进程置位）；后者 `1` 即使 `forwarding=0` 也强制转发。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 
