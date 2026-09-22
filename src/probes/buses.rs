@@ -166,6 +166,12 @@ pub struct BusesReport {
     pub coresight: Vec<String>,
     /// PCI Non-Transparent Bridge：先 `bus/ntb/devices`，再 `class/ntb`。
     pub ntb: Vec<String>,
+    /// Xen 半虚拟设备：先 `bus/xen/devices`，再 `class/xen`。
+    pub xen: Vec<String>,
+    /// 游戏端口：先 `bus/gameport/devices`，再 `class/gameport`。
+    pub gameport: Vec<String>,
+    /// FPGA Device Feature List：先 `bus/dfl/devices`，再 `class/dfl`。
+    pub dfl: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1021,6 +1027,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let xen = list_alt_dirs(
+        ctx,
+        "bus/xen/devices",
+        "class/xen",
+        8,
+        "xen",
+        &mut notes,
+        &mut missing,
+    );
+    let gameport = list_alt_dirs(
+        ctx,
+        "bus/gameport/devices",
+        "class/gameport",
+        8,
+        "gameport",
+        &mut notes,
+        &mut missing,
+    );
+    let dfl = list_alt_dirs(
+        ctx,
+        "bus/dfl/devices",
+        "class/dfl",
+        8,
+        "dfl",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1136,6 +1169,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         intel_th,
         coresight,
         ntb,
+        xen,
+        gameport,
+        dfl,
         notes,
     }
 }
@@ -1991,6 +2027,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/intel_th/devices/0-gth")).unwrap();
         fs::create_dir_all(root.join("sys/bus/coresight/devices/tmc_etf0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/ntb/devices/ntb0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/xen/devices/vif-0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/gameport/devices/gameport0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/dfl/devices/dfl_dev.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2107,6 +2146,9 @@ mod tests {
         assert_eq!(r.intel_th, vec!["0-gth".to_string()]);
         assert_eq!(r.coresight, vec!["tmc_etf0".to_string()]);
         assert_eq!(r.ntb, vec!["ntb0".to_string()]);
+        assert_eq!(r.xen, vec!["vif-0".to_string()]);
+        assert_eq!(r.gameport, vec!["gameport0".to_string()]);
+        assert_eq!(r.dfl, vec!["dfl_dev.0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -3742,6 +3784,105 @@ mod tests {
                 inner.split('/').all(|s| s != "ntb")
             })),
             "present ntb must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_xen_gameport_dfl_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-xen-gameport-dfl-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"xen")
+                && labels.contains(&"gameport")
+                && labels.contains(&"dfl"),
+            "missing xen/gameport/dfl must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn xen_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-xen-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/xen/devices/vif-0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.xen, vec!["vif-0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "xen")
+            })),
+            "present xen must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn gameport_from_bus_is_not_leftover() {
+        let root =
+            std::env::temp_dir().join(format!("aida-gameport-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/gameport/devices/gameport0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.gameport, vec!["gameport0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "gameport")
+            })),
+            "present gameport must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dfl_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-dfl-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/dfl/devices/dfl_dev.0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.dfl, vec!["dfl_dev.0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "dfl")
+            })),
+            "present dfl must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
