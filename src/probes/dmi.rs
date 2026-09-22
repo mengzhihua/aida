@@ -84,6 +84,18 @@ pub struct DmiInfo {
     pub remote_access: Option<RemoteAccess>,
     /// SMBIOS Type 33 64 位内存错误（地址 QWORD；`0x8000000000000000` 未知）。
     pub memory_errors64: Vec<MemoryError64>,
+    /// SMBIOS Type 34 管理设备（LM78 / SMBus 等硬件监控芯片）。
+    pub mgmt_devices: Vec<ManagementDevice>,
+    /// SMBIOS Type 35 管理设备组件（探头/风扇句柄）。
+    pub mgmt_components: Vec<ManagementComponent>,
+    /// SMBIOS Type 37 内存通道（RamBus / SyncLink）。
+    pub memory_channels: Vec<MemoryChannel>,
+    /// SMBIOS Type 36 管理设备阈值（WORD 仅 `0x8000` 未指定）。
+    pub mgmt_thresholds: Vec<MgmtThreshold>,
+    /// SMBIOS Type 40 附加信息（引用句柄 / 偏移 / 字符串）。
+    pub additional: Vec<AdditionalInfo>,
+    /// SMBIOS Type 42 管理控制器主机接口（MCTP / Network）。
+    pub mc_host: Vec<McHostInterface>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -189,6 +201,12 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         device_mapped: Vec::new(),
         remote_access: None,
         memory_errors64: Vec::new(),
+        mgmt_devices: Vec::new(),
+        mgmt_components: Vec::new(),
+        memory_channels: Vec::new(),
+        mgmt_thresholds: Vec::new(),
+        additional: Vec::new(),
+        mc_host: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -359,6 +377,42 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| memory_error64_from_raw(bytes, r))
                     .take(8)
                     .collect();
+                info.mgmt_devices = parsed
+                    .iter()
+                    .filter(|r| r.kind == 34)
+                    .filter_map(|r| mgmt_device_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.mgmt_components = parsed
+                    .iter()
+                    .filter(|r| r.kind == 35)
+                    .filter_map(|r| mgmt_component_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.memory_channels = parsed
+                    .iter()
+                    .filter(|r| r.kind == 37)
+                    .filter_map(|r| memory_channel_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.mgmt_thresholds = parsed
+                    .iter()
+                    .filter(|r| r.kind == 36)
+                    .filter_map(|r| mgmt_threshold_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.additional = parsed
+                    .iter()
+                    .filter(|r| r.kind == 40)
+                    .flat_map(|r| additional_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.mc_host = parsed
+                    .iter()
+                    .filter(|r| r.kind == 42)
+                    .filter_map(|r| mc_host_from_raw(bytes, r))
+                    .take(4)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -484,7 +538,13 @@ fn kind_name(kind: u8) -> String {
         30 => "Out-of-Band Remote Access",
         32 => "System Boot",
         33 => "64-bit Memory Error",
+        34 => "Management Device",
+        35 => "Management Device Component",
+        36 => "Management Device Threshold",
+        37 => "Memory Channel",
         39 => "Power Supply",
+        40 => "Additional Information",
+        42 => "MC Host Interface",
         41 => "Onboard Device",
         43 => "TPM Device",
         127 => "End of Table",
@@ -797,6 +857,59 @@ pub struct MemoryError64 {
     pub resolution: Option<u32>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct ManagementDevice {
+    pub description: Option<String>,
+    pub kind: String,
+    pub address: u32,
+    pub address_type: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ManagementComponent {
+    pub description: Option<String>,
+    pub mgmt_handle: u16,
+    pub component_handle: u16,
+    /// Threshold Handle；`0xFFFF` 表示无阈值结构。
+    pub threshold_handle: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryChannelDevice {
+    pub load: u8,
+    pub handle: u16,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryChannel {
+    pub kind: String,
+    pub max_load: u8,
+    pub devices: Vec<MemoryChannelDevice>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MgmtThreshold {
+    pub lower_noncrit: Option<u16>,
+    pub upper_noncrit: Option<u16>,
+    pub lower_crit: Option<u16>,
+    pub upper_crit: Option<u16>,
+    pub lower_nonrec: Option<u16>,
+    pub upper_nonrec: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AdditionalInfo {
+    pub handle: u16,
+    pub offset: u8,
+    pub string: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct McHostInterface {
+    pub kind: String,
+    pub device: Option<String>,
+}
+
 pub fn hex_range(start: Option<u64>, end: Option<u64>) -> String {
     match (start, end) {
         (Some(s), Some(e)) => format!("0x{s:X}-0x{e:X}"),
@@ -812,6 +925,10 @@ pub fn opt_hex_u32(v: Option<u32>) -> String {
 
 pub fn opt_hex_u64(v: Option<u64>) -> String {
     v.map(|n| format!("0x{n:X}")).unwrap_or_else(|| "—".into())
+}
+
+pub fn opt_u16(v: Option<u16>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_else(|| "—".into())
 }
 
 pub fn tenth_c_label(v: Option<i16>) -> String {
@@ -2071,6 +2188,181 @@ fn memory_error64_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryError
         device_address: mem_addr64_unknown(qword(buf, i, 0x13)),
         resolution: mem_addr_unknown(dword(buf, i, 0x1B)),
     })
+}
+
+fn mgmt_device_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ManagementDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0B || i + length > buf.len() {
+        return None;
+    }
+    Some(ManagementDevice {
+        description: smbios_str(&rec.strings, buf[i + 0x04]),
+        kind: mgmt_device_type(buf[i + 0x05]),
+        address: dword(buf, i, 0x06),
+        address_type: mgmt_address_type(buf[i + 0x0A]),
+    })
+}
+
+fn mgmt_device_type(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "LM75".into(),
+        0x04 => "LM78".into(),
+        0x05 => "LM79".into(),
+        0x06 => "LM80".into(),
+        0x07 => "LM81".into(),
+        0x08 => "ADM9240".into(),
+        0x09 => "DS1780".into(),
+        0x0A => "MAX1617".into(),
+        0x0B => "GL518SM".into(),
+        0x0C => "W83781D".into(),
+        0x0D => "HT82H791".into(),
+        0x0E => "W83L784R".into(),
+        0x0F => "W83627HF".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn mgmt_address_type(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "I/O Port".into(),
+        0x04 => "Memory".into(),
+        0x05 => "SMBus".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn mgmt_component_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ManagementComponent> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0B || i + length > buf.len() {
+        return None;
+    }
+    let thr = word(buf, i, 0x09);
+    Some(ManagementComponent {
+        description: smbios_str(&rec.strings, buf[i + 0x04]),
+        mgmt_handle: word(buf, i, 0x05),
+        component_handle: word(buf, i, 0x07),
+        threshold_handle: if thr == 0xFFFF { None } else { Some(thr) },
+    })
+}
+
+fn memory_channel_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryChannel> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x07 || i + length > buf.len() {
+        return None;
+    }
+    let count = buf[i + 0x06] as usize;
+    let mut devices = Vec::new();
+    let mut off = 0x07usize;
+    while devices.len() < count && devices.len() < 8 && off + 3 <= length {
+        devices.push(MemoryChannelDevice {
+            load: buf[i + off],
+            handle: word(buf, i, off + 1),
+        });
+        off += 3;
+    }
+    Some(MemoryChannel {
+        kind: memory_channel_type(buf[i + 0x04]),
+        max_load: buf[i + 0x05],
+        devices,
+    })
+}
+
+fn memory_channel_type(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "RamBus".into(),
+        0x04 => "SyncLink".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn mgmt_threshold_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MgmtThreshold> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x10 || i + length > buf.len() {
+        return None;
+    }
+    Some(MgmtThreshold {
+        lower_noncrit: probe_word_unknown(word(buf, i, 0x04)),
+        upper_noncrit: probe_word_unknown(word(buf, i, 0x06)),
+        lower_crit: probe_word_unknown(word(buf, i, 0x08)),
+        upper_crit: probe_word_unknown(word(buf, i, 0x0A)),
+        lower_nonrec: probe_word_unknown(word(buf, i, 0x0C)),
+        upper_nonrec: probe_word_unknown(word(buf, i, 0x0E)),
+    })
+}
+
+fn additional_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Vec<AdditionalInfo> {
+    let Some(i) = rec_offset(buf, rec) else {
+        return Vec::new();
+    };
+    let length = buf[i + 1] as usize;
+    if length < 0x05 || i + length > buf.len() {
+        return Vec::new();
+    }
+    let count = buf[i + 0x04] as usize;
+    let mut out = Vec::new();
+    let mut off = 0x05usize;
+    while out.len() < count && out.len() < 8 && off + 5 <= length {
+        let elen = buf[i + off] as usize;
+        if elen < 5 || off + elen > length {
+            break;
+        }
+        out.push(AdditionalInfo {
+            handle: word(buf, i, off + 1),
+            offset: buf[i + off + 3],
+            string: smbios_str(&rec.strings, buf[i + off + 4]),
+        });
+        off += elen;
+    }
+    out
+}
+
+fn mc_host_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<McHostInterface> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x06 || i + length > buf.len() {
+        return None;
+    }
+    let itype = buf[i + 0x04];
+    let n = buf[i + 0x05] as usize;
+    let device = if itype == 0x40 && n >= 1 && length >= 0x07 {
+        Some(mc_host_device(buf[i + 0x06]))
+    } else {
+        None
+    };
+    Some(McHostInterface {
+        kind: mc_host_type(itype),
+        device,
+    })
+}
+
+fn mc_host_type(t: u8) -> String {
+    if t <= 0x3F {
+        "MCTP".into()
+    } else if t == 0x40 {
+        "Network".into()
+    } else {
+        format!("0x{t:02X}")
+    }
+}
+
+fn mc_host_device(t: u8) -> String {
+    match t {
+        0x00 => "USB".into(),
+        0x01 => "Network Interface".into(),
+        0x02 => "Host Interface".into(),
+        0x03 => "PCI".into(),
+        n => format!("0x{n:02X}"),
+    }
 }
 
 fn pointing_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PointingDevice> {
@@ -3926,5 +4218,289 @@ mod tests {
         assert_eq!(e.array_address, None);
         assert_eq!(e.device_address, None);
         assert_eq!(e.resolution, None);
+    }
+
+    #[test]
+    fn type34_lm78_ioport_and_smbus() {
+        let mut rec = vec![0u8; 0x0B];
+        rec[0] = 34;
+        rec[1] = 0x0B;
+        rec[0x04] = 1;
+        rec[0x05] = 0x04; // LM78
+        rec[0x06] = 0x95;
+        rec[0x07] = 0x02; // address 0x295
+        rec[0x0A] = 0x03; // I/O Port
+        rec.extend_from_slice(b"LM78\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let d = recs
+            .iter()
+            .find(|r| r.kind == 34)
+            .and_then(|r| mgmt_device_from_raw(&rec, r))
+            .expect("type 34");
+        assert_eq!(d.description.as_deref(), Some("LM78"));
+        assert_eq!(d.kind, "LM78");
+        assert_eq!(d.address, 0x295);
+        assert_eq!(d.address_type, "I/O Port");
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 34).map(|r| r.kind_name.as_str()),
+            Some("Management Device")
+        );
+
+        let mut rec = vec![0u8; 0x0B];
+        rec[0] = 34;
+        rec[1] = 0x0B;
+        rec[0x04] = 1;
+        rec[0x05] = 0x08; // ADM9240
+        rec[0x06] = 0x2D; // SMBus 7-bit 0x2D
+        rec[0x0A] = 0x05;
+        rec.extend_from_slice(b"ADM\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let d = recs
+            .iter()
+            .find(|r| r.kind == 34)
+            .and_then(|r| mgmt_device_from_raw(&rec, r))
+            .expect("type 34 smbus");
+        assert_eq!(d.kind, "ADM9240");
+        assert_eq!(d.address, 0x2D);
+        assert_eq!(d.address_type, "SMBus");
+    }
+
+    #[test]
+    fn type35_handles_and_ffff_threshold() {
+        let mut rec = vec![0u8; 0x0B];
+        rec[0] = 35;
+        rec[1] = 0x0B;
+        rec[0x04] = 1;
+        rec[0x05] = 0x20;
+        rec[0x06] = 0x00; // mgmt 0x0020
+        rec[0x07] = 0x26;
+        rec[0x08] = 0x00; // component 0x0026
+        rec[0x09] = 0xFF;
+        rec[0x0A] = 0xFF; // no threshold
+        rec.extend_from_slice(b"VCORE\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 35)
+            .and_then(|r| mgmt_component_from_raw(&rec, r))
+            .expect("type 35");
+        assert_eq!(c.description.as_deref(), Some("VCORE"));
+        assert_eq!(c.mgmt_handle, 0x0020);
+        assert_eq!(c.component_handle, 0x0026);
+        assert_eq!(c.threshold_handle, None);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 35).map(|r| r.kind_name.as_str()),
+            Some("Management Device Component")
+        );
+
+        let mut rec = vec![0u8; 0x0B];
+        rec[0] = 35;
+        rec[1] = 0x0B;
+        rec[0x04] = 1;
+        rec[0x05] = 0x20;
+        rec[0x06] = 0x00;
+        rec[0x07] = 0x27;
+        rec[0x08] = 0x00;
+        rec[0x09] = 0x30;
+        rec[0x0A] = 0x00; // threshold 0x0030
+        rec.extend_from_slice(b"FAN1\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 35)
+            .and_then(|r| mgmt_component_from_raw(&rec, r))
+            .expect("type 35 thr");
+        assert_eq!(c.threshold_handle, Some(0x0030));
+        assert_eq!(c.component_handle, 0x0027);
+    }
+
+    #[test]
+    fn type37_rambus_two_devices_and_empty() {
+        let mut rec = vec![0u8; 0x0D];
+        rec[0] = 37;
+        rec[1] = 0x0D;
+        rec[0x04] = 0x03; // RamBus
+        rec[0x05] = 5;
+        rec[0x06] = 2;
+        rec[0x07] = 2;
+        rec[0x08] = 0x11;
+        rec[0x09] = 0x00; // load 2 handle 0x0011
+        rec[0x0A] = 3;
+        rec[0x0B] = 0x12;
+        rec[0x0C] = 0x00; // load 3 handle 0x0012
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let ch = recs
+            .iter()
+            .find(|r| r.kind == 37)
+            .and_then(|r| memory_channel_from_raw(&rec, r))
+            .expect("type 37");
+        assert_eq!(ch.kind, "RamBus");
+        assert_eq!(ch.max_load, 5);
+        assert_eq!(ch.devices.len(), 2);
+        assert_eq!(ch.devices[0].load, 2);
+        assert_eq!(ch.devices[0].handle, 0x0011);
+        assert_eq!(ch.devices[1].load, 3);
+        assert_eq!(ch.devices[1].handle, 0x0012);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 37).map(|r| r.kind_name.as_str()),
+            Some("Memory Channel")
+        );
+
+        let mut rec = vec![0u8; 0x07];
+        rec[0] = 37;
+        rec[1] = 0x07;
+        rec[0x04] = 0x04; // SyncLink
+        rec[0x05] = 1;
+        rec[0x06] = 0; // empty
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let ch = recs
+            .iter()
+            .find(|r| r.kind == 37)
+            .and_then(|r| memory_channel_from_raw(&rec, r))
+            .expect("type 37 empty");
+        assert_eq!(ch.kind, "SyncLink");
+        assert!(ch.devices.is_empty());
+    }
+
+    #[test]
+    fn type36_thresholds_and_8000_unspecified() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 36;
+        rec[1] = 0x10;
+        rec[0x04] = 0xB0;
+        rec[0x05] = 0x04; // lower non-crit 1200
+        rec[0x06] = 0x08;
+        rec[0x07] = 0x07; // upper non-crit 1800
+        rec[0x08] = 0x20;
+        rec[0x09] = 0x03; // lower crit 800
+        rec[0x0A] = 0x00;
+        rec[0x0B] = 0x80; // upper crit unspecified
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec[0x0E] = 0x00;
+        rec[0x0F] = 0x80;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let t = recs
+            .iter()
+            .find(|r| r.kind == 36)
+            .and_then(|r| mgmt_threshold_from_raw(&rec, r))
+            .expect("type 36");
+        assert_eq!(t.lower_noncrit, Some(1200));
+        assert_eq!(t.upper_noncrit, Some(1800));
+        assert_eq!(t.lower_crit, Some(800));
+        assert_eq!(t.upper_crit, None);
+        assert_eq!(t.lower_nonrec, None);
+        assert_eq!(t.upper_nonrec, None);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 36).map(|r| r.kind_name.as_str()),
+            Some("Management Device Threshold")
+        );
+
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 36;
+        rec[1] = 0x10;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let t = recs
+            .iter()
+            .find(|r| r.kind == 36)
+            .and_then(|r| mgmt_threshold_from_raw(&rec, r))
+            .expect("type 36 zero");
+        assert_eq!(t.lower_noncrit, Some(0));
+        assert_eq!(t.upper_noncrit, Some(0));
+    }
+
+    #[test]
+    fn type40_referenced_handle_and_empty() {
+        let mut rec = vec![0u8; 0x0A];
+        rec[0] = 40;
+        rec[1] = 0x0A;
+        rec[0x04] = 1;
+        rec[0x05] = 0x05;
+        rec[0x06] = 0x04;
+        rec[0x07] = 0x00; // handle 0x0004
+        rec[0x08] = 0x05;
+        rec[0x09] = 1;
+        rec.extend_from_slice(b"SKU\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let a = recs
+            .iter()
+            .find(|r| r.kind == 40)
+            .map(|r| additional_from_raw(&rec, r))
+            .expect("type 40");
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].handle, 0x0004);
+        assert_eq!(a[0].offset, 0x05);
+        assert_eq!(a[0].string.as_deref(), Some("SKU"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 40).map(|r| r.kind_name.as_str()),
+            Some("Additional Information")
+        );
+
+        let mut rec = vec![0u8; 0x05];
+        rec[0] = 40;
+        rec[1] = 0x05;
+        rec[0x04] = 0;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let a = recs
+            .iter()
+            .find(|r| r.kind == 40)
+            .map(|r| additional_from_raw(&rec, r))
+            .expect("type 40 empty");
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn type42_network_pci_and_mctp() {
+        let mut rec = vec![0u8; 0x07];
+        rec[0] = 42;
+        rec[1] = 0x07;
+        rec[0x04] = 0x40; // Network
+        rec[0x05] = 1;
+        rec[0x06] = 0x03; // PCI
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let h = recs
+            .iter()
+            .find(|r| r.kind == 42)
+            .and_then(|r| mc_host_from_raw(&rec, r))
+            .expect("type 42");
+        assert_eq!(h.kind, "Network");
+        assert_eq!(h.device.as_deref(), Some("PCI"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 42).map(|r| r.kind_name.as_str()),
+            Some("MC Host Interface")
+        );
+
+        let mut rec = vec![0u8; 0x06];
+        rec[0] = 42;
+        rec[1] = 0x06;
+        rec[0x04] = 0x10; // MCTP
+        rec[0x05] = 0;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let h = recs
+            .iter()
+            .find(|r| r.kind == 42)
+            .and_then(|r| mc_host_from_raw(&rec, r))
+            .expect("type 42 mctp");
+        assert_eq!(h.kind, "MCTP");
+        assert_eq!(h.device, None);
     }
 }
