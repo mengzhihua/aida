@@ -948,6 +948,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("pcmcia", &snap.buses.pcmcia),
         ("vmbus", &snap.buses.vmbus),
         ("bcma", &snap.buses.bcma),
+        ("intel_th", &snap.buses.intel_th),
+        ("coresight", &snap.buses.coresight),
+        ("ntb", &snap.buses.ntb),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1452,7 +1455,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1575,7 +1578,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             _ => snap.net.ipv6_force_forwarding.display(),
         },
         snap.net.ipv6_temp_valid_lft.display(),
-        snap.net.ipv6_temp_prefered_lft.display()
+        snap.net.ipv6_temp_prefered_lft.display(),
+        match snap.net.ipv6_disable_xfrm.value.as_deref() {
+            Some("0") => "0 开 IPsec".into(),
+            Some("1") => "1 关 xfrm".into(),
+            _ => snap.net.ipv6_disable_xfrm.display(),
+        },
+        match snap.net.ipv6_skip_notify_on_dev_down.value.as_deref() {
+            Some("0") => "0 通知".into(),
+            Some("1") => "1 跳过".into(),
+            _ => snap.net.ipv6_skip_notify_on_dev_down.display(),
+        }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1791,6 +1804,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">temp_prefered_lft iface {}</p>",
             esc(&snap.net.ipv6_temp_prefered_lft_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_disable_xfrm_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">disable_xfrm iface {}</p>",
+            esc(&snap.net.ipv6_disable_xfrm_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_skip_notify_on_dev_down_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">skip_notify_on_dev_down iface {}</p>",
+            esc(&snap.net.ipv6_skip_notify_on_dev_down_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -2826,6 +2851,36 @@ fn html_dmi_memory(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.mapped_addresses.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 19 内存映射</p>");
+        html.push_str("<table><tr><th>范围</th><th>阵列句柄</th><th>宽度</th></tr>");
+        for m in &snap.dmi.mapped_addresses {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{:#06X}</td><td>{}</td></tr>",
+                crate::probes::dmi::hex_range(m.start, m.end),
+                m.array_handle,
+                m.partition_width
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.memory_errors.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 18 内存错误</p>");
+        html.push_str("<table><tr><th>类型</th><th>粒度</th><th>操作</th><th>Syndrome</th><th>阵列地址</th><th>设备地址</th><th>分辨率</th></tr>");
+        for e in &snap.dmi.memory_errors {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&e.error_type),
+                esc(&e.granularity),
+                esc(&e.operation),
+                crate::probes::dmi::opt_hex_u32(e.syndrome),
+                crate::probes::dmi::opt_hex_u32(e.array_address),
+                crate::probes::dmi::opt_hex_u32(e.device_address),
+                crate::probes::dmi::opt_hex_u32(e.resolution)
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
@@ -3108,6 +3163,19 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.pointing_devices.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 21 板载指针</p>");
+        html.push_str("<table><tr><th>类型</th><th>接口</th><th>按键</th></tr>");
+        for p in &snap.dmi.pointing_devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&p.kind),
+                esc(&p.interface),
+                p.buttons
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -3276,6 +3344,28 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "—".into()),
                 m.rank.map(|n| n.to_string()).unwrap_or_else(|| "—".into())
+            ),
+        ));
+    }
+    for (i, m) in snap.dmi.mapped_addresses.iter().take(8).enumerate() {
+        dmi.push(pair(
+            format!("映射 {i}"),
+            format!(
+                "{}  array {:#06X}  width {}",
+                crate::probes::dmi::hex_range(m.start, m.end),
+                m.array_handle,
+                m.partition_width
+            ),
+        ));
+    }
+    for e in snap.dmi.memory_errors.iter().take(8) {
+        dmi.push(pair(
+            &e.error_type,
+            format!(
+                "{}  {}  syn {}",
+                e.granularity,
+                e.operation,
+                crate::probes::dmi::opt_hex_u32(e.syndrome)
             ),
         ));
     }
@@ -3476,6 +3566,12 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 d.i2c_address,
                 d.base_address
             ),
+        ));
+    }
+    for p in snap.dmi.pointing_devices.iter().take(4) {
+        dmi.push(pair(
+            &p.kind,
+            format!("{}  {} buttons", p.interface, p.buttons),
         ));
     }
     sections.push(ReportSection {

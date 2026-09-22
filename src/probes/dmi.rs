@@ -72,6 +72,12 @@ pub struct DmiInfo {
     pub current_probes: Vec<CurrentProbe>,
     /// SMBIOS Type 38 IPMI 设备（KCS/SMIC/BT/SSIF）。
     pub ipmi_devices: Vec<IpmiDevice>,
+    /// SMBIOS Type 18 32 位内存错误（ECC；`0x80000000` 地址未知）。
+    pub memory_errors: Vec<MemoryError32>,
+    /// SMBIOS Type 19 物理内存阵列映射地址（对标 AIDA64 内存映射）。
+    pub mapped_addresses: Vec<MemoryMappedAddress>,
+    /// SMBIOS Type 21 板载指针设备（鼠标/触控板）。
+    pub pointing_devices: Vec<PointingDevice>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -171,6 +177,9 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         power_controls: None,
         current_probes: Vec::new(),
         ipmi_devices: Vec::new(),
+        memory_errors: Vec::new(),
+        mapped_addresses: Vec::new(),
+        pointing_devices: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -307,6 +316,24 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| ipmi_from_raw(bytes, r))
                     .take(4)
                     .collect();
+                info.memory_errors = parsed
+                    .iter()
+                    .filter(|r| r.kind == 18)
+                    .filter_map(|r| memory_error_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.mapped_addresses = parsed
+                    .iter()
+                    .filter(|r| r.kind == 19)
+                    .filter_map(|r| mapped_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.pointing_devices = parsed
+                    .iter()
+                    .filter(|r| r.kind == 21)
+                    .filter_map(|r| pointing_from_raw(bytes, r))
+                    .take(4)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -425,7 +452,9 @@ fn kind_name(kind: u8) -> String {
         38 => "IPMI Device",
         16 => "Memory Array",
         17 => "Memory Device",
+        18 => "32-bit Memory Error",
         19 => "Memory Mapped Address",
+        21 => "Built-in Pointing Device",
         32 => "System Boot",
         39 => "Power Supply",
         41 => "Onboard Device",
@@ -675,6 +704,51 @@ pub struct IpmiDevice {
     pub base_address: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryError32 {
+    pub error_type: String,
+    pub granularity: String,
+    pub operation: String,
+    /// Vendor Syndrome；`0` 未知。
+    pub syndrome: Option<u32>,
+    /// 阵列物理地址；仅 `0x80000000` 未知。
+    pub array_address: Option<u32>,
+    /// 设备内地址；仅 `0x80000000` 未知。
+    pub device_address: Option<u32>,
+    /// 错误分辨字节数；仅 `0x80000000` 未知。
+    pub resolution: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryMappedAddress {
+    /// 起始字节地址（DWORD KB×1024，或 2.7 扩展 QWORD）。
+    pub start: Option<u64>,
+    /// 结束字节地址（DWORD 含该 KB 的最后一字节，或扩展 QWORD）。
+    pub end: Option<u64>,
+    pub array_handle: u16,
+    pub partition_width: u8,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PointingDevice {
+    pub kind: String,
+    pub interface: String,
+    pub buttons: u8,
+}
+
+pub fn hex_range(start: Option<u64>, end: Option<u64>) -> String {
+    match (start, end) {
+        (Some(s), Some(e)) => format!("0x{s:X}-0x{e:X}"),
+        (Some(s), None) => format!("0x{s:X}-—"),
+        (None, Some(e)) => format!("—-0x{e:X}"),
+        _ => "—".into(),
+    }
+}
+
+pub fn opt_hex_u32(v: Option<u32>) -> String {
+    v.map(|n| format!("0x{n:X}")).unwrap_or_else(|| "—".into())
+}
+
 pub fn tenth_c_label(v: Option<i16>) -> String {
     v.map(|n| format!("{:.1} °C", n as f32 / 10.0))
         .unwrap_or_else(|| "—".into())
@@ -891,6 +965,15 @@ fn qword(buf: &[u8], i: usize, off: usize) -> u64 {
     let mut b = [0u8; 8];
     b.copy_from_slice(&buf[i + off..i + off + 8]);
     u64::from_le_bytes(b)
+}
+
+fn dword(buf: &[u8], i: usize, off: usize) -> u32 {
+    u32::from_le_bytes([
+        buf[i + off],
+        buf[i + off + 1],
+        buf[i + off + 2],
+        buf[i + off + 3],
+    ])
 }
 
 fn bios_extras(buf: &[u8], rec: &SmbiosRecord) -> (Option<u64>, Option<String>) {
@@ -1754,6 +1837,148 @@ fn ipmi_interface_name(t: u8) -> String {
         0x02 => "SMIC".into(),
         0x03 => "BT".into(),
         0x04 => "SSIF".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn mem_addr_unknown(v: u32) -> Option<u32> {
+    if v == 0x8000_0000 { None } else { Some(v) }
+}
+
+fn memory_error_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryError32> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x17 || i + length > buf.len() {
+        return None;
+    }
+    let syn = dword(buf, i, 0x07);
+    Some(MemoryError32 {
+        error_type: memory_error_type(buf[i + 0x04]),
+        granularity: memory_error_granularity(buf[i + 0x05]),
+        operation: memory_error_operation(buf[i + 0x06]),
+        syndrome: if syn == 0 { None } else { Some(syn) },
+        array_address: mem_addr_unknown(dword(buf, i, 0x0B)),
+        device_address: mem_addr_unknown(dword(buf, i, 0x0F)),
+        resolution: mem_addr_unknown(dword(buf, i, 0x13)),
+    })
+}
+
+fn memory_error_type(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "OK".into(),
+        0x04 => "Bad read".into(),
+        0x05 => "Parity error".into(),
+        0x06 => "Single-bit error".into(),
+        0x07 => "Double-bit error".into(),
+        0x08 => "Multi-bit error".into(),
+        0x09 => "Nibble error".into(),
+        0x0A => "Checksum error".into(),
+        0x0B => "CRC error".into(),
+        0x0C => "Corrected single-bit error".into(),
+        0x0D => "Corrected error".into(),
+        0x0E => "Uncorrectable error".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn memory_error_granularity(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Device level".into(),
+        0x04 => "Memory partition level".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn memory_error_operation(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Read".into(),
+        0x04 => "Write".into(),
+        0x05 => "Partial write".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn mapped_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryMappedAddress> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0F || i + length > buf.len() {
+        return None;
+    }
+    let start_d = dword(buf, i, 0x04);
+    let end_d = dword(buf, i, 0x08);
+    let start = if start_d == 0xFFFF_FFFF {
+        if length >= 0x1F {
+            Some(qword(buf, i, 0x0F))
+        } else {
+            None
+        }
+    } else {
+        Some((start_d as u64) * 1024)
+    };
+    let end = if end_d == 0xFFFF_FFFF {
+        if length >= 0x1F {
+            Some(qword(buf, i, 0x17))
+        } else {
+            None
+        }
+    } else {
+        Some((end_d as u64) * 1024 + 1023)
+    };
+    Some(MemoryMappedAddress {
+        start,
+        end,
+        array_handle: word(buf, i, 0x0C),
+        partition_width: buf[i + 0x0E],
+    })
+}
+
+fn pointing_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<PointingDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x07 || i + length > buf.len() {
+        return None;
+    }
+    Some(PointingDevice {
+        kind: pointing_type_name(buf[i + 0x04]),
+        interface: pointing_interface_name(buf[i + 0x05]),
+        buttons: buf[i + 0x06],
+    })
+}
+
+fn pointing_type_name(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Mouse".into(),
+        0x04 => "Track Ball".into(),
+        0x05 => "Track Point".into(),
+        0x06 => "Glide Point".into(),
+        0x07 => "Touch Pad".into(),
+        0x08 => "Touch Screen".into(),
+        0x09 => "Optical Sensor".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn pointing_interface_name(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Serial".into(),
+        0x04 => "PS/2".into(),
+        0x05 => "Infrared".into(),
+        0x06 => "HP-HIL".into(),
+        0x07 => "Bus mouse".into(),
+        0x08 => "ADB".into(),
+        0xA0 => "Bus mouse DB-9".into(),
+        0xA1 => "Bus mouse micro-DIN".into(),
+        0xA2 => "USB".into(),
         n => format!("0x{n:02X}"),
     }
 }
@@ -3159,5 +3384,201 @@ mod tests {
             recs.iter().find(|r| r.kind == 38).map(|r| r.kind_name.as_str()),
             Some("IPMI Device")
         );
+    }
+
+    #[test]
+    fn type18_ok_read_and_unknown_addrs() {
+        let mut rec = vec![0u8; 0x17];
+        rec[0] = 18;
+        rec[1] = 0x17;
+        rec[0x04] = 0x03; // OK
+        rec[0x05] = 0x03; // Device level
+        rec[0x06] = 0x03; // Read
+        rec[0x07] = 0x78;
+        rec[0x08] = 0x56;
+        rec[0x09] = 0x34;
+        rec[0x0A] = 0x12;
+        rec[0x0B] = 0x00;
+        rec[0x0C] = 0x10;
+        rec[0x0D] = 0x00;
+        rec[0x0E] = 0x00; // array 0x1000
+        rec[0x0F] = 0x00;
+        rec[0x10] = 0x00;
+        rec[0x11] = 0x00;
+        rec[0x12] = 0x80; // device 0x80000000 unknown
+        rec[0x13] = 0x08;
+        rec[0x14] = 0x00;
+        rec[0x15] = 0x00;
+        rec[0x16] = 0x00; // resolution 8
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let e = recs
+            .iter()
+            .find(|r| r.kind == 18)
+            .and_then(|r| memory_error_from_raw(&rec, r))
+            .expect("type 18");
+        assert_eq!(e.error_type, "OK");
+        assert_eq!(e.granularity, "Device level");
+        assert_eq!(e.operation, "Read");
+        assert_eq!(e.syndrome, Some(0x1234_5678));
+        assert_eq!(e.array_address, Some(0x1000));
+        assert_eq!(e.device_address, None);
+        assert_eq!(e.resolution, Some(8));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 18).map(|r| r.kind_name.as_str()),
+            Some("32-bit Memory Error")
+        );
+    }
+
+    #[test]
+    fn type18_zero_syndrome_and_80000000_unknown() {
+        let mut rec = vec![0u8; 0x17];
+        rec[0] = 18;
+        rec[1] = 0x17;
+        rec[0x04] = 0x06; // Single-bit error
+        rec[0x05] = 0x04;
+        rec[0x06] = 0x04;
+        rec[0x0B] = 0x00;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x00;
+        rec[0x0E] = 0x80;
+        rec[0x0F] = 0x00;
+        rec[0x10] = 0x00;
+        rec[0x11] = 0x00;
+        rec[0x12] = 0x80;
+        rec[0x13] = 0x00;
+        rec[0x14] = 0x00;
+        rec[0x15] = 0x00;
+        rec[0x16] = 0x80;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let e = recs
+            .iter()
+            .find(|r| r.kind == 18)
+            .and_then(|r| memory_error_from_raw(&rec, r))
+            .expect("type 18");
+        assert_eq!(e.error_type, "Single-bit error");
+        assert_eq!(e.granularity, "Memory partition level");
+        assert_eq!(e.operation, "Write");
+        assert_eq!(e.syndrome, None);
+        assert_eq!(e.array_address, None);
+        assert_eq!(e.device_address, None);
+        assert_eq!(e.resolution, None);
+    }
+
+    #[test]
+    fn type19_kb_range_inclusive_end() {
+        let mut rec = vec![0u8; 0x0F];
+        rec[0] = 19;
+        rec[1] = 0x0F;
+        rec[0x08] = 0xFF;
+        rec[0x09] = 0xFF;
+        rec[0x0A] = 0x0F;
+        rec[0x0B] = 0x00; // end 0x000FFFFF KB
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x10; // array handle 0x1000
+        rec[0x0E] = 2;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let m = recs
+            .iter()
+            .find(|r| r.kind == 19)
+            .and_then(|r| mapped_from_raw(&rec, r))
+            .expect("type 19");
+        assert_eq!(m.start, Some(0));
+        assert_eq!(m.end, Some(0x3FFF_FFFF));
+        assert_eq!(m.array_handle, 0x1000);
+        assert_eq!(m.partition_width, 2);
+        assert_eq!(hex_range(m.start, m.end), "0x0-0x3FFFFFFF");
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 19).map(|r| r.kind_name.as_str()),
+            Some("Memory Mapped Address")
+        );
+    }
+
+    #[test]
+    fn type19_ffffffff_reads_extended_qwords() {
+        let mut rec = vec![0u8; 0x1F];
+        rec[0] = 19;
+        rec[1] = 0x1F;
+        rec[0x04] = 0xFF;
+        rec[0x05] = 0xFF;
+        rec[0x06] = 0xFF;
+        rec[0x07] = 0xFF;
+        rec[0x08] = 0xFF;
+        rec[0x09] = 0xFF;
+        rec[0x0A] = 0xFF;
+        rec[0x0B] = 0xFF;
+        rec[0x0C] = 0x10;
+        rec[0x0D] = 0x00;
+        rec[0x0E] = 1;
+        rec[0x0F] = 0x00;
+        rec[0x10] = 0x00;
+        rec[0x11] = 0x00;
+        rec[0x12] = 0x00;
+        rec[0x13] = 0x01; // start 0x1_0000_0000
+        rec[0x17] = 0xFF;
+        rec[0x18] = 0xFF;
+        rec[0x19] = 0xFF;
+        rec[0x1A] = 0xFF;
+        rec[0x1B] = 0x01; // end 0x1_FFFF_FFFF
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let m = recs
+            .iter()
+            .find(|r| r.kind == 19)
+            .and_then(|r| mapped_from_raw(&rec, r))
+            .expect("type 19 ext");
+        assert_eq!(m.start, Some(0x1_0000_0000));
+        assert_eq!(m.end, Some(0x1_FFFF_FFFF));
+        assert_eq!(m.array_handle, 0x0010);
+        assert_eq!(m.partition_width, 1);
+    }
+
+    #[test]
+    fn type21_ps2_mouse_and_usb_touchpad() {
+        let mut rec = vec![0u8; 0x07];
+        rec[0] = 21;
+        rec[1] = 0x07;
+        rec[0x04] = 0x03; // Mouse
+        rec[0x05] = 0x04; // PS/2
+        rec[0x06] = 3;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 21)
+            .and_then(|r| pointing_from_raw(&rec, r))
+            .expect("type 21");
+        assert_eq!(p.kind, "Mouse");
+        assert_eq!(p.interface, "PS/2");
+        assert_eq!(p.buttons, 3);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 21).map(|r| r.kind_name.as_str()),
+            Some("Built-in Pointing Device")
+        );
+
+        let mut rec = vec![0u8; 0x07];
+        rec[0] = 21;
+        rec[1] = 0x07;
+        rec[0x04] = 0x07; // Touch Pad
+        rec[0x05] = 0xA2; // USB
+        rec[0x06] = 2;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 21)
+            .and_then(|r| pointing_from_raw(&rec, r))
+            .expect("type 21 usb");
+        assert_eq!(p.kind, "Touch Pad");
+        assert_eq!(p.interface, "USB");
+        assert_eq!(p.buttons, 2);
     }
 }
