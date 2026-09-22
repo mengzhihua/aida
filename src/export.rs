@@ -257,6 +257,27 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 ),
             ),
             (
+                "机箱",
+                snap.dmi
+                    .chassis
+                    .as_ref()
+                    .map(|c| {
+                        format!(
+                            "{}  {}{}",
+                            c.kind,
+                            c.serial.as_deref().unwrap_or("—"),
+                            if c.locked { "  locked" } else { "" }
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{}  {}",
+                            snap.dmi.chassis_vendor.display(),
+                            snap.dmi.chassis_type.display()
+                        )
+                    }),
+            ),
+            (
                 "BIOS",
                 format!(
                     "{} {} rom {} rel {}",
@@ -924,6 +945,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("amba", &snap.buses.amba),
         ("fsi", &snap.buses.fsi),
         ("ppdev", &snap.buses.ppdev),
+        ("pcmcia", &snap.buses.pcmcia),
+        ("vmbus", &snap.buses.vmbus),
+        ("bcma", &snap.buses.bcma),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1428,7 +1452,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1549,7 +1573,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 关".into(),
             Some("1") => "1 强制转发".into(),
             _ => snap.net.ipv6_force_forwarding.display(),
-        }
+        },
+        snap.net.ipv6_temp_valid_lft.display(),
+        snap.net.ipv6_temp_prefered_lft.display()
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1753,6 +1779,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">force_forwarding iface {}</p>",
             esc(&snap.net.ipv6_force_forwarding_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_temp_valid_lft_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">temp_valid_lft iface {}</p>",
+            esc(&snap.net.ipv6_temp_valid_lft_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_temp_prefered_lft_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">temp_prefered_lft iface {}</p>",
+            esc(&snap.net.ipv6_temp_prefered_lft_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -3018,6 +3056,58 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if let Some(c) = &snap.dmi.chassis {
+        html.push_str(&format!(
+            "<p class=\"muted\">SMBIOS Type 3 机箱 {}  {}{}  serial {}  {}U  {} cords  boot {}  thermal {}  sec {}  sku {}</p>",
+            esc(c.manufacturer.as_deref().unwrap_or("—")),
+            esc(&c.kind),
+            if c.locked { " locked" } else { "" },
+            esc(c.serial.as_deref().unwrap_or("—")),
+            c.height_u.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+            c.power_cords.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+            esc(c.boot_state.as_deref().unwrap_or("—")),
+            esc(c.thermal_state.as_deref().unwrap_or("—")),
+            esc(c.security.as_deref().unwrap_or("—")),
+            esc(c.sku.as_deref().unwrap_or("—"))
+        ));
+    }
+    if let Some(p) = &snap.dmi.power_controls {
+        html.push_str(&format!(
+            "<p class=\"muted\">SMBIOS Type 25 定时开机 {}</p>",
+            esc(p.next_power_on.as_deref().unwrap_or("unspecified"))
+        ));
+    }
+    if !snap.dmi.current_probes.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 29 电流</p>");
+        html.push_str("<table><tr><th>名称</th><th>位置</th><th>状态</th><th>最大</th><th>最小</th><th>标称</th></tr>");
+        for c in &snap.dmi.current_probes {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(c.description.as_deref().unwrap_or("—")),
+                esc(&c.location),
+                esc(&c.status),
+                c.max_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into()),
+                c.min_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into()),
+                c.nominal_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into())
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.ipmi_devices.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 38 IPMI</p>");
+        html.push_str("<table><tr><th>接口</th><th>规格</th><th>I2C</th><th>NV</th><th>基址</th></tr>");
+        for d in &snap.dmi.ipmi_devices {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>0x{:02X}</td><td>{}</td><td>{}</td></tr>",
+                esc(&d.interface),
+                esc(d.spec.as_deref().unwrap_or("—")),
+                d.i2c_address,
+                d.nv_storage.map(|n| format!("0x{n:02X}")).unwrap_or_else(|| "none".into()),
+                esc(&d.base_address)
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -3143,6 +3233,27 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 snap.dmi.board_vendor.compact(),
                 snap.dmi.board_name.compact()
             ),
+        ),
+        pair(
+            "机箱",
+            snap.dmi
+                .chassis
+                .as_ref()
+                .map(|c| {
+                    format!(
+                        "{}  {}{}",
+                        c.kind,
+                        c.serial.as_deref().unwrap_or("—"),
+                        if c.locked { "  locked" } else { "" }
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}  {}",
+                        snap.dmi.chassis_vendor.compact(),
+                        snap.dmi.chassis_type.compact()
+                    )
+                }),
         ),
         pair("序列号", snap.dmi.product_serial.compact()),
         pair(
@@ -3321,6 +3432,49 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 t.status,
                 crate::probes::dmi::tenth_c_label(t.max_tenth_c),
                 crate::probes::dmi::tenth_c_label(t.nominal_tenth_c)
+            ),
+        ));
+    }
+    if let Some(c) = &snap.dmi.chassis {
+        dmi.push(pair(
+            "机箱",
+            format!(
+                "{}  {}{}  serial {}  {}U  sku {}",
+                c.kind,
+                c.manufacturer.as_deref().unwrap_or("—"),
+                if c.locked { " locked" } else { "" },
+                c.serial.as_deref().unwrap_or("—"),
+                c.height_u.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                c.sku.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    if let Some(p) = &snap.dmi.power_controls {
+        dmi.push(pair(
+            "定时开机",
+            p.next_power_on.clone().unwrap_or_else(|| "unspecified".into()),
+        ));
+    }
+    for c in snap.dmi.current_probes.iter().take(8) {
+        dmi.push(pair(
+            c.description.as_deref().unwrap_or("电流"),
+            format!(
+                "{}  {}  {} / {}",
+                c.location,
+                c.status,
+                c.max_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into()),
+                c.nominal_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into())
+            ),
+        ));
+    }
+    for d in snap.dmi.ipmi_devices.iter().take(4) {
+        dmi.push(pair(
+            &d.interface,
+            format!(
+                "spec {}  i2c 0x{:02X}  {}",
+                d.spec.as_deref().unwrap_or("—"),
+                d.i2c_address,
+                d.base_address
             ),
         ));
     }

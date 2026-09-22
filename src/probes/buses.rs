@@ -154,6 +154,12 @@ pub struct BusesReport {
     pub fsi: Vec<String>,
     /// 并口用户态（`class/ppdev`）。
     pub ppdev: Vec<String>,
+    /// PCMCIA / CardBus：先 `bus/pcmcia/devices`，再 `class/pcmcia`。
+    pub pcmcia: Vec<String>,
+    /// Hyper-V VMBus：先 `bus/vmbus/devices`，再 `class/vmbus`。
+    pub vmbus: Vec<String>,
+    /// Broadcom AMBA（bcma）：先 `bus/bcma/devices`，再 `class/bcma`。
+    pub bcma: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -955,6 +961,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let pcmcia = list_alt_dirs(
+        ctx,
+        "bus/pcmcia/devices",
+        "class/pcmcia",
+        8,
+        "pcmcia",
+        &mut notes,
+        &mut missing,
+    );
+    let vmbus = list_alt_dirs(
+        ctx,
+        "bus/vmbus/devices",
+        "class/vmbus",
+        8,
+        "vmbus",
+        &mut notes,
+        &mut missing,
+    );
+    let bcma = list_alt_dirs(
+        ctx,
+        "bus/bcma/devices",
+        "class/bcma",
+        8,
+        "bcma",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1064,6 +1097,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         amba,
         fsi,
         ppdev,
+        pcmcia,
+        vmbus,
+        bcma,
         notes,
     }
 }
@@ -1913,6 +1949,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/amba/devices/e0000000.uart")).unwrap();
         fs::create_dir_all(root.join("sys/bus/fsi/devices/00:00:00:06")).unwrap();
         fs::create_dir_all(root.join("sys/class/ppdev/parport0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/pcmcia/devices/0.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/vmbus/devices/vmbus_0_1")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/bcma/devices/bcma0:0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2023,6 +2062,9 @@ mod tests {
         assert_eq!(r.amba, vec!["e0000000.uart".to_string()]);
         assert_eq!(r.fsi, vec!["00:00:00:06".to_string()]);
         assert_eq!(r.ppdev, vec!["parport0".to_string()]);
+        assert_eq!(r.pcmcia, vec!["0.0".to_string()]);
+        assert_eq!(r.vmbus, vec!["vmbus_0_1".to_string()]);
+        assert_eq!(r.bcma, vec!["bcma0:0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -3463,6 +3505,102 @@ mod tests {
                 inner.split('/').all(|s| s != "ppdev")
             })),
             "present ppdev must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_pcmcia_vmbus_bcma_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-pcmcia-vmbus-bcma-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"pcmcia") && labels.contains(&"vmbus") && labels.contains(&"bcma"),
+            "missing pcmcia/vmbus/bcma must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pcmcia_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-pcmcia-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/pcmcia/devices/0.0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.pcmcia, vec!["0.0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "pcmcia")
+            })),
+            "present pcmcia must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vmbus_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-vmbus-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/vmbus/devices/vmbus_0_1")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.vmbus, vec!["vmbus_0_1".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "vmbus")
+            })),
+            "present vmbus must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn bcma_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-bcma-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/bcma/devices/bcma0:0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.bcma, vec!["bcma0:0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "bcma")
+            })),
+            "present bcma must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
