@@ -178,6 +178,12 @@ pub struct BusesReport {
     pub fsl_mc: Vec<String>,
     /// MEN Chameleon Bus：先 `bus/mcb/devices`，再 `class/mcb`。
     pub mcb: Vec<String>,
+    /// USB4：先 `bus/usb4/devices`，再 `class/usb4_port`。
+    pub usb4: Vec<String>,
+    /// Intel Sensor Hub Transport：先 `bus/ishtp/devices`，再 `class/ishtp`。
+    pub ishtp: Vec<String>,
+    /// ARM SCMI：先 `bus/scmi/devices`，再 `bus/scmi_protocol/devices`。
+    pub scmi: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1087,6 +1093,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let usb4 = list_alt_dirs(
+        ctx,
+        "bus/usb4/devices",
+        "class/usb4_port",
+        8,
+        "usb4",
+        &mut notes,
+        &mut missing,
+    );
+    let ishtp = list_alt_dirs(
+        ctx,
+        "bus/ishtp/devices",
+        "class/ishtp",
+        8,
+        "ishtp",
+        &mut notes,
+        &mut missing,
+    );
+    let scmi = list_alt_dirs(
+        ctx,
+        "bus/scmi/devices",
+        "bus/scmi_protocol/devices",
+        8,
+        "scmi",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1208,6 +1241,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         ssb,
         fsl_mc,
         mcb,
+        usb4,
+        ishtp,
+        scmi,
         notes,
     }
 }
@@ -2069,6 +2105,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/ssb/devices/ssb0:0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/fsl-mc/devices/dprc.1")).unwrap();
         fs::create_dir_all(root.join("sys/bus/mcb/devices/mcb1.16")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/usb4/devices/0-0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/ishtp/devices/ishtp0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/scmi/devices/scmi.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2191,6 +2230,9 @@ mod tests {
         assert_eq!(r.ssb, vec!["ssb0:0".to_string()]);
         assert_eq!(r.fsl_mc, vec!["dprc.1".to_string()]);
         assert_eq!(r.mcb, vec!["mcb1.16".to_string()]);
+        assert_eq!(r.usb4, vec!["0-0".to_string()]);
+        assert_eq!(r.ishtp, vec!["ishtp0".to_string()]);
+        assert_eq!(r.scmi, vec!["scmi.0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -4024,6 +4066,129 @@ mod tests {
                 inner.split('/').all(|s| s != "mcb")
             })),
             "present mcb must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_usb4_ishtp_scmi_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-usb4-ishtp-scmi-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"usb4")
+                && labels.contains(&"ishtp")
+                && labels.contains(&"scmi"),
+            "missing usb4/ishtp/scmi must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn usb4_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-usb4-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/usb4/devices/0-0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.usb4, vec!["0-0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "usb4")
+            })),
+            "present usb4 must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn usb4_port_class_is_not_leftover() {
+        let root =
+            std::env::temp_dir().join(format!("aida-usb4-port-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class/usb4_port/usb4_port0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.usb4, vec!["usb4_port0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "usb4")
+            })),
+            "present usb4_port class must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ishtp_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ishtp-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/ishtp/devices/ishtp0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ishtp, vec!["ishtp0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "ishtp")
+            })),
+            "present ishtp must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scmi_protocol_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-scmi-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/scmi_protocol/devices/protocol-0x13")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.scmi, vec!["protocol-0x13".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "scmi")
+            })),
+            "present scmi_protocol must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

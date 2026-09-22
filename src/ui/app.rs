@@ -922,6 +922,13 @@ impl AidaApp {
                 &self.snap.dmi.mgmt_devices.len().to_string(),
             );
         }
+        if !self.snap.dmi.mc_host.is_empty() {
+            kv(
+                ui,
+                self.t("主机接口", "MC host"),
+                &self.snap.dmi.mc_host[0].kind,
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -1977,6 +1984,44 @@ impl AidaApp {
                             .map(|h| format!("{h:#06X}"))
                             .unwrap_or_else(|| "none".into())
                     ),
+                );
+            }
+        }
+        if !self.snap.dmi.mgmt_thresholds.is_empty() {
+            ui.strong(self.t("管理阈值 (Type 36)", "Management thresholds"));
+            for (i, t) in self.snap.dmi.mgmt_thresholds.iter().enumerate() {
+                kv(
+                    ui,
+                    &format!("thr {i}"),
+                    &format!(
+                        "nc {}/{}  crit {}/{}  nrec {}/{}",
+                        crate::probes::dmi::opt_u16(t.lower_noncrit),
+                        crate::probes::dmi::opt_u16(t.upper_noncrit),
+                        crate::probes::dmi::opt_u16(t.lower_crit),
+                        crate::probes::dmi::opt_u16(t.upper_crit),
+                        crate::probes::dmi::opt_u16(t.lower_nonrec),
+                        crate::probes::dmi::opt_u16(t.upper_nonrec)
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.additional.is_empty() {
+            ui.strong(self.t("附加信息 (Type 40)", "Additional information"));
+            for a in &self.snap.dmi.additional {
+                kv(
+                    ui,
+                    &format!("{:#06X}+{:#04X}", a.handle, a.offset),
+                    a.string.as_deref().unwrap_or("—"),
+                );
+            }
+        }
+        if !self.snap.dmi.mc_host.is_empty() {
+            ui.strong(self.t("主机接口 (Type 42)", "MC host interface"));
+            for h in &self.snap.dmi.mc_host {
+                kv(
+                    ui,
+                    &h.kind,
+                    h.device.as_deref().unwrap_or("—"),
                 );
             }
         }
@@ -3136,7 +3181,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s  dis_xfrm {}  skip_notify {}  regen {}  desync {}s  ioam6 {}  seg6 {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s  dis_xfrm {}  skip_notify {}  regen {}  desync {}s  ioam6 {}  seg6 {}  rpl {}  pio_life {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -3287,6 +3332,16 @@ impl AidaApp {
                     Some("0") => "0 关".into(),
                     Some("1") => "1 开".into(),
                     _ => self.snap.net.ipv6_seg6_enabled.display(),
+                },
+                match self.snap.net.ipv6_rpl_seg_enabled.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    Some("1") => "1 开".into(),
+                    _ => self.snap.net.ipv6_rpl_seg_enabled.display(),
+                },
+                match self.snap.net.ipv6_ra_honor_pio_life.value.as_deref() {
+                    Some("0") => "0 关".into(),
+                    Some("1") => "1 尊重".into(),
+                    _ => self.snap.net.ipv6_ra_honor_pio_life.display(),
                 }
             ),
         );
@@ -3605,6 +3660,20 @@ impl AidaApp {
                 ui,
                 "seg6_enabled iface",
                 &self.snap.net.ipv6_seg6_enabled_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_rpl_seg_enabled_dev.is_empty() {
+            kv(
+                ui,
+                "rpl_seg_enabled iface",
+                &self.snap.net.ipv6_rpl_seg_enabled_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_ra_honor_pio_life_dev.is_empty() {
+            kv(
+                ui,
+                "ra_honor_pio_life iface",
+                &self.snap.net.ipv6_ra_honor_pio_life_dev.join("  "),
             );
         }
         kv(
@@ -4244,6 +4313,9 @@ impl AidaApp {
             ("ssb", &self.snap.buses.ssb),
             ("fsl-mc", &self.snap.buses.fsl_mc),
             ("mcb", &self.snap.buses.mcb),
+            ("usb4", &self.snap.buses.usb4),
+            ("ishtp", &self.snap.buses.ishtp),
+            ("scmi", &self.snap.buses.scmi),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));

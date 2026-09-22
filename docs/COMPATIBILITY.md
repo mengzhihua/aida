@@ -309,6 +309,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 285. **SMBIOS Type 34/35/37 按 DSP0134 偏移解析。** Type 34 描述字符串 `0x04`，类型 `0x05`（`0x04`=LM78 / `0x08`=ADM9240），地址 DWORD `0x06`，地址类型 `0x0A`（`0x03`=I/O Port / `0x05`=SMBus）。Type 35 管理/组件句柄在 `0x05`/`0x07`，阈值句柄 `0x09` 为 `0xFFFF` 表示无 Type 36。Type 37 通道类型 `0x04`（`0x03`=RamBus / `0x04`=SyncLink），最大负载 `0x05`，设备数 `0x06`，随后每条 3 字节（load BYTE + handle WORD）。不调用 dmidecode。
 286. **空的 ssb / fsl-mc / mcb 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
 287. **`ioam6_enabled` / `seg6_enabled` 只列出与 `conf/all` 不同的接口。** `ioam6_enabled=1` 启用 IPv6 In-situ OAM；`seg6_enabled=1` 启用 SRv6。不要用 `default` 顶替已有 iface。不要 dump `stable_secret`。
+288. **SMBIOS Type 36/40/42 按 DSP0134 偏移解析。** Type 36 六个 WORD 阈值（非危/危/不可恢复，各上下限），仅 `0x8000` 未指定（`0` 仍是 0）。Type 40 Count 在 `0x04`，随后每条至少 5 字节：Length、引用句柄 WORD、偏移 BYTE、字符串号。Type 42 接口 `0x04`：`<=0x3F`=MCTP、`0x40`=Network；Network 时类型特定数据首字节是设备（`0x00`=USB / `0x03`=PCI）。不调用 dmidecode。
+289. **空的 usb4 / ishtp / scmi 表示没有对应硬件。** USB4 先看 `bus/usb4/devices`，没有再看 `class/usb4_port`（下划线 ABI）。ISHTP 先看 `bus/ishtp/devices`，没有再看 `class/ishtp`。SCMI 先看 `bus/scmi/devices`，没有再看 `bus/scmi_protocol/devices`。`PermissionDenied` 仍写 note。
+290. **`rpl_seg_enabled` / `ra_honor_pio_life` 只列出与 `conf/all` 不同的接口。** `rpl_seg_enabled=1` 启用 RPL Segment Routing（RFC 6554）；`ra_honor_pio_life=1` 尊重 RA PIO 有效寿命（RFC 8981）。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 
