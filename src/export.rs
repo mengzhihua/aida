@@ -124,12 +124,22 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         "td,th{border:1px solid #333;padding:6px 8px;text-align:left;vertical-align:top;}",
     );
     html.push_str("th{background:#1c2230;} .muted{color:#aaa;font-size:12px;} .warn{color:#ffb347;} .crit{color:#ff6b6b;} .ok{color:#78c88c;}");
+    html.push_str("td,th{overflow-wrap:anywhere;word-break:break-word;} table{table-layout:fixed;}");
+    html.push_str("details.gap{margin:10px 0;padding:8px 12px;background:#1c2230;border:1px solid #333;}");
     html.push_str("</style></head><body>");
     html.push_str(&format!(
         "<h1>AIDA Linux 硬件报告</h1><p class=\"muted\">v{} · unix_ms {}</p>",
         snap.version, snap.collected_at_unix_ms
     ));
     html.push_str(&format!("<p>{}</p>", esc(&snap.privilege.summary)));
+    if !snap.environment_cards().is_empty() {
+        html.push_str("<div class=\"gap\">");
+        html.push_str("<p><b>本环境摘要</b></p><ul>");
+        for c in snap.environment_cards() {
+            html.push_str(&format!("<li>{}</li>", esc(&c)));
+        }
+        html.push_str("</ul></div>");
+    }
 
     section(&mut html, "CPU");
     kv(
@@ -148,14 +158,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ),
             ("虚拟化", snap.cpu.hypervisor.to_string()),
             (
-                "SMT",
+                "超线程",
                 format!(
-                    "active {} control {}",
+                    "启用 {} 控制 {}",
                     snap.cpu.smt_active.display(),
                     snap.cpu.smt_control.display()
                 ),
             ),
-            ("online", snap.cpu.online.display()),
+            ("在线 CPU", snap.cpu.online.display()),
             (
                 "offline",
                 match (snap.cpu.offline.access, snap.cpu.offline.value.as_deref()) {
@@ -199,7 +209,6 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("microcode", snap.cpu.microcode.display()),
         ],
     );
-    html_dmi_board(&mut html, snap);
     if !snap.cpu.vulnerabilities.is_empty() {
         html.push_str("<table><tr><th>漏洞</th><th>状态</th></tr>");
         for v in &snap.cpu.vulnerabilities {
@@ -241,59 +250,74 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
 
     section(&mut html, "DMI / 主板");
-    kv(
-        &mut html,
-        &[
-            ("系统厂商", snap.dmi.sys_vendor.display()),
-            ("产品", snap.dmi.product_name.display()),
-            ("序列号", snap.dmi.product_serial.display()),
-            ("UUID", snap.dmi.product_uuid.display()),
-            (
-                "主板",
-                format!(
-                    "{} {}",
-                    snap.dmi.board_vendor.display(),
-                    snap.dmi.board_name.display()
+    let dmi_ok = snap.dmi.sys_vendor.value.is_some()
+        || snap.dmi.product_name.value.is_some()
+        || snap.dmi.bios_vendor.value.is_some()
+        || snap.dmi.board_name.value.is_some();
+    if dmi_ok {
+        kv(
+            &mut html,
+            &[
+                ("系统厂商", snap.dmi.sys_vendor.display()),
+                ("产品", snap.dmi.product_name.display()),
+                ("序列号", snap.dmi.product_serial.display()),
+                ("UUID", snap.dmi.product_uuid.display()),
+                (
+                    "主板",
+                    format!(
+                        "{} {}",
+                        snap.dmi.board_vendor.display(),
+                        snap.dmi.board_name.display()
+                    ),
                 ),
-            ),
-            (
-                "机箱",
-                snap.dmi
-                    .chassis
-                    .as_ref()
-                    .map(|c| {
-                        format!(
-                            "{}  {}{}",
-                            c.kind,
-                            c.serial.as_deref().unwrap_or("—"),
-                            if c.locked { "  locked" } else { "" }
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        format!(
-                            "{}  {}",
-                            snap.dmi.chassis_vendor.display(),
-                            snap.dmi.chassis_type.display()
-                        )
-                    }),
-            ),
-            (
-                "BIOS",
-                format!(
-                    "{} {} rom {} rel {}",
-                    snap.dmi.bios_vendor.display(),
-                    snap.dmi.bios_version.display(),
+                (
+                    "机箱",
                     snap.dmi
-                        .bios_rom_kb
-                        .map(|n| format!("{n} KiB"))
-                        .unwrap_or_else(|| "—".into()),
-                    snap.dmi.bios_release.as_deref().unwrap_or("—")
+                        .chassis
+                        .as_ref()
+                        .map(|c| {
+                            format!(
+                                "{}  {}{}",
+                                c.kind,
+                                c.serial.as_deref().unwrap_or("—"),
+                                if c.locked { "  locked" } else { "" }
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "{}  {}",
+                                snap.dmi.chassis_vendor.display(),
+                                snap.dmi.chassis_type.display()
+                            )
+                        }),
                 ),
-            ),
-        ],
-    );
-    for n in &snap.dmi.notes {
-        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+                (
+                    "BIOS",
+                    format!(
+                        "{} {} rom {} rel {}",
+                        snap.dmi.bios_vendor.display(),
+                        snap.dmi.bios_version.display(),
+                        snap.dmi
+                            .bios_rom_kb
+                            .map(|n| format!("{n} KiB"))
+                            .unwrap_or_else(|| "—".into()),
+                        snap.dmi.bios_release.as_deref().unwrap_or("—")
+                    ),
+                ),
+            ],
+        );
+    } else {
+        html.push_str("<details class=\"gap\" open><summary>DMI / SMBIOS：本环境不可用</summary>");
+        html.push_str("<p class=\"muted\">云主机、容器或裁剪内核经常不导出 DMI。下面不再重复列出每个空字段。</p>");
+        for n in &snap.dmi.notes {
+            html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+        }
+        html.push_str("</details>");
+    }
+    if dmi_ok {
+        for n in &snap.dmi.notes {
+            html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+        }
     }
     html_dmi_memory(&mut html, snap);
     html_dmi_board(&mut html, snap);
@@ -542,29 +566,38 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     }
 
     section(&mut html, "传感器");
-    html.push_str("<table><tr><th>芯片</th><th>通道</th><th>值</th><th>min</th><th>max</th><th>crit</th><th>状态</th></tr>");
-    for chip in &snap.sensors.chips {
-        for ch in &chip.channels {
-            let val = ch
-                .value
-                .map(|v| format!("{v:.3} {}", ch.unit))
-                .unwrap_or_else(|| ch.raw.access_label());
-            html.push_str(&format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                esc(chip.name.value.as_deref().unwrap_or("?")),
-                esc(&ch.label),
-                esc(&val),
-                esc(&opt_f(ch.min)),
-                esc(&opt_f(ch.max)),
-                esc(&opt_f(ch.crit)),
-                access_cell(ch.raw.access)
-            ));
+    if snap.sensors.chips.is_empty() && snap.sensors.thermal_zones.is_empty() {
+        html.push_str("<details class=\"gap\" open><summary>传感器：本环境不可用</summary>");
+        html.push_str("<p class=\"muted\">无 hwmon / thermal_zone。云主机和精简虚拟机常见，顶栏 TEMP — 不是坏了。</p>");
+        for n in &snap.sensors.notes {
+            html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+        }
+        html.push_str("</details>");
+    } else {
+        html.push_str("<table><tr><th>芯片</th><th>通道</th><th>值</th><th>min</th><th>max</th><th>crit</th><th>状态</th></tr>");
+        for chip in &snap.sensors.chips {
+            for ch in &chip.channels {
+                let val = ch
+                    .value
+                    .map(|v| format!("{v:.3} {}", ch.unit))
+                    .unwrap_or_else(|| ch.raw.display());
+                html.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    esc(chip.name.value.as_deref().unwrap_or("?")),
+                    esc(&ch.label),
+                    esc(&val),
+                    esc(&opt_f(ch.min)),
+                    esc(&opt_f(ch.max)),
+                    esc(&opt_f(ch.crit)),
+                    access_cell(ch.raw.access)
+                ));
+            }
+        }
+        html.push_str("</table>");
+        for n in &snap.sensors.notes {
+            html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
         }
     }
-    if snap.sensors.chips.is_empty() {
-        html.push_str("<tr><td colspan=\"7\" class=\"warn\">无 hwmon 数据</td></tr>");
-    }
-    html.push_str("</table>");
 
     if !snap.sensors.cooling.is_empty() {
         html.push_str("<table><tr><th>冷却</th><th>类型</th><th>状态</th></tr>");
@@ -1106,62 +1139,70 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
 
     section(&mut html, "GPU");
     if snap.gpu.devices.is_empty() {
-        html.push_str("<p class=\"warn\">未发现 GPU / DRM 设备</p>");
-    }
-    for g in &snap.gpu.devices {
-        kv(
-            &mut html,
-            &[
-                ("节点", g.id.clone()),
-                ("驱动", g.driver.clone()),
-                ("PCI", g.pci_slot.display()),
-                (
-                    "ID",
-                    format!("{}:{}", g.vendor_id.display(), g.device_id.display()),
-                ),
-                (
-                    "占用",
-                    g.busy_percent
-                        .value
-                        .map(|v| format!("{v}%"))
-                        .unwrap_or_else(|| g.busy_percent.access_label()),
-                ),
-                (
-                    "显存",
-                    match (g.vram_used_bytes.value, g.vram_total_bytes.value) {
-                        (Some(u), Some(t)) => format!("{} / {}", format_bytes(u), format_bytes(t)),
-                        _ => g.vram_total_bytes.access_label(),
-                    },
-                ),
-                ("VBIOS", g.vbios.display()),
-            ],
-        );
-        for c in &g.connectors {
-            let edid = c
-                .edid
-                .as_ref()
-                .map(|e| {
-                    format!(
-                        "{} {} {}x{} {}cm",
-                        e.manufacturer,
-                        e.name.as_deref().unwrap_or("—"),
-                        e.h_active.unwrap_or(0),
-                        e.v_active.unwrap_or(0),
-                        e.width_cm.unwrap_or(0)
-                    )
-                })
-                .unwrap_or_else(|| "no EDID".into());
-            html.push_str(&format!(
-                "<p>{} {} / {} · {}</p>",
-                esc(&c.name),
-                esc(&c.status.display()),
-                esc(&c.enabled.display()),
-                esc(&edid)
-            ));
+        html.push_str("<details class=\"gap\" open><summary>GPU：本环境不可用</summary>");
+        html.push_str("<p class=\"muted\">无 DRM 卡。云主机/无头虚拟机常见，不是采集失败。未做 OpenCL/Vulkan 计算基准。</p>");
+        for n in &snap.gpu.notes {
+            html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
         }
-    }
-    for n in &snap.gpu.notes {
-        html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+        html.push_str("</details>");
+    } else {
+        for g in &snap.gpu.devices {
+            kv(
+                &mut html,
+                &[
+                    ("节点", g.id.clone()),
+                    ("驱动", g.driver.clone()),
+                    ("PCI", g.pci_slot.display()),
+                    (
+                        "ID",
+                        format!("{}:{}", g.vendor_id.display(), g.device_id.display()),
+                    ),
+                    (
+                        "占用",
+                        g.busy_percent
+                            .value
+                            .map(|v| format!("{v}%"))
+                            .unwrap_or_else(|| g.busy_percent.display()),
+                    ),
+                    (
+                        "显存",
+                        match (g.vram_used_bytes.value, g.vram_total_bytes.value) {
+                            (Some(u), Some(t)) => {
+                                format!("{} / {}", format_bytes(u), format_bytes(t))
+                            }
+                            _ => g.vram_total_bytes.display(),
+                        },
+                    ),
+                    ("VBIOS", g.vbios.display()),
+                ],
+            );
+            for c in &g.connectors {
+                let edid = c
+                    .edid
+                    .as_ref()
+                    .map(|e| {
+                        format!(
+                            "{} {} {}x{} {}cm",
+                            e.manufacturer,
+                            e.name.as_deref().unwrap_or("—"),
+                            e.h_active.unwrap_or(0),
+                            e.v_active.unwrap_or(0),
+                            e.width_cm.unwrap_or(0)
+                        )
+                    })
+                    .unwrap_or_else(|| "无 EDID".into());
+                html.push_str(&format!(
+                    "<p>{} {} / {} · {}</p>",
+                    esc(&c.name),
+                    esc(&c.status.display()),
+                    esc(&c.enabled.display()),
+                    esc(&edid)
+                ));
+            }
+        }
+        for n in &snap.gpu.notes {
+            html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
+        }
     }
 
     section(&mut html, "网络");
@@ -1173,10 +1214,10 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             .speed_mbps
             .value
             .map(|v| format!("{v} Mb/s"))
-            .unwrap_or_else(|| i.speed_mbps.access_label());
+            .unwrap_or_else(|| i.speed_mbps.display());
         let rx_tx = match (i.rx_bytes.value, i.tx_bytes.value) {
             (Some(r), Some(t)) => format!("{} / {}", format_bytes(r), format_bytes(t)),
-            _ => i.rx_bytes.access_label(),
+            _ => i.rx_bytes.display(),
         };
         html.push_str(&format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>rx {} tx {}</td><td>{}</td><td>{}</td></tr>",
@@ -2277,6 +2318,13 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             ("ID", snap.software.os_id.display()),
             ("ID_LIKE", snap.software.os_like.display()),
             ("VERSION_ID", snap.software.os_version.display()),
+            (
+                "已装软件",
+                match &snap.software.package_manager {
+                    Some(pm) => format!("{pm} {} 个（列表最多 256）", snap.software.package_count),
+                    None => "未发现 dpkg/apk 状态文件".into(),
+                },
+            ),
             ("内核", snap.software.kernel_release.display()),
             ("ostype", snap.software.ostype.display()),
             ("主机名", snap.software.hostname.display()),
@@ -2721,6 +2769,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
     for n in &snap.software.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
+    if !snap.software.packages.is_empty() {
+        html.push_str("<details class=\"gap\"><summary>已装软件列表（截断）</summary><table>");
+        html.push_str("<tr><th>包</th><th>版本</th></tr>");
+        for p in snap.software.packages.iter().take(64) {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(&p.name),
+                esc(&p.version)
+            ));
+        }
+        html.push_str("</table></details>");
+    }
     for n in &snap.clock.notes {
         html.push_str(&format!("<p class=\"warn\">{}</p>", esc(n)));
     }
@@ -2780,7 +2840,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
                 "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
                 esc(&s.name),
                 s.count,
-                esc(&format_bytes(s.size))
+                esc(&format_iomem_size(s.size))
             ));
         }
         html.push_str("</table>");
@@ -2823,6 +2883,7 @@ fn access_cell(k: AccessKind) -> &'static str {
         AccessKind::Ok => "ok",
         AccessKind::PermissionDenied => "权限不足",
         AccessKind::NotFound => "不存在",
+        AccessKind::Absent => "未设置",
         AccessKind::Unsupported => "不支持",
         AccessKind::Error => "错误",
     }
@@ -3404,6 +3465,59 @@ pub fn format_bytes(n: u64) -> String {
     format!("{v:.2} {}", UNITS[i])
 }
 
+/// 非 root 下 iomem 地址被清零时 size=0，不要显示成「3.00 B」。
+pub fn format_iomem_size(n: u64) -> String {
+    if n == 0 {
+        "—".into()
+    } else {
+        format_bytes(n)
+    }
+}
+
+/// GUI 导出默认目录：`$AIDA_EXPORT_DIR` → 文档目录 → `XDG_DATA_HOME/aida` → 家目录。
+pub fn default_export_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    if let Ok(p) = std::env::var("AIDA_EXPORT_DIR") {
+        let p = PathBuf::from(p);
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    if let Ok(p) = std::env::var("XDG_DOCUMENTS_DIR") {
+        let p = PathBuf::from(p);
+        if p.is_dir() {
+            return p;
+        }
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(home) = home {
+        if let Ok(text) = std::fs::read_to_string(home.join(".config/user-dirs.dirs")) {
+            for line in text.lines() {
+                let line = line.trim();
+                if let Some(v) = line.strip_prefix("XDG_DOCUMENTS_DIR=") {
+                    let v = v
+                        .trim()
+                        .trim_matches('"')
+                        .replace("$HOME", &home.to_string_lossy());
+                    let p = PathBuf::from(v);
+                    if p.is_dir() {
+                        return p;
+                    }
+                }
+            }
+        }
+        let docs = home.join("Documents");
+        if docs.is_dir() {
+            return docs;
+        }
+        let data = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local/share"));
+        return data.join("aida");
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
 struct ReportSection {
     title: String,
     rows: Vec<(String, String)>,
@@ -3429,9 +3543,9 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 .unwrap_or_else(|| "n/a".into()),
         ),
         pair(
-            "SMT",
+            "超线程",
             format!(
-                "active {} control {}",
+                "启用 {} 控制 {}",
                 snap.cpu.smt_active.compact(),
                 snap.cpu.smt_control.compact()
             ),
@@ -4078,6 +4192,14 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
     let mut os = vec![
         pair("OS", snap.software.os_name.compact()),
         pair("ID", snap.software.os_id.compact()),
+        pair("ID_LIKE", snap.software.os_like.compact()),
+        pair(
+            "已装软件",
+            match &snap.software.package_manager {
+                Some(pm) => format!("{pm} {}", snap.software.package_count),
+                None => "—".into(),
+            },
+        ),
         pair("内核", snap.software.kernel_release.compact()),
         pair("hostname", snap.software.hostname.compact()),
         pair(
@@ -4173,8 +4295,32 @@ mod tests {
         let csv = to_csv(&snap);
         assert!(csv.starts_with("section,key,value"));
         assert!(!csv.contains("容器或精简虚拟机"));
-        let md = to_markdown(&snap);
-        assert!(md.contains("# AIDA Linux 硬件报告"));
-        assert!(!md.contains("容器或精简虚拟机"));
+        let html = to_html(&snap);
+        assert!(html.contains("AIDA Linux"));
+        let dmi_spam = html.matches("容器或精简虚拟机可能不导出 DMI").count();
+        assert!(
+            dmi_spam <= 1,
+            "DMI hint should not repeat per field, got {dmi_spam}"
+        );
+        assert!(
+            !html.contains("3.00 B") && !html.contains("5.00 B"),
+            "iomem must not show hidden region counts as bytes"
+        );
+        assert_eq!(format_iomem_size(0), "—");
+        assert!(format_iomem_size(4096).contains("KiB"));
+    }
+
+    #[test]
+    fn default_export_dir_honors_env() {
+        let old = std::env::var_os("AIDA_EXPORT_DIR");
+        let tmp = std::env::temp_dir().join(format!("aida-export-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        std::env::set_var("AIDA_EXPORT_DIR", &tmp);
+        assert_eq!(default_export_dir(), tmp);
+        match old {
+            Some(v) => std::env::set_var("AIDA_EXPORT_DIR", v),
+            None => std::env::remove_var("AIDA_EXPORT_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

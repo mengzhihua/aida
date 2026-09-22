@@ -64,15 +64,15 @@
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf / fs.protected_* | bpf_jit_enable/harden；binfmt_misc status（不写 register）；seccomp `actions_avail`（不 dump `actions_logged`）；不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |
 | Ns | `/proc/self/ns` | `max_*_namespaces` |
-| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling`；`ostype` |
+| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling`；`ostype`；dpkg/apk 状态文件已装包 |
 
 ## 界面
 
 - 左：`SidePanel` 树（摘要 / CPU / DMI / 内存 / GPU / 传感器 / 电源 / 存储 / 文件系统 / 网络 / USB / 输入 / 声卡 / PCI / 平台 / NUMA / OS / 历史记录 / 基准 / 导出）
-- 右：对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点；界面重绘间隔与采集一致（前台 1s，失焦 2.5s），避免空转 500ms 帧
-- 顶：权限条 +「以管理员身份重启」（`elevate::reexec`）
-- 任务栏：对标 iStat Menus，窗口内常驻 CPU/内存用量/网络/磁盘/温度/loadavg；默认 always-on-top 无边框窄条（X11 `_NET_WM_WINDOW_TYPE_DOCK`，无托盘 crate）；有底层盘时磁盘合计跳过 Device Mapper，只有 `dm-*` 时保留 mapper 速率
-- 历史：默认记录。启动只读 JSONL 尾部最多 1800 条并裁掉更旧的磁盘内容；每次 live 采样进内存队列，勾选记录时追加文件（`$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`），录满后每隔 256 条再裁回 cap。「历史记录」页画 CPU/MEM/NET/DISK/温度/load
+- 右：一层页面 `ScrollArea` + 对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点（`allow_scroll(false)`）；界面重绘间隔与采集一致（前台 1s，失焦 2.5s）
+- 顶：权限条 +「提权后重新采集」（`elevate::reexec`）+ 无 DMI/GPU/传感器环境摘要
+- 主窗口：有边框、可缩放。任务栏对标 iStat Menus，窗口内常驻 CPU/内存/网络/磁盘/温度/loadavg；置顶 Dock 窄条默认关
+- 历史：默认记录。启动只读 JSONL 尾部最多 1800 条并裁掉更旧的磁盘内容；每次 live 采样进内存队列，勾选记录时追加文件（`$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`），录满后每隔 256 条再裁回 cap。「历史记录」横轴用本地时分秒
 - 告警：对照 `*_max`/`*_crit`/`*_min`，状态变化写入 JSONL（`$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`）
 - 中文标签：若系统有 Noto/文泉驿等 CJK 字体则加载，否则回退英文，避免方块字
 
@@ -80,9 +80,10 @@
 
 `export` 在同一份 `HardwareSnapshot` 上生成：
 
-- JSON：全字段 + `access`/`source`/`hint`
-- HTML：单文件深色报告
+- JSON：全字段 + `access`/`source`/`hint`（`absent` = 文件在但键空）
+- HTML：单文件深色报告；缺 DMI/GPU/传感器时折叠摘要，不重复长提示
 - 文本 / CSV / Markdown：同一份摘要清单（CPU/DMI/内存/GPU/传感器/存储/网络/PCI/USB/OS），对标 AIDA64 TXT/CSV。CSV 表头 `section,key,value`
+- GUI 默认目录：`$AIDA_EXPORT_DIR` 或 XDG 文档目录
 
 CLI：`aida collect --format text` 打 stdout；`--text`/`--csv`/`--md` 写文件。不要为换格式再采集一次。
 

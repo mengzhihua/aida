@@ -26,7 +26,10 @@ pub struct Sample<T: Serialize> {
 pub enum AccessKind {
     Ok,
     PermissionDenied,
+    /// 文件或目录不存在。
     NotFound,
+    /// 文件在，但键/属性未提供（如 Debian 的 os-release 无 `ID_LIKE`）。
+    Absent,
     Unsupported,
     Error,
 }
@@ -72,6 +75,16 @@ impl<T: Serialize> Sample<T> {
         }
     }
 
+    /// 文件读到了，但其中没有这个键。不要标成「文件不存在」。
+    pub fn absent(source: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self {
+            value: None,
+            access: AccessKind::Absent,
+            source: source.into(),
+            hint: Some(hint.into()),
+        }
+    }
+
     pub fn error(source: impl Into<String>, err: impl Into<String>) -> Self {
         Self {
             value: None,
@@ -94,7 +107,17 @@ impl<T: Serialize> Sample<T> {
     {
         match (&self.value, self.access) {
             (Some(v), AccessKind::Ok) => v.to_string(),
-            _ => self.access_label(),
+            (_, AccessKind::Ok) => "—".into(),
+            // 文件在、键空：不要写成「文件不存在」。
+            (_, AccessKind::Absent) => "[未设置]".into(),
+            // 文件/节点本身没有。不把路径拼进界面。
+            (_, AccessKind::NotFound) => "[不存在]".into(),
+            (_, AccessKind::Unsupported) => self
+                .hint
+                .clone()
+                .unwrap_or_else(|| "[不支持]".into()),
+            (_, AccessKind::Error) => friendly_io_error(self.hint.as_deref()),
+            (_, AccessKind::PermissionDenied) => self.compact(),
         }
     }
 
@@ -106,6 +129,7 @@ impl<T: Serialize> Sample<T> {
         match (&self.value, self.access) {
             (Some(v), AccessKind::Ok) => v.to_string(),
             (_, AccessKind::Ok | AccessKind::NotFound) => "—".into(),
+            (_, AccessKind::Absent) => "[未设置]".into(),
             (_, AccessKind::PermissionDenied) => "[权限不足]".into(),
             (_, AccessKind::Unsupported) => "[不支持]".into(),
             (_, AccessKind::Error) => "[读取失败]".into(),
@@ -122,14 +146,31 @@ impl<T: Serialize> Sample<T> {
             AccessKind::PermissionDenied => {
                 format!("[权限不足] {}", self.hint.as_deref().unwrap_or(&self.source))
             }
-            AccessKind::NotFound => {
-                format!("[不存在] {}", self.hint.as_deref().unwrap_or(&self.source))
-            }
-            AccessKind::Unsupported => {
-                format!("[不支持] {}", self.hint.as_deref().unwrap_or(&self.source))
-            }
-            AccessKind::Error => format!("[读取失败] {}", self.hint.as_deref().unwrap_or("unknown")),
+            AccessKind::NotFound => "[不存在]".into(),
+            AccessKind::Absent => self
+                .hint
+                .clone()
+                .unwrap_or_else(|| "[未设置]".into()),
+            AccessKind::Unsupported => self
+                .hint
+                .clone()
+                .unwrap_or_else(|| "[不支持]".into()),
+            AccessKind::Error => friendly_io_error(self.hint.as_deref()),
         }
+    }
+}
+
+/// 把 errno 原文收成用户语言，不把 `/proc` 路径刷到界面上。
+fn friendly_io_error(hint: Option<&str>) -> String {
+    let h = hint.unwrap_or("");
+    if h.contains("Invalid argument") || h.contains("os error 22") {
+        "内核不支持此读取（loopback / 虚拟设备常见）".into()
+    } else if h.contains("No such device") || h.contains("os error 19") {
+        "设备不存在".into()
+    } else if h.is_empty() {
+        "[读取失败]".into()
+    } else {
+        "[读取失败]".into()
     }
 }
 
@@ -471,6 +512,16 @@ mod tests {
         let denied = Sample::<String>::denied("/sys/firmware/dmi/tables/DMI");
         assert_eq!(denied.compact(), "[权限不足]");
         assert!(denied.display().contains("[权限不足]"));
+        let absent = Sample::<String>::absent("/etc/os-release", "os-release 无 ID_LIKE");
+        assert_eq!(absent.access, AccessKind::Absent);
+        assert_eq!(absent.display(), "[未设置]");
+        assert_eq!(absent.compact(), "[未设置]");
+        assert!(!absent.display().contains("不存在"));
+        assert_eq!(
+            Sample::<String>::error("/sys/class/net/lo/speed", "Invalid argument (os error 22)")
+                .display(),
+            "内核不支持此读取（loopback / 虚拟设备常见）"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

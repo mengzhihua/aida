@@ -110,6 +110,7 @@ pub fn collect_with_lib_roots(ctx: &ProbeCtx, lib_roots: &[PathBuf]) -> DoctorRe
     if !display && !wayland {
         hints.push("没有 DISPLAY/WAYLAND_DISPLAY：用 `./aida-cli collect` 或 `./run-collect.sh`。".into());
     }
+    hints.push("无 FUSE 时 AppImage 请加 APPIMAGE_EXTRACT_AND_RUN=1；缺 libegl / libxkbcommon-x11 时 GUI 起不来。".into());
     hints.push(format!("运行库一键装：{}", gui_install_cmd(&family)));
 
     DoctorReport {

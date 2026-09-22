@@ -29,7 +29,7 @@ chmod +x install.sh aida-cli
 
 # 不安装也可以
 ./run-collect.sh --html report.html          # CentOS 7 也能采集（musl 静态）
-APPIMAGE_EXTRACT_AND_RUN=1 ./run-gui.sh      # 桌面；旧 glibc 不行时用上一行
+APPIMAGE_EXTRACT_AND_RUN=1 ./run-gui.sh      # 无 FUSE 时必须加这个；缺 libegl/libxkbcommon-x11 GUI 起不来
 ```
 
 ### 发行版怎么选包
@@ -83,15 +83,17 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 
 - **硬件与拓扑**：CPU（拓扑 / cpuidle / 漏洞 / 利用率）、DMI / 主板、SMBIOS Type 4 处理器插座、Type 7 缓存、Type 8 端口连接器、Type 9 系统插槽、Type 11 OEM 字符串、Type 12 配置选项、Type 13 BIOS 语言、Type 22 便携电池、Type 23 系统复位、Type 24 硬件安全、Type 26 电压探头、Type 27 冷却装置、Type 28 温度探头、Type 32 启动状态、Type 39 电源、Type 41 板载设备、Type 43 TPM、Type 0 BIOS ROM/Release、Type 16/17 内存阵列与 DIMM（容量、外形、额定/配置速度、位宽、rank、厂商/序列/料号；对标 AIDA64 CPU/主板/Memory/SPD，不扫 I2C）、PCI/PCIe、NVMe、GPU/DRM、USB、输入设备、NUMA、virtio / KVM / IOMMU
 - **传感器**：hwmon + thermal，阈值告警写 JSONL；RAPL 瓦特、PSI、EDAC
-- **任务栏**：窗口内常驻 CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg；默认置顶无边框窄条（对标 iStat Menus）
-- **历史记录**：默认写入 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`；启动加载最近约 30 分钟，左侧「历史记录」回看折线
+- **任务栏**：窗口内常驻 CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg；置顶无边框窄条可选，默认关闭（对标 iStat Menus，但不挡住旁边的浏览器）
+- **历史记录**：默认写入 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`；启动加载最近约 30 分钟，左侧「历史记录」按本地时间画折线
 - **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc`、PTP、PPS、TPM、`firmware_attributes`、`pci_epf`、Slimbus、Memory Stick、SIOX、HSI、AMBA、FSI、`ppdev` 等 leftover class（空 = 无硬件，不是失败）
 - **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
+- **软件**：OS 页列出 dpkg/apk 已装包（读状态文件，不调用 `dpkg -l`）；内核/cgroup 原始项折叠在清单下面
 - **占用**：GUI 前台约 1Hz 只刷新传感器和速率；TCP 表 / sysctl / 挂载用量约每 8 秒才扫一次；窗口失焦降到约 2.5s
-- **导出**：JSON（每个字段带 `access` / `source` / `hint`）、单文件 HTML、可读文本、CSV、Markdown（一次采集可同时写出；`--format` 打印到 stdout，FILE=`-` 也是 stdout）
-- **基准**：CPU / 内存 / 磁盘相对分（`--quick` 约 200ms）
+- **导出**：JSON（每个字段带 `access` / `source` / `hint`）、单文件 HTML、可读文本、CSV、Markdown。GUI 写到 `$AIDA_EXPORT_DIR` 或 XDG 文档目录，并显示完整路径；CLI `--format` 打印到 stdout，FILE=`-` 也是 stdout
+- **提权**：GUI 顶部「提权后重新采集」；CLI `aida elevate gui`。无 DMI/GPU/传感器时顶部有环境摘要，不假装坏了
+- **基准**：CPU / 内存 / 磁盘相对分（`--quick` 约 200ms）；GUI 在后台线程跑，有「正在跑」提示
 
-刻意未做：GPU OpenCL/Vulkan 计算基准（会引入额外运行时，和可打包目标冲突）。
+刻意未做：GPU OpenCL/Vulkan 计算基准（会引入额外运行时，和可打包目标冲突）。内存条级厂商/料号只靠 SMBIOS Type 16/17，不扫 I2C SPD。
 
 ## 从源码安装（开发机）
 

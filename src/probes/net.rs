@@ -1358,15 +1358,28 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ..
             } => match s.parse::<i64>() {
                 Ok(v) if v >= 0 => Sample::ok(v, source),
-                Ok(_) => Sample::unsupported(source, "speed=-1 表示内核未知（虚拟网卡常见）"),
+                Ok(_) => Sample::unsupported(source, "网卡未报告链路速率（虚拟接口常见）"),
                 Err(_) => Sample::error(source, "无法解析 speed"),
             },
-            s => Sample {
-                value: None,
-                access: s.access,
-                source: s.source,
-                hint: s.hint,
-            },
+            s => {
+                if s.access == AccessKind::Error
+                    && s.hint.as_deref().is_some_and(|h| {
+                        h.contains("Invalid argument") || h.contains("os error 22")
+                    })
+                {
+                    Sample::unsupported(
+                        s.source,
+                        "网卡未报告链路速率（loopback / 虚拟接口常见）",
+                    )
+                } else {
+                    Sample {
+                        value: None,
+                        access: s.access,
+                        source: s.source,
+                        hint: s.hint,
+                    }
+                }
+            }
         };
         let stats = dir.join("statistics");
         let rx = access::read_u64(stats.join("rx_bytes"));
