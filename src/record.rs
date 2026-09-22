@@ -4,7 +4,7 @@
 //! `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -205,8 +205,12 @@ pub fn format_rate(bps: f64) -> String {
     }
 }
 
-/// GUI 历史页最多回放这么多样本（约 30 分钟 @ 1Hz）。
+/// GUI 历史页最多回放这么多样本（约 30 分钟 @ 1Hz）。磁盘 JSONL 也按这个裁。
 pub const HISTORY_LOAD_CAP: usize = 1800;
+/// 从文件尾估算每条样本的字节，用来只读最后一段。
+pub const HISTORY_BYTES_PER_SAMPLE: u64 = 1024;
+/// 录满 cap 后每隔这么多样本把磁盘裁回 cap。
+pub const HISTORY_ROTATE_EVERY: usize = 256;
 
 pub fn default_log_path() -> PathBuf {
     if let Ok(p) = std::env::var("AIDA_RECORD_LOG") {
@@ -238,14 +242,27 @@ pub fn append_jsonl(path: &Path, samples: &[HistorySample]) -> Result<(), String
     Ok(())
 }
 
-/// 读 JSONL 末尾最多 `cap` 条。缺文件当空历史，不是失败。坏行跳过。
+/// 读 JSONL 末尾最多 `cap` 条。大文件只看尾部窗口，不扫整份。
+/// 缺文件当空历史，不是失败。坏行跳过。
 pub fn load_recent(path: &Path, cap: usize) -> Result<Vec<HistorySample>, String> {
     if cap == 0 || !path.exists() {
         return Ok(Vec::new());
     }
-    let f = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut f = fs::File::open(path).map_err(|e| e.to_string())?;
+    let len = f.metadata().map_err(|e| e.to_string())?.len();
+    let window = (cap as u64)
+        .saturating_add(2)
+        .saturating_mul(HISTORY_BYTES_PER_SAMPLE);
+    let mut reader = BufReader::new(&mut f);
+    if len > window {
+        reader
+            .seek(SeekFrom::Start(len - window))
+            .map_err(|e| e.to_string())?;
+        let mut skip = Vec::new();
+        reader.read_until(b'\n', &mut skip).map_err(|e| e.to_string())?;
+    }
     let mut q = std::collections::VecDeque::with_capacity(cap.min(256));
-    for line in std::io::BufRead::lines(std::io::BufReader::new(f)) {
+    for line in reader.lines() {
         let line = line.map_err(|e| e.to_string())?;
         let line = line.trim();
         if line.is_empty() {
@@ -260,6 +277,40 @@ pub fn load_recent(path: &Path, cap: usize) -> Result<Vec<HistorySample>, String
         q.push_back(s);
     }
     Ok(q.into_iter().collect())
+}
+
+pub fn rewrite_jsonl(path: &Path, samples: &[HistorySample]) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("jsonl.tmp");
+    {
+        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        for s in samples {
+            let line = serde_json::to_string(s).map_err(|e| e.to_string())?;
+            writeln!(f, "{line}").map_err(|e| e.to_string())?;
+        }
+        f.sync_all().map_err(|e| e.to_string())?;
+    }
+    fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// 启动时把超过 cap 的旧日志裁成尾部。按实际编码长度判断，不靠宽松字节预算。
+pub fn retain_recent(path: &Path, cap: usize) -> Result<Vec<HistorySample>, String> {
+    let samples = load_recent(path, cap)?;
+    if !path.exists() {
+        return Ok(samples);
+    }
+    let len = fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let mut encoded = 0u64;
+    for s in &samples {
+        let line = serde_json::to_string(s).map_err(|e| e.to_string())?;
+        encoded = encoded.saturating_add(line.len() as u64 + 1);
+    }
+    if len > encoded.saturating_add(64) {
+        rewrite_jsonl(path, &samples)?;
+    }
+    Ok(samples)
 }
 
 pub fn clear_jsonl(path: &Path) -> Result<(), String> {
@@ -405,6 +456,67 @@ mod tests {
         assert_eq!(load_recent(&path, 8).unwrap().len(), 0);
         let missing = dir.join("no-such.jsonl");
         assert!(load_recent(&missing, 8).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_recent_seeks_tail_of_padded_file() {
+        let dir = std::env::temp_dir().join(format!("aida-record-seek-{}", std::process::id()));
+        let path = dir.join("history.jsonl");
+        fs::create_dir_all(&dir).unwrap();
+        let mut body = "x".repeat(16 * 1024);
+        body.push('\n');
+        for i in 0..12u64 {
+            body.push_str(&format!("{{\"unix_ms\":{i},\"cpu_pct\":{i}.0}}\n"));
+        }
+        fs::write(&path, &body).unwrap();
+        assert!(fs::metadata(&path).unwrap().len() > 8 * HISTORY_BYTES_PER_SAMPLE);
+        let loaded = load_recent(&path, 3).unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[0].unix_ms, 9);
+        assert_eq!(loaded[2].unix_ms, 11);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retain_recent_rewrites_oversize_log() {
+        let dir = std::env::temp_dir().join(format!("aida-record-retain-{}", std::process::id()));
+        let path = dir.join("history.jsonl");
+        fs::create_dir_all(&dir).unwrap();
+        let mut body = "pad".repeat(8 * 1024);
+        body.push('\n');
+        for i in 0..20u64 {
+            body.push_str(&format!("{{\"unix_ms\":{i},\"cpu_pct\":1.0}}\n"));
+        }
+        fs::write(&path, &body).unwrap();
+        let before = fs::metadata(&path).unwrap().len();
+        let loaded = retain_recent(&path, 4).unwrap();
+        assert_eq!(loaded.len(), 4);
+        assert_eq!(loaded[0].unix_ms, 16);
+        let after = fs::metadata(&path).unwrap().len();
+        assert!(after < before, "before={before} after={after}");
+        assert_eq!(load_recent(&path, 8).unwrap().len(), 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retain_recent_trims_many_small_lines_under_byte_budget() {
+        let dir = std::env::temp_dir().join(format!("aida-record-lines-{}", std::process::id()));
+        let path = dir.join("history.jsonl");
+        fs::create_dir_all(&dir).unwrap();
+        let mut body = String::new();
+        for i in 0..40u64 {
+            body.push_str(&format!("{{\"unix_ms\":{i},\"cpu_pct\":1.0}}\n"));
+        }
+        fs::write(&path, &body).unwrap();
+        let before = fs::metadata(&path).unwrap().len();
+        assert!(before < (4 + 8) * HISTORY_BYTES_PER_SAMPLE);
+        let loaded = retain_recent(&path, 4).unwrap();
+        assert_eq!(loaded.len(), 4);
+        assert_eq!(loaded[0].unix_ms, 36);
+        let after = fs::metadata(&path).unwrap().len();
+        assert!(after < before, "before={before} after={after}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -109,7 +109,7 @@ impl AidaApp {
         let prev_rapl = Some(crate::probes::rapl::counters(&snap.rapl));
         let record_path = crate::record::default_log_path();
         let mut record_err = None;
-        let history = match crate::record::load_recent(
+        let history = match crate::record::retain_recent(
             &record_path,
             crate::record::HISTORY_LOAD_CAP,
         ) {
@@ -195,6 +195,14 @@ impl AidaApp {
                 Ok(()) => {
                     self.record_samples = self.record_samples.saturating_add(1);
                     self.record_err = None;
+                    if self.record_samples % crate::record::HISTORY_ROTATE_EVERY as u64 == 0
+                        && self.history.len() >= crate::record::HISTORY_LOAD_CAP
+                    {
+                        let keep: Vec<_> = self.history.iter().cloned().collect();
+                        if let Err(e) = crate::record::rewrite_jsonl(&self.record_path, &keep) {
+                            self.record_err = Some(e);
+                        }
+                    }
                 }
                 Err(e) => self.record_err = Some(e),
             }
