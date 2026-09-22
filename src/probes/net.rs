@@ -327,6 +327,12 @@ pub struct NetReport {
     /// SLAAC DESYNC_FACTOR 上限（秒）。内核默认 600。
     pub ipv6_max_desync_factor: Sample<String>,
     pub ipv6_max_desync_factor_dev: Vec<String>,
+    /// `1` 启用 IPv6 IOAM（In-situ OAM）。
+    pub ipv6_ioam6_enabled: Sample<String>,
+    pub ipv6_ioam6_enabled_dev: Vec<String>,
+    /// `1` 启用 SRv6（Segment Routing over IPv6）。
+    pub ipv6_seg6_enabled: Sample<String>,
+    pub ipv6_seg6_enabled_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1013,6 +1019,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let desync_all = ipv6_max_desync_factor.value.clone();
     let ipv6_max_desync_factor_dev =
         conf_dev_diffs(ctx, "ipv6", "max_desync_factor", desync_all.as_deref());
+    let ipv6_ioam6_enabled =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/ioam6_enabled"));
+    let ioam_all = ipv6_ioam6_enabled.value.clone();
+    let ipv6_ioam6_enabled_dev =
+        conf_dev_diffs(ctx, "ipv6", "ioam6_enabled", ioam_all.as_deref());
+    let ipv6_seg6_enabled =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/seg6_enabled"));
+    let seg6_all = ipv6_seg6_enabled.value.clone();
+    let ipv6_seg6_enabled_dev =
+        conf_dev_diffs(ctx, "ipv6", "seg6_enabled", seg6_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1274,6 +1290,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_regen_max_retry_dev,
                 ipv6_max_desync_factor,
                 ipv6_max_desync_factor_dev,
+                ipv6_ioam6_enabled,
+                ipv6_ioam6_enabled_dev,
+                ipv6_seg6_enabled,
+                ipv6_seg6_enabled_dev,
                 notes,
             };
         }
@@ -1643,6 +1663,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_regen_max_retry_dev,
         ipv6_max_desync_factor,
         ipv6_max_desync_factor_dev,
+        ipv6_ioam6_enabled,
+        ipv6_ioam6_enabled_dev,
+        ipv6_seg6_enabled,
+        ipv6_seg6_enabled_dev,
         notes,
     }
 }
@@ -2810,6 +2834,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ioam6_enabled"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/seg6_enabled"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -3020,6 +3054,8 @@ mod tests {
         assert_eq!(r.ipv6_skip_notify_on_dev_down.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_regen_max_retry.value.as_deref(), Some("5"));
         assert_eq!(r.ipv6_max_desync_factor.value.as_deref(), Some("600"));
+        assert_eq!(r.ipv6_ioam6_enabled.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_seg6_enabled.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -3380,6 +3416,26 @@ mod tests {
             "300\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ioam6_enabled"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/ioam6_enabled"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/seg6_enabled"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/seg6_enabled"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3656,6 +3712,18 @@ mod tests {
             r.ipv6_max_desync_factor_dev.iter().any(|s| s == "lo:300"),
             "lo max_desync_factor=300 must differ from conf/all: {:?}",
             r.ipv6_max_desync_factor_dev
+        );
+        assert_eq!(r.ipv6_ioam6_enabled.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_ioam6_enabled_dev.iter().any(|s| s == "lo:1"),
+            "lo ioam6_enabled=1 must differ from conf/all: {:?}",
+            r.ipv6_ioam6_enabled_dev
+        );
+        assert_eq!(r.ipv6_seg6_enabled.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_seg6_enabled_dev.iter().any(|s| s == "lo:1"),
+            "lo seg6_enabled=1 must differ from conf/all: {:?}",
+            r.ipv6_seg6_enabled_dev
         );
         let _ = fs::remove_dir_all(&root);
     }

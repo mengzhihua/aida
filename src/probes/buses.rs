@@ -172,6 +172,12 @@ pub struct BusesReport {
     pub gameport: Vec<String>,
     /// FPGA Device Feature List：先 `bus/dfl/devices`，再 `class/dfl`。
     pub dfl: Vec<String>,
+    /// Sonics Silicon Backplane：先 `bus/ssb/devices`，再 `class/ssb`。
+    pub ssb: Vec<String>,
+    /// NXP DPAA2 Management Complex：先 `bus/fsl-mc/devices`，再 `class/fsl-mc`。
+    pub fsl_mc: Vec<String>,
+    /// MEN Chameleon Bus：先 `bus/mcb/devices`，再 `class/mcb`。
+    pub mcb: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1054,6 +1060,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let ssb = list_alt_dirs(
+        ctx,
+        "bus/ssb/devices",
+        "class/ssb",
+        8,
+        "ssb",
+        &mut notes,
+        &mut missing,
+    );
+    let fsl_mc = list_alt_dirs(
+        ctx,
+        "bus/fsl-mc/devices",
+        "class/fsl-mc",
+        8,
+        "fsl-mc",
+        &mut notes,
+        &mut missing,
+    );
+    let mcb = list_alt_dirs(
+        ctx,
+        "bus/mcb/devices",
+        "class/mcb",
+        8,
+        "mcb",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1172,6 +1205,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         xen,
         gameport,
         dfl,
+        ssb,
+        fsl_mc,
+        mcb,
         notes,
     }
 }
@@ -2030,6 +2066,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/xen/devices/vif-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/gameport/devices/gameport0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/dfl/devices/dfl_dev.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/ssb/devices/ssb0:0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/fsl-mc/devices/dprc.1")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/mcb/devices/mcb1.16")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2149,6 +2188,9 @@ mod tests {
         assert_eq!(r.xen, vec!["vif-0".to_string()]);
         assert_eq!(r.gameport, vec!["gameport0".to_string()]);
         assert_eq!(r.dfl, vec!["dfl_dev.0".to_string()]);
+        assert_eq!(r.ssb, vec!["ssb0:0".to_string()]);
+        assert_eq!(r.fsl_mc, vec!["dprc.1".to_string()]);
+        assert_eq!(r.mcb, vec!["mcb1.16".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -3883,6 +3925,105 @@ mod tests {
                 inner.split('/').all(|s| s != "dfl")
             })),
             "present dfl must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_ssb_fslmc_mcb_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-ssb-fslmc-mcb-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"ssb")
+                && labels.contains(&"fsl-mc")
+                && labels.contains(&"mcb"),
+            "missing ssb/fsl-mc/mcb must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ssb_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ssb-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/ssb/devices/ssb0:0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ssb, vec!["ssb0:0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "ssb")
+            })),
+            "present ssb must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fsl_mc_from_bus_is_not_leftover() {
+        let root =
+            std::env::temp_dir().join(format!("aida-fsl-mc-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/fsl-mc/devices/dprc.1")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.fsl_mc, vec!["dprc.1".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "fsl-mc")
+            })),
+            "present fsl-mc must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn mcb_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-mcb-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/mcb/devices/mcb1.16")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.mcb, vec!["mcb1.16".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "mcb")
+            })),
+            "present mcb must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);
