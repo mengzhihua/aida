@@ -896,6 +896,13 @@ impl AidaApp {
                 &self.snap.dmi.current_probes.len().to_string(),
             );
         }
+        if !self.snap.dmi.pointing_devices.is_empty() {
+            kv(
+                ui,
+                self.t("板载指针", "Pointing"),
+                &self.snap.dmi.pointing_devices.len().to_string(),
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -1905,6 +1912,16 @@ impl AidaApp {
                 );
             }
         }
+        if !self.snap.dmi.pointing_devices.is_empty() {
+            ui.strong(self.t("板载指针 (Type 21)", "Pointing devices"));
+            for p in &self.snap.dmi.pointing_devices {
+                kv(
+                    ui,
+                    &p.kind,
+                    &format!("{}  {} buttons", p.interface, p.buttons),
+                );
+            }
+        }
         if !self.snap.dmi.smbios_records.is_empty() {
             ui.collapsing("SMBIOS records", |ui| {
                 for r in &self.snap.dmi.smbios_records {
@@ -1915,7 +1932,11 @@ impl AidaApp {
     }
 
     fn ui_dmi_memory(&self, ui: &mut egui::Ui) {
-        if self.snap.dmi.memory_arrays.is_empty() && self.snap.dmi.memory_devices.is_empty() {
+        if self.snap.dmi.memory_arrays.is_empty()
+            && self.snap.dmi.memory_devices.is_empty()
+            && self.snap.dmi.memory_errors.is_empty()
+            && self.snap.dmi.mapped_addresses.is_empty()
+        {
             return;
         }
         ui.separator();
@@ -1952,6 +1973,42 @@ impl AidaApp {
                     ui,
                     m.locator.as_deref().unwrap_or("?"),
                     &dimm_line(m),
+                );
+            }
+        }
+        if !self.snap.dmi.mapped_addresses.is_empty() {
+            ui.strong(self.t(
+                "内存映射 (Type 19)",
+                "Memory mapped address",
+            ));
+            for (i, m) in self.snap.dmi.mapped_addresses.iter().enumerate() {
+                kv(
+                    ui,
+                    &format!("map {i}"),
+                    &format!(
+                        "{}  array {:#06X}  width {}",
+                        crate::probes::dmi::hex_range(m.start, m.end),
+                        m.array_handle,
+                        m.partition_width
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.memory_errors.is_empty() {
+            ui.strong(self.t("内存错误 (Type 18)", "Memory errors"));
+            for e in &self.snap.dmi.memory_errors {
+                kv(
+                    ui,
+                    &e.error_type,
+                    &format!(
+                        "{}  {}  syn {}  array {}  device {}  res {}",
+                        e.granularity,
+                        e.operation,
+                        crate::probes::dmi::opt_hex_u32(e.syndrome),
+                        crate::probes::dmi::opt_hex_u32(e.array_address),
+                        crate::probes::dmi::opt_hex_u32(e.device_address),
+                        crate::probes::dmi::opt_hex_u32(e.resolution)
+                    ),
                 );
             }
         }
@@ -2960,7 +3017,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s  dis_xfrm {}  skip_notify {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -3089,7 +3146,17 @@ impl AidaApp {
                     _ => self.snap.net.ipv6_force_forwarding.display(),
                 },
                 self.snap.net.ipv6_temp_valid_lft.display(),
-                self.snap.net.ipv6_temp_prefered_lft.display()
+                self.snap.net.ipv6_temp_prefered_lft.display(),
+                match self.snap.net.ipv6_disable_xfrm.value.as_deref() {
+                    Some("0") => "0 开 IPsec".into(),
+                    Some("1") => "1 关 xfrm".into(),
+                    _ => self.snap.net.ipv6_disable_xfrm.display(),
+                },
+                match self.snap.net.ipv6_skip_notify_on_dev_down.value.as_deref() {
+                    Some("0") => "0 通知".into(),
+                    Some("1") => "1 跳过".into(),
+                    _ => self.snap.net.ipv6_skip_notify_on_dev_down.display(),
+                }
             ),
         );
         kv(
@@ -3365,6 +3432,20 @@ impl AidaApp {
                 ui,
                 "temp_prefered_lft iface",
                 &self.snap.net.ipv6_temp_prefered_lft_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_disable_xfrm_dev.is_empty() {
+            kv(
+                ui,
+                "disable_xfrm iface",
+                &self.snap.net.ipv6_disable_xfrm_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_skip_notify_on_dev_down_dev.is_empty() {
+            kv(
+                ui,
+                "skip_notify_on_dev_down iface",
+                &self.snap.net.ipv6_skip_notify_on_dev_down_dev.join("  "),
             );
         }
         kv(
@@ -3995,6 +4076,9 @@ impl AidaApp {
             ("pcmcia", &self.snap.buses.pcmcia),
             ("vmbus", &self.snap.buses.vmbus),
             ("bcma", &self.snap.buses.bcma),
+            ("intel_th", &self.snap.buses.intel_th),
+            ("coresight", &self.snap.buses.coresight),
+            ("ntb", &self.snap.buses.ntb),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));

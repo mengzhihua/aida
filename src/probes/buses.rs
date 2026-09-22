@@ -160,6 +160,12 @@ pub struct BusesReport {
     pub vmbus: Vec<String>,
     /// Broadcom AMBA（bcma）：先 `bus/bcma/devices`，再 `class/bcma`。
     pub bcma: Vec<String>,
+    /// Intel Trace Hub：先 `bus/intel_th/devices`，再 `class/intel_th`。
+    pub intel_th: Vec<String>,
+    /// ARM CoreSight：先 `bus/coresight/devices`，再 `class/coresight`。
+    pub coresight: Vec<String>,
+    /// PCI Non-Transparent Bridge：先 `bus/ntb/devices`，再 `class/ntb`。
+    pub ntb: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -988,6 +994,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let intel_th = list_alt_dirs(
+        ctx,
+        "bus/intel_th/devices",
+        "class/intel_th",
+        8,
+        "intel_th",
+        &mut notes,
+        &mut missing,
+    );
+    let coresight = list_alt_dirs(
+        ctx,
+        "bus/coresight/devices",
+        "class/coresight",
+        8,
+        "coresight",
+        &mut notes,
+        &mut missing,
+    );
+    let ntb = list_alt_dirs(
+        ctx,
+        "bus/ntb/devices",
+        "class/ntb",
+        8,
+        "ntb",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1100,6 +1133,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         pcmcia,
         vmbus,
         bcma,
+        intel_th,
+        coresight,
+        ntb,
         notes,
     }
 }
@@ -1952,6 +1988,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/pcmcia/devices/0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/vmbus/devices/vmbus_0_1")).unwrap();
         fs::create_dir_all(root.join("sys/bus/bcma/devices/bcma0:0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/intel_th/devices/0-gth")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/coresight/devices/tmc_etf0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/ntb/devices/ntb0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2065,6 +2104,9 @@ mod tests {
         assert_eq!(r.pcmcia, vec!["0.0".to_string()]);
         assert_eq!(r.vmbus, vec!["vmbus_0_1".to_string()]);
         assert_eq!(r.bcma, vec!["bcma0:0".to_string()]);
+        assert_eq!(r.intel_th, vec!["0-gth".to_string()]);
+        assert_eq!(r.coresight, vec!["tmc_etf0".to_string()]);
+        assert_eq!(r.ntb, vec!["ntb0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -3601,6 +3643,105 @@ mod tests {
                 inner.split('/').all(|s| s != "bcma")
             })),
             "present bcma must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_intel_th_coresight_ntb_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-th-coresight-ntb-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"intel_th")
+                && labels.contains(&"coresight")
+                && labels.contains(&"ntb"),
+            "missing intel_th/coresight/ntb must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn intel_th_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-intel-th-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/intel_th/devices/0-gth")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.intel_th, vec!["0-gth".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "intel_th")
+            })),
+            "present intel_th must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn coresight_from_bus_is_not_leftover() {
+        let root =
+            std::env::temp_dir().join(format!("aida-coresight-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/coresight/devices/tmc_etf0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.coresight, vec!["tmc_etf0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "coresight")
+            })),
+            "present coresight must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ntb_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-ntb-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/ntb/devices/ntb0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.ntb, vec!["ntb0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "ntb")
+            })),
+            "present ntb must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

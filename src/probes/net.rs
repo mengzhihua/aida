@@ -315,6 +315,12 @@ pub struct NetReport {
     /// SLAAC 临时地址首选寿命（秒）。内核拼写是 `temp_prefered_lft`。
     pub ipv6_temp_prefered_lft: Sample<String>,
     pub ipv6_temp_prefered_lft_dev: Vec<String>,
+    /// `1` 对该接口关闭 IPsec (xfrm) 变换。
+    pub ipv6_disable_xfrm: Sample<String>,
+    pub ipv6_disable_xfrm_dev: Vec<String>,
+    /// `1` 接口 down 时不发 RTM_DELROUTE。
+    pub ipv6_skip_notify_on_dev_down: Sample<String>,
+    pub ipv6_skip_notify_on_dev_down_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -976,6 +982,21 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let pref_lft_all = ipv6_temp_prefered_lft.value.clone();
     let ipv6_temp_prefered_lft_dev =
         conf_dev_diffs(ctx, "ipv6", "temp_prefered_lft", pref_lft_all.as_deref());
+    let ipv6_disable_xfrm =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/disable_xfrm"));
+    let xfrm_all = ipv6_disable_xfrm.value.clone();
+    let ipv6_disable_xfrm_dev =
+        conf_dev_diffs(ctx, "ipv6", "disable_xfrm", xfrm_all.as_deref());
+    let ipv6_skip_notify_on_dev_down = access::read_trimmed(
+        ctx.proc_path("sys/net/ipv6/conf/all/skip_notify_on_dev_down"),
+    );
+    let skip_all = ipv6_skip_notify_on_dev_down.value.clone();
+    let ipv6_skip_notify_on_dev_down_dev = conf_dev_diffs(
+        ctx,
+        "ipv6",
+        "skip_notify_on_dev_down",
+        skip_all.as_deref(),
+    );
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1229,6 +1250,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_temp_valid_lft_dev,
                 ipv6_temp_prefered_lft,
                 ipv6_temp_prefered_lft_dev,
+                ipv6_disable_xfrm,
+                ipv6_disable_xfrm_dev,
+                ipv6_skip_notify_on_dev_down,
+                ipv6_skip_notify_on_dev_down_dev,
                 notes,
             };
         }
@@ -1590,6 +1615,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_temp_valid_lft_dev,
         ipv6_temp_prefered_lft,
         ipv6_temp_prefered_lft_dev,
+        ipv6_disable_xfrm,
+        ipv6_disable_xfrm_dev,
+        ipv6_skip_notify_on_dev_down,
+        ipv6_skip_notify_on_dev_down_dev,
         notes,
     }
 }
@@ -2737,6 +2766,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/disable_xfrm"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/skip_notify_on_dev_down"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2943,6 +2982,8 @@ mod tests {
         assert_eq!(r.ipv6_force_forwarding.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_temp_valid_lft.value.as_deref(), Some("172800"));
         assert_eq!(r.ipv6_temp_prefered_lft.value.as_deref(), Some("86400"));
+        assert_eq!(r.ipv6_disable_xfrm.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_skip_notify_on_dev_down.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -3263,6 +3304,26 @@ mod tests {
             "1800\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/disable_xfrm"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/disable_xfrm"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/skip_notify_on_dev_down"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/skip_notify_on_dev_down"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3513,6 +3574,20 @@ mod tests {
             r.ipv6_temp_prefered_lft_dev.iter().any(|s| s == "lo:1800"),
             "lo temp_prefered_lft=1800 must differ from conf/all: {:?}",
             r.ipv6_temp_prefered_lft_dev
+        );
+        assert_eq!(r.ipv6_disable_xfrm.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_disable_xfrm_dev.iter().any(|s| s == "lo:1"),
+            "lo disable_xfrm=1 must differ from conf/all: {:?}",
+            r.ipv6_disable_xfrm_dev
+        );
+        assert_eq!(r.ipv6_skip_notify_on_dev_down.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_skip_notify_on_dev_down_dev
+                .iter()
+                .any(|s| s == "lo:1"),
+            "lo skip_notify_on_dev_down=1 must differ from conf/all: {:?}",
+            r.ipv6_skip_notify_on_dev_down_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
