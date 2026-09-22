@@ -64,6 +64,14 @@ pub struct DmiInfo {
     pub cooling_devices: Vec<CoolingDevice>,
     /// SMBIOS Type 28 温度探头（十分之一摄氏度；`0x8000` 未知）。
     pub temperature_probes: Vec<TemperatureProbe>,
+    /// SMBIOS Type 3 机箱（类型 / 序列号 / 高度；对标 AIDA64 主板机箱）。
+    pub chassis: Option<ChassisEnclosure>,
+    /// SMBIOS Type 25 下次定时开机（BCD；全 0 未排程）。
+    pub power_controls: Option<SystemPowerControls>,
+    /// SMBIOS Type 29 电流探头（毫安；`0x8000` 未知）。
+    pub current_probes: Vec<CurrentProbe>,
+    /// SMBIOS Type 38 IPMI 设备（KCS/SMIC/BT/SSIF）。
+    pub ipmi_devices: Vec<IpmiDevice>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -159,6 +167,10 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         voltage_probes: Vec::new(),
         cooling_devices: Vec::new(),
         temperature_probes: Vec::new(),
+        chassis: None,
+        power_controls: None,
+        current_probes: Vec::new(),
+        ipmi_devices: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -275,6 +287,26 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| temperature_from_raw(bytes, r))
                     .take(8)
                     .collect();
+                info.chassis = parsed
+                    .iter()
+                    .find(|r| r.kind == 3)
+                    .and_then(|r| chassis_from_raw(bytes, r));
+                info.power_controls = parsed
+                    .iter()
+                    .find(|r| r.kind == 25)
+                    .and_then(|r| power_controls_from_raw(bytes, r));
+                info.current_probes = parsed
+                    .iter()
+                    .filter(|r| r.kind == 29)
+                    .filter_map(|r| current_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.ipmi_devices = parsed
+                    .iter()
+                    .filter(|r| r.kind == 38)
+                    .filter_map(|r| ipmi_from_raw(bytes, r))
+                    .take(4)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -351,6 +383,9 @@ fn fill_from_smbios(info: &mut DmiInfo) {
                 take_if_empty(&mut info.board_version, rec.strings.get(2));
                 take_if_empty(&mut info.board_serial, rec.strings.get(3));
             }
+            3 => {
+                take_if_empty(&mut info.chassis_vendor, rec.strings.first());
+            }
             _ => {}
         }
     }
@@ -382,9 +417,12 @@ fn kind_name(kind: u8) -> String {
         22 => "Portable Battery",
         23 => "System Reset",
         24 => "Hardware Security",
+        25 => "System Power Controls",
         26 => "Voltage Probe",
         27 => "Cooling Device",
         28 => "Temperature Probe",
+        29 => "Electrical Current Probe",
+        38 => "IPMI Device",
         16 => "Memory Array",
         17 => "Memory Device",
         19 => "Memory Mapped Address",
@@ -590,6 +628,51 @@ pub struct TemperatureProbe {
     pub max_tenth_c: Option<i16>,
     pub min_tenth_c: Option<i16>,
     pub nominal_tenth_c: Option<i16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ChassisEnclosure {
+    pub manufacturer: Option<String>,
+    pub kind: String,
+    pub locked: bool,
+    pub version: Option<String>,
+    pub serial: Option<String>,
+    pub asset_tag: Option<String>,
+    pub boot_state: Option<String>,
+    pub power_state: Option<String>,
+    pub thermal_state: Option<String>,
+    pub security: Option<String>,
+    /// 机架单位高度；`0` 未指定。
+    pub height_u: Option<u8>,
+    /// 电源线数量；`0` 未指定。
+    pub power_cords: Option<u8>,
+    pub sku: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SystemPowerControls {
+    /// `None` 表示未排程（月=0）。
+    pub next_power_on: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CurrentProbe {
+    pub description: Option<String>,
+    pub location: String,
+    pub status: String,
+    /// 最大可读电流 mA；仅 `0x8000` 未知。
+    pub max_ma: Option<u16>,
+    pub min_ma: Option<u16>,
+    pub nominal_ma: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct IpmiDevice {
+    pub interface: String,
+    pub spec: Option<String>,
+    pub i2c_address: u8,
+    pub nv_storage: Option<u8>,
+    pub base_address: String,
 }
 
 pub fn tenth_c_label(v: Option<i16>) -> String {
@@ -802,6 +885,12 @@ fn rec_offset(buf: &[u8], rec: &SmbiosRecord) -> Option<usize> {
 
 fn word(buf: &[u8], i: usize, off: usize) -> u16 {
     u16::from_le_bytes([buf[i + off], buf[i + off + 1]])
+}
+
+fn qword(buf: &[u8], i: usize, off: usize) -> u64 {
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&buf[i + off..i + off + 8]);
+    u64::from_le_bytes(b)
 }
 
 fn bios_extras(buf: &[u8], rec: &SmbiosRecord) -> (Option<u64>, Option<String>) {
@@ -1452,6 +1541,221 @@ fn temperature_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<TemperaturePro
             None
         },
     })
+}
+
+fn chassis_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ChassisEnclosure> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x09 || i + length > buf.len() {
+        return None;
+    }
+    let type_byte = buf[i + 0x05];
+    let contained_n = if length >= 0x14 { buf[i + 0x13] as usize } else { 0 };
+    let contained_m = if length >= 0x15 { buf[i + 0x14] as usize } else { 0 };
+    let sku_off = 0x15 + contained_n.saturating_mul(contained_m);
+    Some(ChassisEnclosure {
+        manufacturer: smbios_str(&rec.strings, buf[i + 0x04]),
+        kind: chassis_type_name(type_byte & 0x7F),
+        locked: type_byte & 0x80 != 0,
+        version: smbios_str(&rec.strings, buf[i + 0x06]),
+        serial: smbios_str(&rec.strings, buf[i + 0x07]),
+        asset_tag: smbios_str(&rec.strings, buf[i + 0x08]),
+        boot_state: if length >= 0x0A {
+            Some(enclosure_state(buf[i + 0x09]))
+        } else {
+            None
+        },
+        power_state: if length >= 0x0B {
+            Some(enclosure_state(buf[i + 0x0A]))
+        } else {
+            None
+        },
+        thermal_state: if length >= 0x0C {
+            Some(enclosure_state(buf[i + 0x0B]))
+        } else {
+            None
+        },
+        security: if length >= 0x0D {
+            Some(chassis_security(buf[i + 0x0C]))
+        } else {
+            None
+        },
+        height_u: if length >= 0x12 {
+            let h = buf[i + 0x11];
+            if h == 0 { None } else { Some(h) }
+        } else {
+            None
+        },
+        power_cords: if length >= 0x13 {
+            let n = buf[i + 0x12];
+            if n == 0 { None } else { Some(n) }
+        } else {
+            None
+        },
+        sku: if length > sku_off {
+            smbios_str(&rec.strings, buf[i + sku_off])
+        } else {
+            None
+        },
+    })
+}
+
+fn chassis_type_name(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Desktop".into(),
+        0x04 => "Low Profile Desktop".into(),
+        0x05 => "Pizza Box".into(),
+        0x06 => "Mini Tower".into(),
+        0x07 => "Tower".into(),
+        0x08 => "Portable".into(),
+        0x09 => "Laptop".into(),
+        0x0A => "Notebook".into(),
+        0x0B => "Hand Held".into(),
+        0x0C => "Docking Station".into(),
+        0x0D => "All in One".into(),
+        0x0E => "Sub Notebook".into(),
+        0x0F => "Space-saving".into(),
+        0x10 => "Lunch Box".into(),
+        0x11 => "Main Server Chassis".into(),
+        0x12 => "Expansion Chassis".into(),
+        0x13 => "SubChassis".into(),
+        0x14 => "Bus Expansion Chassis".into(),
+        0x15 => "Peripheral Chassis".into(),
+        0x16 => "RAID Chassis".into(),
+        0x17 => "Rack Mount Chassis".into(),
+        0x18 => "Sealed-case PC".into(),
+        0x19 => "Multi-system Chassis".into(),
+        0x1A => "Compact PCI".into(),
+        0x1B => "Advanced TCA".into(),
+        0x1C => "Blade".into(),
+        0x1D => "Blade Enclosure".into(),
+        0x1E => "Tablet".into(),
+        0x1F => "Convertible".into(),
+        0x20 => "Detachable".into(),
+        0x21 => "IoT Gateway".into(),
+        0x22 => "Embedded PC".into(),
+        0x23 => "Mini PC".into(),
+        0x24 => "Stick PC".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn enclosure_state(v: u8) -> String {
+    match v {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Safe".into(),
+        0x04 => "Warning".into(),
+        0x05 => "Critical".into(),
+        0x06 => "Non-recoverable".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn chassis_security(v: u8) -> String {
+    match v {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "None".into(),
+        0x04 => "External interface locked out".into(),
+        0x05 => "External interface enabled".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn power_controls_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<SystemPowerControls> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x09 || i + length > buf.len() {
+        return None;
+    }
+    Some(SystemPowerControls {
+        next_power_on: bcd_power_on(
+            buf[i + 0x04],
+            buf[i + 0x05],
+            buf[i + 0x06],
+            buf[i + 0x07],
+            buf[i + 0x08],
+        ),
+    })
+}
+
+fn bcd_nibble_pair(v: u8) -> Option<u8> {
+    let hi = v >> 4;
+    let lo = v & 0x0F;
+    if hi > 9 || lo > 9 {
+        return None;
+    }
+    Some(hi * 10 + lo)
+}
+
+fn bcd_power_on(month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Option<String> {
+    let month = bcd_nibble_pair(month)?;
+    if month == 0 {
+        return None;
+    }
+    let day = bcd_nibble_pair(day).unwrap_or(0);
+    let hour = bcd_nibble_pair(hour).unwrap_or(0);
+    let minute = bcd_nibble_pair(minute).unwrap_or(0);
+    let second = bcd_nibble_pair(second).unwrap_or(0);
+    Some(format!("{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}"))
+}
+
+fn current_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<CurrentProbe> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x14 || i + length > buf.len() {
+        return None;
+    }
+    let loc = buf[i + 0x05];
+    Some(CurrentProbe {
+        description: smbios_str(&rec.strings, buf[i + 0x04]),
+        location: probe_location(loc),
+        status: probe_status(loc),
+        max_ma: probe_word_unknown(word(buf, i, 0x06)),
+        min_ma: probe_word_unknown(word(buf, i, 0x08)),
+        nominal_ma: if length > 0x14 {
+            probe_word_unknown(word(buf, i, 0x14))
+        } else {
+            None
+        },
+    })
+}
+
+fn ipmi_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<IpmiDevice> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x10 || i + length > buf.len() {
+        return None;
+    }
+    let spec = buf[i + 0x05];
+    let nv = buf[i + 0x07];
+    let raw = qword(buf, i, 0x08);
+    let io = raw & 1 != 0;
+    let addr = raw & !1;
+    Some(IpmiDevice {
+        interface: ipmi_interface_name(buf[i + 0x04]),
+        spec: Some(format!("{}.{}", spec >> 4, spec & 0x0F)),
+        i2c_address: buf[i + 0x06],
+        nv_storage: if nv == 0xFF { None } else { Some(nv) },
+        base_address: format!(
+            "{} 0x{addr:X}",
+            if io { "I/O" } else { "MEM" }
+        ),
+    })
+}
+
+fn ipmi_interface_name(t: u8) -> String {
+    match t {
+        0x00 => "Unknown".into(),
+        0x01 => "KCS".into(),
+        0x02 => "SMIC".into(),
+        0x03 => "BT".into(),
+        0x04 => "SSIF".into(),
+        n => format!("0x{n:02X}"),
+    }
 }
 
 fn slot_type_name(t: u8) -> &'static str {
@@ -2663,5 +2967,197 @@ mod tests {
         assert_eq!(t.nominal_tenth_c, None);
         assert_eq!(t.location, "Motherboard");
         assert_eq!(t.status, "Non-critical");
+    }
+
+    #[test]
+    fn type3_rack_mount_lock_height_and_sku() {
+        let mut rec = vec![0u8; 0x16];
+        rec[0] = 3;
+        rec[1] = 0x16;
+        rec[0x04] = 1;
+        rec[0x05] = 0x97; // lock + Rack Mount Chassis 0x17
+        rec[0x06] = 2;
+        rec[0x07] = 3;
+        rec[0x08] = 4;
+        rec[0x09] = 0x03; // Safe
+        rec[0x0A] = 0x03;
+        rec[0x0B] = 0x04; // Warning
+        rec[0x0C] = 0x03; // None
+        rec[0x11] = 2; // 2U
+        rec[0x12] = 2;
+        rec[0x13] = 0;
+        rec[0x14] = 0;
+        rec[0x15] = 5;
+        rec.extend_from_slice(b"Dell\0R1\0ABC123\0TAG1\0SKU-9\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 3)
+            .and_then(|r| chassis_from_raw(&rec, r))
+            .expect("type 3");
+        assert_eq!(c.manufacturer.as_deref(), Some("Dell"));
+        assert_eq!(c.kind, "Rack Mount Chassis");
+        assert!(c.locked);
+        assert_eq!(c.version.as_deref(), Some("R1"));
+        assert_eq!(c.serial.as_deref(), Some("ABC123"));
+        assert_eq!(c.asset_tag.as_deref(), Some("TAG1"));
+        assert_eq!(c.boot_state.as_deref(), Some("Safe"));
+        assert_eq!(c.thermal_state.as_deref(), Some("Warning"));
+        assert_eq!(c.security.as_deref(), Some("None"));
+        assert_eq!(c.height_u, Some(2));
+        assert_eq!(c.power_cords, Some(2));
+        assert_eq!(c.sku.as_deref(), Some("SKU-9"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 3).map(|r| r.kind_name.as_str()),
+            Some("Chassis")
+        );
+    }
+
+    #[test]
+    fn type3_zero_height_is_unspecified() {
+        let mut rec = vec![0u8; 0x13];
+        rec[0] = 3;
+        rec[1] = 0x13;
+        rec[0x05] = 0x03; // Desktop, unlocked
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 3)
+            .and_then(|r| chassis_from_raw(&rec, r))
+            .expect("type 3");
+        assert_eq!(c.kind, "Desktop");
+        assert!(!c.locked);
+        assert_eq!(c.height_u, None);
+        assert_eq!(c.power_cords, None);
+        assert_eq!(c.sku, None);
+    }
+
+    #[test]
+    fn type25_bcd_schedule_and_unspecified_month() {
+        let mut rec = vec![0u8; 0x09];
+        rec[0] = 25;
+        rec[1] = 0x09;
+        rec[0x04] = 0x12; // December
+        rec[0x05] = 0x31;
+        rec[0x06] = 0x23;
+        rec[0x07] = 0x59;
+        rec[0x08] = 0x00;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 25)
+            .and_then(|r| power_controls_from_raw(&rec, r))
+            .expect("type 25");
+        assert_eq!(p.next_power_on.as_deref(), Some("12-31 23:59:00"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 25).map(|r| r.kind_name.as_str()),
+            Some("System Power Controls")
+        );
+
+        let mut rec = vec![0u8; 0x09];
+        rec[0] = 25;
+        rec[1] = 0x09;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 25)
+            .and_then(|r| power_controls_from_raw(&rec, r))
+            .expect("type 25 zero");
+        assert_eq!(p.next_power_on, None);
+    }
+
+    #[test]
+    fn type29_psu_ok_nominal_ma() {
+        let mut rec = vec![0u8; 0x16];
+        rec[0] = 29;
+        rec[1] = 0x16;
+        rec[0x04] = 1;
+        rec[0x05] = 0x6A; // OK + Power Unit
+        rec[0x06] = 0x10;
+        rec[0x07] = 0x27; // 10000 mA
+        rec[0x08] = 0x00;
+        rec[0x09] = 0x80;
+        rec[0x0A] = 0x00;
+        rec[0x0B] = 0x80;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x80;
+        rec[0x0E] = 0x00;
+        rec[0x0F] = 0x80;
+        rec[0x14] = 0xE8;
+        rec[0x15] = 0x03; // 1000 mA
+        rec.extend_from_slice(b"PSU\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 29)
+            .and_then(|r| current_from_raw(&rec, r))
+            .expect("type 29");
+        assert_eq!(c.description.as_deref(), Some("PSU"));
+        assert_eq!(c.location, "Power Unit");
+        assert_eq!(c.status, "OK");
+        assert_eq!(c.max_ma, Some(10000));
+        assert_eq!(c.min_ma, None);
+        assert_eq!(c.nominal_ma, Some(1000));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 29).map(|r| r.kind_name.as_str()),
+            Some("Electrical Current Probe")
+        );
+    }
+
+    #[test]
+    fn type29_zero_ma_is_zero_not_unknown() {
+        let mut rec = vec![0u8; 0x14];
+        rec[0] = 29;
+        rec[1] = 0x14;
+        rec[0x05] = 0x67; // OK + Motherboard
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let c = recs
+            .iter()
+            .find(|r| r.kind == 29)
+            .and_then(|r| current_from_raw(&rec, r))
+            .expect("type 29");
+        assert_eq!(c.max_ma, Some(0));
+        assert_eq!(c.min_ma, Some(0));
+        assert_eq!(c.nominal_ma, None);
+    }
+
+    #[test]
+    fn type38_kcs_io_and_no_nv() {
+        let mut rec = vec![0u8; 0x10];
+        rec[0] = 38;
+        rec[1] = 0x10;
+        rec[0x04] = 0x01; // KCS
+        rec[0x05] = 0x20; // spec 2.0
+        rec[0x06] = 0x20;
+        rec[0x07] = 0xFF;
+        rec[0x08] = 0xA3; // I/O 0xCA2 (bit0=1)
+        rec[0x09] = 0x0C;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let d = recs
+            .iter()
+            .find(|r| r.kind == 38)
+            .and_then(|r| ipmi_from_raw(&rec, r))
+            .expect("type 38");
+        assert_eq!(d.interface, "KCS");
+        assert_eq!(d.spec.as_deref(), Some("2.0"));
+        assert_eq!(d.i2c_address, 0x20);
+        assert_eq!(d.nv_storage, None);
+        assert_eq!(d.base_address, "I/O 0xCA2");
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 38).map(|r| r.kind_name.as_str()),
+            Some("IPMI Device")
+        );
     }
 }

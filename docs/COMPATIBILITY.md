@@ -297,6 +297,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 273. **`mc_forwarding` / `force_forwarding` 只列出与 `conf/all` 不同的接口。** 前者 `1` 启用 IPv6 组播转发（常由组播路由守护进程置位）；后者 `1` 即使 `forwarding=0` 也强制转发。不要用 `default` 顶替已有 iface。
 274. **GUI 默认打开置顶任务栏。** 无装饰、贴屏幕顶、`X11WindowType::Dock`、always-on-top。主窗口内条目标为「任务栏」，可取消勾选或点 × 关掉独立条。后端不支持多窗口时退回主窗内嵌条，不是采集失败。
 275. **GUI 默认写 JSONL 历史。** 启动只读文件尾部最多 1800 条（约 30 分钟 @ 1Hz）；若磁盘比这段尾部更长则立刻裁掉。录满后每隔 256 条再裁回 cap。左侧「历史记录」画 CPU/MEM/NET/DISK/温度/load。暂停只停落盘，不清内存曲线。清空截断文件。缺文件当空历史，坏行跳过，不是失败。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
+276. **SMBIOS Type 3/25/29/38 按 DSP0134 偏移解析。** Type 3 Type 字节 bit7 是 Lock、低 7 位是机箱类型（`0x17`=Rack Mount Chassis）；高度 `0x11` / 电源线 `0x12` 为 `0` 表示未指定；SKU 在 `0x15 + n*m`（不含 contained elements）。Type 25 下次开机是 BCD，月=`00` 表示未排程。Type 29 与 Type 26 同布局，单位毫安，WORD 仅 `0x8000` 未知。Type 38 接口 `0x01`=KCS / `0x02`=SMIC / `0x03`=BT / `0x04`=SSIF；规格 BYTE 高/低半字节为 major.minor；NV `0xFF` 表示无存储；基址 QWORD bit0=`1` 为 I/O。不调用 dmidecode。
+277. **空的 pcmcia / vmbus / bcma 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
+278. **`temp_valid_lft` / `temp_prefered_lft` 只列出与 `conf/all` 不同的接口。** 二者是 SLAAC 临时地址有效/首选寿命（秒）。内核拼写是 `prefered`，不要写成 `preferred`。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

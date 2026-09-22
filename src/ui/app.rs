@@ -865,6 +865,37 @@ impl AidaApp {
                 &self.snap.dmi.temperature_probes.len().to_string(),
             );
         }
+        if let Some(c) = &self.snap.dmi.chassis {
+            kv(
+                ui,
+                self.t("机箱", "Chassis"),
+                &format!(
+                    "{}  {}{}",
+                    c.kind,
+                    c.serial.as_deref().unwrap_or("—"),
+                    if c.locked { "  locked" } else { "" }
+                ),
+            );
+        } else if self.snap.dmi.chassis_type.value.is_some()
+            || self.snap.dmi.chassis_vendor.value.is_some()
+        {
+            kv(
+                ui,
+                self.t("机箱", "Chassis"),
+                &format!(
+                    "{}  {}",
+                    self.snap.dmi.chassis_vendor.display(),
+                    self.snap.dmi.chassis_type.display()
+                ),
+            );
+        }
+        if !self.snap.dmi.current_probes.is_empty() {
+            kv(
+                ui,
+                self.t("电流探头", "Current probes"),
+                &self.snap.dmi.current_probes.len().to_string(),
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -1586,6 +1617,15 @@ impl AidaApp {
                 self.snap.dmi.board_name.display()
             ),
         );
+        kv(
+            ui,
+            self.t("机箱", "Chassis"),
+            &format!(
+                "{}  {}",
+                self.snap.dmi.chassis_vendor.display(),
+                self.snap.dmi.chassis_type.display()
+            ),
+        );
         for n in &self.snap.dmi.notes {
             ui.colored_label(Color32::from_rgb(255, 179, 71), n);
         }
@@ -1794,14 +1834,73 @@ impl AidaApp {
             for t in &self.snap.dmi.temperature_probes {
                 kv(
                     ui,
-                    t.description.as_deref().unwrap_or("T"),
+                    t.description.as_deref().unwrap_or("temp"),
                     &format!(
-                        "{}  {}  max {}  min {}  nom {}",
+                        "{}  {}  {} / {} / {}",
                         t.location,
                         t.status,
                         crate::probes::dmi::tenth_c_label(t.max_tenth_c),
                         crate::probes::dmi::tenth_c_label(t.min_tenth_c),
                         crate::probes::dmi::tenth_c_label(t.nominal_tenth_c)
+                    ),
+                );
+            }
+        }
+        if let Some(c) = &self.snap.dmi.chassis {
+            kv(
+                ui,
+                self.t("机箱 (Type 3)", "Chassis"),
+                &format!(
+                    "{}  {}{}  serial {}  {}U  {} cords  boot {}  thermal {}  sec {}  sku {}",
+                    c.manufacturer.as_deref().unwrap_or("—"),
+                    c.kind,
+                    if c.locked { " locked" } else { "" },
+                    c.serial.as_deref().unwrap_or("—"),
+                    c.height_u.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                    c.power_cords.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                    c.boot_state.as_deref().unwrap_or("—"),
+                    c.thermal_state.as_deref().unwrap_or("—"),
+                    c.security.as_deref().unwrap_or("—"),
+                    c.sku.as_deref().unwrap_or("—")
+                ),
+            );
+        }
+        if let Some(p) = &self.snap.dmi.power_controls {
+            kv(
+                ui,
+                self.t("定时开机 (Type 25)", "Power-on schedule"),
+                p.next_power_on.as_deref().unwrap_or("unspecified"),
+            );
+        }
+        if !self.snap.dmi.current_probes.is_empty() {
+            ui.strong(self.t("电流探头 (Type 29)", "Current probes"));
+            for c in &self.snap.dmi.current_probes {
+                kv(
+                    ui,
+                    c.description.as_deref().unwrap_or("current"),
+                    &format!(
+                        "{}  {}  {} / {} / {}",
+                        c.location,
+                        c.status,
+                        c.max_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into()),
+                        c.min_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into()),
+                        c.nominal_ma.map(|n| format!("{n} mA")).unwrap_or_else(|| "—".into())
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.ipmi_devices.is_empty() {
+            ui.strong(self.t("IPMI (Type 38)", "IPMI devices"));
+            for d in &self.snap.dmi.ipmi_devices {
+                kv(
+                    ui,
+                    &d.interface,
+                    &format!(
+                        "spec {}  i2c 0x{:02X}  nv {}  {}",
+                        d.spec.as_deref().unwrap_or("—"),
+                        d.i2c_address,
+                        d.nv_storage.map(|n| format!("0x{n:02X}")).unwrap_or_else(|| "none".into()),
+                        d.base_address
                     ),
                 );
             }
@@ -2861,7 +2960,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -2988,7 +3087,9 @@ impl AidaApp {
                     Some("0") => "0 关".into(),
                     Some("1") => "1 强制转发".into(),
                     _ => self.snap.net.ipv6_force_forwarding.display(),
-                }
+                },
+                self.snap.net.ipv6_temp_valid_lft.display(),
+                self.snap.net.ipv6_temp_prefered_lft.display()
             ),
         );
         kv(
@@ -3250,6 +3351,20 @@ impl AidaApp {
                 ui,
                 "force_forwarding iface",
                 &self.snap.net.ipv6_force_forwarding_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_temp_valid_lft_dev.is_empty() {
+            kv(
+                ui,
+                "temp_valid_lft iface",
+                &self.snap.net.ipv6_temp_valid_lft_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_temp_prefered_lft_dev.is_empty() {
+            kv(
+                ui,
+                "temp_prefered_lft iface",
+                &self.snap.net.ipv6_temp_prefered_lft_dev.join("  "),
             );
         }
         kv(
@@ -3877,6 +3992,9 @@ impl AidaApp {
             ("amba", &self.snap.buses.amba),
             ("fsi", &self.snap.buses.fsi),
             ("ppdev", &self.snap.buses.ppdev),
+            ("pcmcia", &self.snap.buses.pcmcia),
+            ("vmbus", &self.snap.buses.vmbus),
+            ("bcma", &self.snap.buses.bcma),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
