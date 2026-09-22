@@ -218,6 +218,29 @@ impl HardwareSnapshot {
         }
         self.collected_at_unix_ms = unix_ms();
     }
+
+    /// 云主机/无 GPU/无传感器时用一句话说明「不适用」，避免像坏了。
+    pub fn environment_cards(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        if !self.privilege.is_root {
+            v.push(
+                "普通用户：DMI 序列号、SMBIOS 表、NVMe SMART、iomem 真实地址可能被内核隐藏。点「提权后重新采集」。".into(),
+            );
+        }
+        if self.cpu.hypervisor {
+            v.push("当前像是虚拟机：无主板 DMI、无独立 GPU、无 hwmon 都常见。".into());
+        }
+        if self.dmi.sys_vendor.value.is_none() && self.dmi.product_name.value.is_none() {
+            v.push("无 DMI/SMBIOS：云主机或容器经常不导出，不是采集失败。".into());
+        }
+        if self.gpu.devices.is_empty() {
+            v.push("无 GPU / DRM：本环境没有显示适配器，顶栏不会有 GPU 占用。".into());
+        }
+        if self.sensors.chips.is_empty() && self.sensors.thermal_zones.is_empty() {
+            v.push("无温度传感器：顶栏 TEMP — 表示没有 hwmon，点进去可看说明。".into());
+        }
+        v
+    }
 }
 
 pub fn unix_ms() -> u64 {
