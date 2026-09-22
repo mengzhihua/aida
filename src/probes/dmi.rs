@@ -78,6 +78,12 @@ pub struct DmiInfo {
     pub mapped_addresses: Vec<MemoryMappedAddress>,
     /// SMBIOS Type 21 板载指针设备（鼠标/触控板）。
     pub pointing_devices: Vec<PointingDevice>,
+    /// SMBIOS Type 20 内存设备映射地址（对标 Type 19 的设备级范围）。
+    pub device_mapped: Vec<MemoryDeviceMapped>,
+    /// SMBIOS Type 30 带外远程访问（入站/出站）。
+    pub remote_access: Option<RemoteAccess>,
+    /// SMBIOS Type 33 64 位内存错误（地址 QWORD；`0x8000000000000000` 未知）。
+    pub memory_errors64: Vec<MemoryError64>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -180,6 +186,9 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         memory_errors: Vec::new(),
         mapped_addresses: Vec::new(),
         pointing_devices: Vec::new(),
+        device_mapped: Vec::new(),
+        remote_access: None,
+        memory_errors64: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -334,6 +343,22 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| pointing_from_raw(bytes, r))
                     .take(4)
                     .collect();
+                info.device_mapped = parsed
+                    .iter()
+                    .filter(|r| r.kind == 20)
+                    .filter_map(|r| device_mapped_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.remote_access = parsed
+                    .iter()
+                    .find(|r| r.kind == 30)
+                    .and_then(|r| remote_access_from_raw(bytes, r));
+                info.memory_errors64 = parsed
+                    .iter()
+                    .filter(|r| r.kind == 33)
+                    .filter_map(|r| memory_error64_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -454,8 +479,11 @@ fn kind_name(kind: u8) -> String {
         17 => "Memory Device",
         18 => "32-bit Memory Error",
         19 => "Memory Mapped Address",
+        20 => "Memory Device Mapped",
         21 => "Built-in Pointing Device",
+        30 => "Out-of-Band Remote Access",
         32 => "System Boot",
+        33 => "64-bit Memory Error",
         39 => "Power Supply",
         41 => "Onboard Device",
         43 => "TPM Device",
@@ -736,6 +764,39 @@ pub struct PointingDevice {
     pub buttons: u8,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryDeviceMapped {
+    pub start: Option<u64>,
+    pub end: Option<u64>,
+    pub device_handle: u16,
+    pub mapped_handle: u16,
+    /// Partition Row Position；`0xFF` 未知。
+    pub row: Option<u8>,
+    /// Interleave Position；`0xFF` 未交错。
+    pub interleave_pos: Option<u8>,
+    /// Interleaved Data Depth；`0xFF` 未交错。
+    pub interleave_depth: Option<u8>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RemoteAccess {
+    pub manufacturer: Option<String>,
+    pub inbound: bool,
+    pub outbound: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MemoryError64 {
+    pub error_type: String,
+    pub granularity: String,
+    pub operation: String,
+    pub syndrome: Option<u32>,
+    /// 阵列物理地址；仅 `0x8000000000000000` 未知。
+    pub array_address: Option<u64>,
+    pub device_address: Option<u64>,
+    pub resolution: Option<u32>,
+}
+
 pub fn hex_range(start: Option<u64>, end: Option<u64>) -> String {
     match (start, end) {
         (Some(s), Some(e)) => format!("0x{s:X}-0x{e:X}"),
@@ -746,6 +807,10 @@ pub fn hex_range(start: Option<u64>, end: Option<u64>) -> String {
 }
 
 pub fn opt_hex_u32(v: Option<u32>) -> String {
+    v.map(|n| format!("0x{n:X}")).unwrap_or_else(|| "—".into())
+}
+
+pub fn opt_hex_u64(v: Option<u64>) -> String {
     v.map(|n| format!("0x{n:X}")).unwrap_or_else(|| "—".into())
 }
 
@@ -1904,17 +1969,19 @@ fn memory_error_operation(t: u8) -> String {
     }
 }
 
-fn mapped_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryMappedAddress> {
-    let i = rec_offset(buf, rec)?;
-    let length = buf[i + 1] as usize;
-    if length < 0x0F || i + length > buf.len() {
-        return None;
-    }
+fn mapped_kb_or_ext(
+    buf: &[u8],
+    i: usize,
+    length: usize,
+    ext_start: usize,
+    ext_end: usize,
+    ext_len: usize,
+) -> (Option<u64>, Option<u64>) {
     let start_d = dword(buf, i, 0x04);
     let end_d = dword(buf, i, 0x08);
     let start = if start_d == 0xFFFF_FFFF {
-        if length >= 0x1F {
-            Some(qword(buf, i, 0x0F))
+        if length >= ext_len {
+            Some(qword(buf, i, ext_start))
         } else {
             None
         }
@@ -1922,19 +1989,87 @@ fn mapped_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryMappedAddress
         Some((start_d as u64) * 1024)
     };
     let end = if end_d == 0xFFFF_FFFF {
-        if length >= 0x1F {
-            Some(qword(buf, i, 0x17))
+        if length >= ext_len {
+            Some(qword(buf, i, ext_end))
         } else {
             None
         }
     } else {
         Some((end_d as u64) * 1024 + 1023)
     };
+    (start, end)
+}
+
+fn mapped_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryMappedAddress> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x0F || i + length > buf.len() {
+        return None;
+    }
+    let (start, end) = mapped_kb_or_ext(buf, i, length, 0x0F, 0x17, 0x1F);
     Some(MemoryMappedAddress {
         start,
         end,
         array_handle: word(buf, i, 0x0C),
         partition_width: buf[i + 0x0E],
+    })
+}
+
+fn ff_unknown(v: u8) -> Option<u8> {
+    if v == 0xFF { None } else { Some(v) }
+}
+
+fn device_mapped_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryDeviceMapped> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x13 || i + length > buf.len() {
+        return None;
+    }
+    let (start, end) = mapped_kb_or_ext(buf, i, length, 0x13, 0x1B, 0x23);
+    Some(MemoryDeviceMapped {
+        start,
+        end,
+        device_handle: word(buf, i, 0x0C),
+        mapped_handle: word(buf, i, 0x0E),
+        row: ff_unknown(buf[i + 0x10]),
+        interleave_pos: ff_unknown(buf[i + 0x11]),
+        interleave_depth: ff_unknown(buf[i + 0x12]),
+    })
+}
+
+fn remote_access_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<RemoteAccess> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x06 || i + length > buf.len() {
+        return None;
+    }
+    let conn = buf[i + 0x05];
+    Some(RemoteAccess {
+        manufacturer: smbios_str(&rec.strings, buf[i + 0x04]),
+        inbound: conn & 0x01 != 0,
+        outbound: conn & 0x02 != 0,
+    })
+}
+
+fn mem_addr64_unknown(v: u64) -> Option<u64> {
+    if v == 0x8000_0000_0000_0000 { None } else { Some(v) }
+}
+
+fn memory_error64_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<MemoryError64> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x1F || i + length > buf.len() {
+        return None;
+    }
+    let syn = dword(buf, i, 0x07);
+    Some(MemoryError64 {
+        error_type: memory_error_type(buf[i + 0x04]),
+        granularity: memory_error_granularity(buf[i + 0x05]),
+        operation: memory_error_operation(buf[i + 0x06]),
+        syndrome: if syn == 0 { None } else { Some(syn) },
+        array_address: mem_addr64_unknown(qword(buf, i, 0x0B)),
+        device_address: mem_addr64_unknown(qword(buf, i, 0x13)),
+        resolution: mem_addr_unknown(dword(buf, i, 0x1B)),
     })
 }
 
@@ -3580,5 +3715,216 @@ mod tests {
         assert_eq!(p.kind, "Touch Pad");
         assert_eq!(p.interface, "USB");
         assert_eq!(p.buttons, 2);
+    }
+
+    #[test]
+    fn type20_device_map_and_ff_interleave() {
+        let mut rec = vec![0u8; 0x13];
+        rec[0] = 20;
+        rec[1] = 0x13;
+        rec[0x08] = 0xFF;
+        rec[0x09] = 0xFF;
+        rec[0x0A] = 0x0F;
+        rec[0x0B] = 0x00; // end 0x000FFFFF KB
+        rec[0x0C] = 0x11;
+        rec[0x0D] = 0x00; // device handle 0x0011
+        rec[0x0E] = 0x10;
+        rec[0x0F] = 0x00; // mapped handle 0x0010
+        rec[0x10] = 1;
+        rec[0x11] = 0xFF;
+        rec[0x12] = 0xFF;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let m = recs
+            .iter()
+            .find(|r| r.kind == 20)
+            .and_then(|r| device_mapped_from_raw(&rec, r))
+            .expect("type 20");
+        assert_eq!(m.start, Some(0));
+        assert_eq!(m.end, Some(0x3FFF_FFFF));
+        assert_eq!(m.device_handle, 0x0011);
+        assert_eq!(m.mapped_handle, 0x0010);
+        assert_eq!(m.row, Some(1));
+        assert_eq!(m.interleave_pos, None);
+        assert_eq!(m.interleave_depth, None);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 20).map(|r| r.kind_name.as_str()),
+            Some("Memory Device Mapped")
+        );
+    }
+
+    #[test]
+    fn type20_ffffffff_reads_extended_qwords() {
+        let mut rec = vec![0u8; 0x23];
+        rec[0] = 20;
+        rec[1] = 0x23;
+        rec[0x04] = 0xFF;
+        rec[0x05] = 0xFF;
+        rec[0x06] = 0xFF;
+        rec[0x07] = 0xFF;
+        rec[0x08] = 0xFF;
+        rec[0x09] = 0xFF;
+        rec[0x0A] = 0xFF;
+        rec[0x0B] = 0xFF;
+        rec[0x0C] = 0x21;
+        rec[0x0D] = 0x00;
+        rec[0x0E] = 0x20;
+        rec[0x0F] = 0x00;
+        rec[0x10] = 0xFF;
+        rec[0x11] = 1;
+        rec[0x12] = 2;
+        rec[0x13] = 0x00;
+        rec[0x14] = 0x00;
+        rec[0x15] = 0x00;
+        rec[0x16] = 0x00;
+        rec[0x17] = 0x01; // start 0x1_0000_0000
+        rec[0x1B] = 0xFF;
+        rec[0x1C] = 0xFF;
+        rec[0x1D] = 0xFF;
+        rec[0x1E] = 0xFF;
+        rec[0x1F] = 0x01; // end 0x1_FFFF_FFFF
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let m = recs
+            .iter()
+            .find(|r| r.kind == 20)
+            .and_then(|r| device_mapped_from_raw(&rec, r))
+            .expect("type 20 ext");
+        assert_eq!(m.start, Some(0x1_0000_0000));
+        assert_eq!(m.end, Some(0x1_FFFF_FFFF));
+        assert_eq!(m.row, None);
+        assert_eq!(m.interleave_pos, Some(1));
+        assert_eq!(m.interleave_depth, Some(2));
+    }
+
+    #[test]
+    fn type30_inbound_outbound_and_none() {
+        let mut rec = vec![0u8; 0x06];
+        rec[0] = 30;
+        rec[1] = 0x06;
+        rec[0x04] = 1;
+        rec[0x05] = 0x03; // inbound + outbound
+        rec.extend_from_slice(b"AMI\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let r = recs
+            .iter()
+            .find(|r| r.kind == 30)
+            .and_then(|r| remote_access_from_raw(&rec, r))
+            .expect("type 30");
+        assert_eq!(r.manufacturer.as_deref(), Some("AMI"));
+        assert!(r.inbound && r.outbound);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 30).map(|r| r.kind_name.as_str()),
+            Some("Out-of-Band Remote Access")
+        );
+
+        let mut rec = vec![0u8; 0x06];
+        rec[0] = 30;
+        rec[1] = 0x06;
+        rec[0x04] = 1;
+        rec[0x05] = 0x00;
+        rec.extend_from_slice(b"BMC\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let r = recs
+            .iter()
+            .find(|r| r.kind == 30)
+            .and_then(|r| remote_access_from_raw(&rec, r))
+            .expect("type 30 none");
+        assert!(!r.inbound && !r.outbound);
+        assert_eq!(r.manufacturer.as_deref(), Some("BMC"));
+    }
+
+    #[test]
+    fn type33_qword_ok_and_unknown_addrs() {
+        let mut rec = vec![0u8; 0x1F];
+        rec[0] = 33;
+        rec[1] = 0x1F;
+        rec[0x04] = 0x03; // OK
+        rec[0x05] = 0x03;
+        rec[0x06] = 0x03;
+        rec[0x07] = 0x21;
+        rec[0x08] = 0x43;
+        rec[0x09] = 0x00;
+        rec[0x0A] = 0x00; // syndrome 0x4321
+        rec[0x0B] = 0x00;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x00;
+        rec[0x0E] = 0x00;
+        rec[0x0F] = 0x01; // array 0x1_0000_0000
+        rec[0x13] = 0x00;
+        rec[0x14] = 0x00;
+        rec[0x15] = 0x00;
+        rec[0x16] = 0x00;
+        rec[0x17] = 0x00;
+        rec[0x18] = 0x00;
+        rec[0x19] = 0x00;
+        rec[0x1A] = 0x80; // device 0x8000_0000_0000_0000 unknown
+        rec[0x1B] = 0x08;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let e = recs
+            .iter()
+            .find(|r| r.kind == 33)
+            .and_then(|r| memory_error64_from_raw(&rec, r))
+            .expect("type 33");
+        assert_eq!(e.error_type, "OK");
+        assert_eq!(e.granularity, "Device level");
+        assert_eq!(e.operation, "Read");
+        assert_eq!(e.syndrome, Some(0x4321));
+        assert_eq!(e.array_address, Some(0x1_0000_0000));
+        assert_eq!(e.device_address, None);
+        assert_eq!(e.resolution, Some(8));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 33).map(|r| r.kind_name.as_str()),
+            Some("64-bit Memory Error")
+        );
+    }
+
+    #[test]
+    fn type33_zero_syndrome_and_8000000000000000_unknown() {
+        let mut rec = vec![0u8; 0x1F];
+        rec[0] = 33;
+        rec[1] = 0x1F;
+        rec[0x04] = 0x0E; // Uncorrectable
+        rec[0x05] = 0x04;
+        rec[0x06] = 0x04;
+        rec[0x0B] = 0x00;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x00;
+        rec[0x0E] = 0x00;
+        rec[0x0F] = 0x00;
+        rec[0x10] = 0x00;
+        rec[0x11] = 0x00;
+        rec[0x12] = 0x80;
+        rec[0x13] = 0x00;
+        rec[0x14] = 0x00;
+        rec[0x15] = 0x00;
+        rec[0x16] = 0x00;
+        rec[0x17] = 0x00;
+        rec[0x18] = 0x00;
+        rec[0x19] = 0x00;
+        rec[0x1A] = 0x80;
+        rec[0x1B] = 0x00;
+        rec[0x1C] = 0x00;
+        rec[0x1D] = 0x00;
+        rec[0x1E] = 0x80;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let e = recs
+            .iter()
+            .find(|r| r.kind == 33)
+            .and_then(|r| memory_error64_from_raw(&rec, r))
+            .expect("type 33 unk");
+        assert_eq!(e.error_type, "Uncorrectable error");
+        assert_eq!(e.syndrome, None);
+        assert_eq!(e.array_address, None);
+        assert_eq!(e.device_address, None);
+        assert_eq!(e.resolution, None);
     }
 }

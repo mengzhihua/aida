@@ -303,6 +303,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 279. **SMBIOS Type 18/19/21 按 DSP0134 偏移解析。** Type 18 类型/粒度/操作在 `0x04`/`0x05`/`0x06`；Vendor Syndrome DWORD `0x07` 为 `0` 未知；阵列/设备地址与分辨率 DWORD 仅 `0x80000000` 未知。Type 19 Starting/Ending 是 DWORD KB（起始×1024，结束×1024+1023）；`0xFFFFFFFF` 才读 2.7 扩展 QWORD（length≥`0x1F`，单位字节）。Type 21 Type `0x03`=Mouse / `0x07`=Touch Pad，接口 `0x04`=PS/2 / `0xA2`=USB。不调用 dmidecode。
 280. **空的 intel_th / coresight / ntb 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
 281. **`disable_xfrm` / `skip_notify_on_dev_down` 只列出与 `conf/all` 不同的接口。** `disable_xfrm=1` 关闭该接口 IPsec 变换；`skip_notify_on_dev_down=1` 接口 down 时不发 `RTM_DELROUTE`。不要用 `default` 顶替已有 iface。
+282. **SMBIOS Type 20/30/33 按 DSP0134 偏移解析。** Type 20 Starting/Ending 与 Type 19 同为 DWORD KB；`0xFFFFFFFF` 才读 2.7 扩展 QWORD（`0x13`/`0x1B`，length≥`0x23`）。Partition Row / Interleave Position / Depth 为 `0xFF` 表示未知或未交错。Type 30 Connections bit0 入站、bit1 出站。Type 33 与 Type 18 同类型/粒度/操作；阵列/设备地址是 QWORD，仅 `0x8000000000000000` 未知；分辨率 DWORD 仅 `0x80000000` 未知。不调用 dmidecode。
+283. **空的 xen / gameport / dfl 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
+284. **`regen_max_retry` / `max_desync_factor` 只列出与 `conf/all` 不同的接口。** 前者是 SLAAC 临时地址生成最大重试次数（内核默认 5）；后者是 DESYNC_FACTOR 上限秒数（默认 600）。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

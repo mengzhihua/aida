@@ -321,6 +321,12 @@ pub struct NetReport {
     /// `1` 接口 down 时不发 RTM_DELROUTE。
     pub ipv6_skip_notify_on_dev_down: Sample<String>,
     pub ipv6_skip_notify_on_dev_down_dev: Vec<String>,
+    /// SLAAC 临时地址生成最大重试次数。内核默认 5。
+    pub ipv6_regen_max_retry: Sample<String>,
+    pub ipv6_regen_max_retry_dev: Vec<String>,
+    /// SLAAC DESYNC_FACTOR 上限（秒）。内核默认 600。
+    pub ipv6_max_desync_factor: Sample<String>,
+    pub ipv6_max_desync_factor_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -997,6 +1003,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         "skip_notify_on_dev_down",
         skip_all.as_deref(),
     );
+    let ipv6_regen_max_retry =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/regen_max_retry"));
+    let regen_all = ipv6_regen_max_retry.value.clone();
+    let ipv6_regen_max_retry_dev =
+        conf_dev_diffs(ctx, "ipv6", "regen_max_retry", regen_all.as_deref());
+    let ipv6_max_desync_factor =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/max_desync_factor"));
+    let desync_all = ipv6_max_desync_factor.value.clone();
+    let ipv6_max_desync_factor_dev =
+        conf_dev_diffs(ctx, "ipv6", "max_desync_factor", desync_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1254,6 +1270,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_disable_xfrm_dev,
                 ipv6_skip_notify_on_dev_down,
                 ipv6_skip_notify_on_dev_down_dev,
+                ipv6_regen_max_retry,
+                ipv6_regen_max_retry_dev,
+                ipv6_max_desync_factor,
+                ipv6_max_desync_factor_dev,
                 notes,
             };
         }
@@ -1619,6 +1639,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_disable_xfrm_dev,
         ipv6_skip_notify_on_dev_down,
         ipv6_skip_notify_on_dev_down_dev,
+        ipv6_regen_max_retry,
+        ipv6_regen_max_retry_dev,
+        ipv6_max_desync_factor,
+        ipv6_max_desync_factor_dev,
         notes,
     }
 }
@@ -2776,6 +2800,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/regen_max_retry"),
+            "5\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/max_desync_factor"),
+            "600\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -2984,6 +3018,8 @@ mod tests {
         assert_eq!(r.ipv6_temp_prefered_lft.value.as_deref(), Some("86400"));
         assert_eq!(r.ipv6_disable_xfrm.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_skip_notify_on_dev_down.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_regen_max_retry.value.as_deref(), Some("5"));
+        assert_eq!(r.ipv6_max_desync_factor.value.as_deref(), Some("600"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -3324,6 +3360,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/regen_max_retry"),
+            "5\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/regen_max_retry"),
+            "3\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/max_desync_factor"),
+            "600\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/max_desync_factor"),
+            "300\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -3588,6 +3644,18 @@ mod tests {
                 .any(|s| s == "lo:1"),
             "lo skip_notify_on_dev_down=1 must differ from conf/all: {:?}",
             r.ipv6_skip_notify_on_dev_down_dev
+        );
+        assert_eq!(r.ipv6_regen_max_retry.value.as_deref(), Some("5"));
+        assert!(
+            r.ipv6_regen_max_retry_dev.iter().any(|s| s == "lo:3"),
+            "lo regen_max_retry=3 must differ from conf/all: {:?}",
+            r.ipv6_regen_max_retry_dev
+        );
+        assert_eq!(r.ipv6_max_desync_factor.value.as_deref(), Some("600"));
+        assert!(
+            r.ipv6_max_desync_factor_dev.iter().any(|s| s == "lo:300"),
+            "lo max_desync_factor=300 must differ from conf/all: {:?}",
+            r.ipv6_max_desync_factor_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
