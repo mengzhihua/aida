@@ -957,6 +957,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("ssb", &snap.buses.ssb),
         ("fsl-mc", &snap.buses.fsl_mc),
         ("mcb", &snap.buses.mcb),
+        ("usb4", &snap.buses.usb4),
+        ("ishtp", &snap.buses.ishtp),
+        ("scmi", &snap.buses.scmi),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1461,7 +1464,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {} regen {} desync {}s ioam6 {} seg6 {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {} regen {} desync {}s ioam6 {} seg6 {} rpl {} pio_life {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1606,6 +1609,16 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 关".into(),
             Some("1") => "1 开".into(),
             _ => snap.net.ipv6_seg6_enabled.display(),
+        },
+        match snap.net.ipv6_rpl_seg_enabled.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 开".into(),
+            _ => snap.net.ipv6_rpl_seg_enabled.display(),
+        },
+        match snap.net.ipv6_ra_honor_pio_life.value.as_deref() {
+            Some("0") => "0 关".into(),
+            Some("1") => "1 尊重".into(),
+            _ => snap.net.ipv6_ra_honor_pio_life.display(),
         }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
@@ -1858,6 +1871,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">seg6_enabled iface {}</p>",
             esc(&snap.net.ipv6_seg6_enabled_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_rpl_seg_enabled_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">rpl_seg_enabled iface {}</p>",
+            esc(&snap.net.ipv6_rpl_seg_enabled_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_ra_honor_pio_life_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ra_honor_pio_life iface {}</p>",
+            esc(&snap.net.ipv6_ra_honor_pio_life_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -3307,6 +3332,47 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.mgmt_thresholds.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 36 管理阈值</p>");
+        html.push_str("<table><tr><th>非危下限</th><th>非危上限</th><th>危下限</th><th>危上限</th><th>不可恢复下限</th><th>不可恢复上限</th></tr>");
+        for t in &snap.dmi.mgmt_thresholds {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                crate::probes::dmi::opt_u16(t.lower_noncrit),
+                crate::probes::dmi::opt_u16(t.upper_noncrit),
+                crate::probes::dmi::opt_u16(t.lower_crit),
+                crate::probes::dmi::opt_u16(t.upper_crit),
+                crate::probes::dmi::opt_u16(t.lower_nonrec),
+                crate::probes::dmi::opt_u16(t.upper_nonrec)
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.additional.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 40 附加信息</p>");
+        html.push_str("<table><tr><th>句柄</th><th>偏移</th><th>字符串</th></tr>");
+        for a in &snap.dmi.additional {
+            html.push_str(&format!(
+                "<tr><td>{:#06X}</td><td>{:#04X}</td><td>{}</td></tr>",
+                a.handle,
+                a.offset,
+                esc(a.string.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.mc_host.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 42 主机接口</p>");
+        html.push_str("<table><tr><th>类型</th><th>设备</th></tr>");
+        for h in &snap.dmi.mc_host {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(&h.kind),
+                esc(h.device.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -3770,6 +3836,30 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                     .map(|h| format!("{h:#06X}"))
                     .unwrap_or_else(|| "none".into())
             ),
+        ));
+    }
+    for (i, t) in snap.dmi.mgmt_thresholds.iter().take(8).enumerate() {
+        dmi.push(pair(
+            format!("阈值 {i}"),
+            format!(
+                "nc {}/{}  crit {}/{}",
+                crate::probes::dmi::opt_u16(t.lower_noncrit),
+                crate::probes::dmi::opt_u16(t.upper_noncrit),
+                crate::probes::dmi::opt_u16(t.lower_crit),
+                crate::probes::dmi::opt_u16(t.upper_crit)
+            ),
+        ));
+    }
+    for a in snap.dmi.additional.iter().take(8) {
+        dmi.push(pair(
+            format!("{:#06X}+{:#04X}", a.handle, a.offset),
+            a.string.as_deref().unwrap_or("—").to_string(),
+        ));
+    }
+    for h in snap.dmi.mc_host.iter().take(4) {
+        dmi.push(pair(
+            &h.kind,
+            h.device.as_deref().unwrap_or("—").to_string(),
         ));
     }
     sections.push(ReportSection {
