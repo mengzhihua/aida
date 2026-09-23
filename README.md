@@ -182,7 +182,7 @@ PolicyKit 策略：`packaging/polkit/com.aida.linux.policy`。细节见 [docs/PA
 
 约定：探测只读文件或 ioctl，结果进 `Sample<T>`；`ProbeCtx` 可替换 `/proc` `/sys` `/dev` 做夹具。GUI 快路径约 1Hz 更新传感器与速率，不全量重扫 PCI/USB/TCP 表。
 
-内核 ABI 差异与「空 class 不是失败」见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。模块分层见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+技术方案（数据模型、快慢路径、空字段、滚动、导出目录、命令行）见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。内核 ABI 差异与「空 class 不是失败」见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。
 
 ## 开发
 

@@ -1,30 +1,104 @@
-# 模块架构
+# 技术方案
+
+这份文档约定采集、展示和导出怎么分工。内核 ABI 的逐条例外在 [COMPATIBILITY.md](COMPATIBILITY.md)。打包、AppImage 和发版在 [PACKAGING.md](PACKAGING.md)。
+
+## 范围
+
+做的事：只读 `/proc` `/sys` `/dev` 和少量 ioctl，拼一份 `HardwareSnapshot`，GUI 与 CLI 共用。每个字段带 `Sample`（值、`access`、路径、hint）。缺权限、缺硬件、缺键都标原因，不填假数据。
+
+不做的事：不调用 `dmidecode` / `lspci` / `smartctl` / `dpkg -l`。不做 OpenCL/Vulkan 计算基准。内存条厂商和料号只解析 SMBIOS Type 16/17，不扫 I2C SPD。
 
 ## 目标分层
 
 | 层 | 职责 | 禁止事项 |
 | --- | --- | --- |
-| `access` | 读文件、翻译 `io::Error` 为 `AccessKind`、检测 uid/组 | 业务字段拼装 |
+| `access` | 读文件、把 `io::Error` 收成 `AccessKind`、检测 uid/组 | 业务字段拼装 |
 | `probes::*` | 一类内核 ABI 一个文件 | `Command::new("lspci")` 之类外部进程 |
-| `snapshot` | 拼装 `HardwareSnapshot` | UI 字符串 |
-| `export` / `bench` | 纯函数，方便 CLI/GUI/测试共用 | 弹窗；不要为文本/CSV 再扫一遍内核 |
-| `ui` | egui 布局与 1Hz 刷新 | 直接 `fs::read_to_string` |
+| `snapshot` | 拼装 `HardwareSnapshot`、`refresh_live`、环境摘要 | 直接画 UI |
+| `export` / `bench` | 纯函数，CLI/GUI/测试共用同一份快照 | 弹窗；不要为文本/CSV 再扫一遍内核 |
+| `record` / `alerts` | 任务栏 JSONL、阈值告警 JSONL | 采集时改硬件状态 |
+| `elevate` | 用户点击或 `aida elevate` 时 `exec` 替换进程 | 采集路径里 spawn sudo |
+| `doctor` | 读 os-release、扫 glibc 与 GUI `.so`，给出 apt 或 dnf/yum | 调用 `lsb_release` / `ldd` |
+| `ui` | egui 布局与约 1Hz 刷新 | 直接 `fs::read_to_string` 读硬件 |
+
+## 数据模型
+
+```text
+Sample<T> { value, access, source, hint? }
+```
+
+| `AccessKind` | 含义 | JSON |
+| --- | --- | --- |
+| `Ok` | 读到了。空文件仍是 `Ok`，`value` 为空 | `ok` |
+| `PermissionDenied` | 节点在，当前用户不能读 | `permission_denied` |
+| `NotFound` | 文件或目录本身没有 | `not_found` |
+| `Absent` | 文件在，里面没有这个键。Debian 的 `/etc/os-release` 没有 `ID_LIKE` 用这个，不用 `NotFound` | `absent` |
+| `Unsupported` | 内核明确不提供该属性。网卡 `speed=-1` 或 `EINVAL`（os error 22）走这里 | `unsupported` |
+| `Error` | 其它 IO 失败 | `error` |
+
+构造：`Sample::ok` / `missing` / `denied` / `absent` / `unsupported` / `error`。`hint_for` 只给权限不足和「文件不存在」补一句原因；`Absent` 的 hint 由调用方写（例如「os-release 无 ID_LIKE」）。
+
+## 给人看的文案
+
+三套出口，不要混用：
+
+| 函数 | 用在 | 空值 / 失败 |
+| --- | --- | --- |
+| `display()` | GUI 与 HTML 单元格 | 有值就显示值。`Ok` 但内容空是 `—`。`NotFound` 是 `[不存在]`。`Absent` 是 `[未设置]`。`PermissionDenied` 走 `compact()`，是 `[权限不足]`。`Unsupported` 用 hint（没有 hint 时 `[不支持]`）。`Error` 走 `friendly_io_error` |
+| `compact()` | 文本 / CSV / Markdown 摘要 | `Ok` 空和 `NotFound` 都是 `—`。`Absent` 是 `[未设置]`。`PermissionDenied` 是 `[权限不足]`。`Unsupported` 是 `[不支持]`。`Error` 是 `[读取失败]`。不展开 hint |
+| `access_label()` | 权限条、note | `NotFound` 只写 `[不存在]`，不拼路径。`PermissionDenied` 带 hint，没有 hint 时带 `source`。`Absent` / `Unsupported` 用 hint。JSON 另外保留原始 `value`、`source`、`hint` |
+
+sysfs 开关不要把内核原文直接给用户。`cpu::display_sysfs_token` 把 `0`/`off` 显示成「关」，`1`/`on` 显示成「开」，`notsupported` 显示成「内核不支持」，`forceoff` 显示成「强制关闭」。JSON 里的 `value` 保持原文。
+
+`friendly_io_error` 不把 `/proc` 路径和 errno 原文铺到界面上。`EINVAL` / os error 22 写成「内核不支持此读取（loopback / 虚拟设备常见）」。`ENODEV` / os error 19 写成「设备不存在」。其它失败是 `[读取失败]`。
+
+## 缺数据时怎么呈现
+
+云主机经常同时没有 DMI、GPU 和 hwmon。这是环境不适用，不是采集崩溃。
+
+- `environment_headline()`：顶栏一行，只拼有缺口的短语，例如「本环境：虚拟机 · 无 DMI · 无 GPU · 无温度传感器」。虚拟机看 `cpu.hypervisor`；「无 DMI」要 `sys_vendor` 和 `product_name` 都空；「无 GPU」是设备列表空；「无温度传感器」是 hwmon 与 thermal zone 都空。四项都没有则返回 `None`。
+- `environment_cards()`：每条缺口一句原因，非 root 再加一句权限说明。放在「权限与环境说明」折叠里，以及 HTML 顶部的「本环境摘要」。不要在顶栏把这几段同时铺开。
+- HTML 与文本 / CSV / Markdown 判定「无 DMI」更严：`sys_vendor`、`product_name`、`bios_vendor`、`board_name` 四个都空。HTML 用一个 `<details class="gap">`「本环境不可用」，提示只写一次。文本摘要清掉逐项 `—`，收成一行「本环境无 DMI/SMBIOS」。
+- 无 GPU、无传感器：HTML 同样折叠。GUI 对应页给一句说明。顶栏 `TEMP —` 可点进传感器页。
+- 普通用户：权限条只显示「普通用户 uid=…」，旁边是「提权后重新采集」。DMI 序列号、SMBIOS、SMART、iomem 真实地址可能被隐藏，写在折叠说明里。
+
+## iomem 大小
+
+`/proc/iomem` 在非 root 下经常是 `00000000-00000000`。这时 `start==end==0`，`size` 必须是 0。摘要按名字合并时，`count` 仍是条目数，`size` 保持 0。`format_iomem_size(0)` 显示 `—`。不要用 `end-start+1` 把 3 条 System RAM 显示成 `3.00 B`。
+
+## 已装软件
+
+对标 AIDA64 的软件清单，但不调用包管理器命令。
+
+- Debian 系读 `/var/lib/dpkg/status`，只要 `Status: install ok installed`。
+- Alpine 读 `/lib/apk/db/installed`。
+- 夹具测试时，`ProbeCtx.etc` 不是 `/etc`，则到同级的 `var/lib` 或 `lib/apk/db`。
+- `package_count` 是全量个数；`packages` 最多 256 条（按名字排序后截断）。
+- OS 页先显示发行版和这份清单。内核 / 安全 / cgroup 原始项放在折叠「不是软件清单」里，默认收起。
 
 ## 数据采集逻辑
 
-1. `ProbeCtx::live()` 指向真实 `/proc` `/sys` `/dev` `/etc`。
+启动时 `HardwareSnapshot::collect` 走一遍全量 probe。之后 GUI 只调用 `refresh_live`，不重扫启动清单里的静态设备。
+
+1. `ProbeCtx::live()` 指向真实 `/proc` `/sys` `/dev` `/etc` `/usr/share`。
 2. 每个 probe `collect(ctx) -> *Info`：
    - 枚举目录（`hwmonN`、PCI slot、`nvmeN`）
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 热路径：`refresh_live(..., full=false)` 约 1Hz（失焦 2.5s）只更新 hwmon/告警、CPU 利用率与当前频率/governor、GPU 忙闲/显存（不重读 EDID）、网卡/磁盘计数差分、RAPL、meminfo/vmstat、loadavg、PSI、电源、zram mm_stat、`buses.devcoredump`。`full=true` 每 8 拍才重扫 TCP 调优项、`/proc/net/tcp*`、sysctl、IRQ 亲和、挂载 statvfs、zoneinfo、cgroup、security、clock/EDAC/platform/pm。避免每帧扫 PCI/USB/DMI/virtio/KVM/IOMMU/MD/SCSI/iSCSI/模块/iomem/ATA/crypto。
+4. GUI 轮询：窗口聚焦约 1s，失焦约 2.5s。每一拍都更新 hwmon 与告警、电源、RAPL 差分、PSI、`buses.devcoredump`。
+5. 快路径（`full=false`；失焦时永远走这里）：CPU 利用率、当前频率、governor、cpuidle 当前驱动；GPU 忙闲、显存、时钟和连接器状态（不重读 EDID，不扫 PCI 回退）；网卡计数、sockstat、snmp、conntrack（不读 TCP 表和调优项）；`/proc/diskstats` 吞吐（不重扫 queue / loop / mapper）；meminfo / vmstat；loadavg / uptime / entropy；已有 zram 的 `mm_stat`。
+6. 慢路径：聚焦且 `poll_tick % 8 == 0` 时 `full=true`，整份替换 CPU、GPU、网络、块设备、内存、软件、电源管理、时钟、EDAC、文件系统、IRQ、平台、zram、sysctl、cgroup、security。PCI / USB / DMI / virtio / KVM / IOMMU / MD / SCSI / iSCSI / 模块 / iomem / ATA / crypto 只在启动的 `collect` 里扫，不进 `refresh_live`。
+
+## 夹具
+
+`ProbeCtx` 的五个根可以换成临时目录，单元测试不读本机。`etc` 不是 `/etc` 时，软件包清单改读同级 `var/lib/dpkg/status` 或 `lib/apk/db/installed`。`cargo test --test live_collect` 才读真实内核，用来确认报告里有包清单、空 DMI 不刷屏、iomem 隐藏区间不显示成若干字节。
 
 ## 各 probe 内核接口
 
 | Probe | 主路径 | 补充 |
 | --- | --- | --- |
-| CPU | `/proc/cpuinfo`，`/sys/devices/system/cpu/cpuN/` | topology；cpuidle；全局 `cpuidle/current_driver`（`none` 合法）/`current_governor`/`available_governors`；GUI 快路径 `cpu::refresh_runtime` 只更新 `/proc/stat` 利用率、当前频率与 governor；慢路径才替换整份 CPU 报告；cache；vulnerabilities；`smt/`；`isolated`；`online`/`offline`/`possible`/`present`/`kernel_max`/`enabled`；`nohz_full`（空或缺失=无）；`modalias`（界面截断）；cpufreq `policyN`；schedstat；不 dump `hotplug/states` |
+| CPU | `/proc/cpuinfo`，`/sys/devices/system/cpu/cpuN/` | topology；cpuidle；全局 `cpuidle/current_driver`（`none` 合法）/`current_governor`/`available_governors`；GUI 快路径见上文 `refresh_live`，慢路径才替换整份 CPU 报告；cache；vulnerabilities；`smt/`；`isolated`；`online`/`offline`/`possible`/`present`/`kernel_max`/`enabled`；`nohz_full`（空或缺失=无）；`modalias`（界面截断）；cpufreq `policyN`；schedstat；不 dump `hotplug/states` |
 | DMI | `/sys/class/dmi/id/*` | `/sys/firmware/dmi/tables/DMI` SMBIOS 结构；Type 0 BIOS ROM（`(n+1)*64` KiB，`0xFF`→扩展 WORD `0x18` bits13:0 数值、bits15:14 `00b`=MiB/`01b`=GiB）与 Release `0x14`/`0x15`；Type 4 处理器（插座/厂商/型号字符串号、最大/当前 MHz、Status bit6 已插入、核心/线程 BYTE `0xFF` 才读 3.0 WORD）；Type 7 缓存（级别=Config bits2:0+1，大小 `0xFFFF`→扩展 `0x17`）；Type 9 系统插槽（Usage `0x03` Available / `0x04` In use，类型 `0x09`=Proprietary / `0xB8`=PCIe Gen 4 / `0xBE`=PCIe Gen 5，PCI 段/总线/设备 length≥`0x11`，全 `FF`=无地址，最多 16 条）；Type 8 端口连接器（外部连接器优先，`0x0B`=RJ-45 / `0x12`=USB / `0x23`=USB-C，端口 `0x10`=USB / `0x1F`=Network）；Type 11 OEM 字符串（Count `0x04`）；Type 13 BIOS 语言（当前语言 `0x15`）；Type 32 启动状态（`0x0A`）；Type 41 板载设备（`0x05` bit7 启用）；Type 39 电源（最大功率 `0x0C`，仅 `0x8000` 未知）；Type 43 TPM（Vendor ID 4 ASCII、Spec `0x08`/`0x09`）；Type 12 系统配置选项（Count `0x04`）；Type 22 便携电池（化学 `0x09`，`0x02` 读 SBDS `0x14`；容量 `0x0A` 仅 `0` 未知、乘数 `0x15`；电压 `0x0C`）；Type 23 系统复位（Capabilities `0x04` bit0 启用 / bit5 看门狗，WORD `0xFFFF` 未知）；Type 24 硬件安全（Settings `0x04` 两比特一组）；Type 26 电压探头（毫伏，WORD `0x8000` 未知，Nominal `0x14`）；Type 27 冷却装置（类型/状态 `0x06`，Nominal Speed `0x0C` rpm `0x8000` 未知，Description `0x0E` length≥`0x0F`）；Type 28 温度探头（十分之一摄氏度，有符号，`0x8000` 未知）；Type 3 机箱（Type 字节 bit7 Lock、低 7 位类型 `0x17`=Rack Mount，高度 `0` 未指定，SKU 在 `0x15+n*m`）；Type 25 定时开机（BCD，月=`00` 未排程）；Type 29 电流探头（毫安，WORD `0x8000` 未知）；Type 38 IPMI（KCS/SMIC/BT/SSIF，NV `0xFF`=无，基址 QWORD bit0=`1` 为 I/O）；Type 18 32 位内存错误（类型/粒度/操作，Syndrome=`0` 未知，地址 DWORD 仅 `0x80000000` 未知）；Type 19 内存阵列映射（DWORD 单位 KB：起始×1024、结束×1024+1023，`0xFFFFFFFF` 读 2.7 扩展 QWORD 字节）；Type 21 板载指针（`0x03`=Mouse / `0x07`=Touch Pad，接口 `0x04`=PS/2 / `0xA2`=USB）；Type 20 内存设备映射（DWORD KB 同 Type 19，扩展 QWORD 在 `0x13`/`0x1B` 需 length≥`0x23`，行/交错 `0xFF` 未知或未交错）；Type 30 带外远程访问（Connections bit0 入站 / bit1 出站）；Type 33 64 位内存错误（地址 QWORD 仅 `0x8000000000000000` 未知，分辨率 DWORD 仅 `0x80000000` 未知）；Type 34 管理设备（类型 `0x04`=LM78 / `0x08`=ADM9240，地址 DWORD `0x06`，地址类型 `0x03`=I/O Port / `0x05`=SMBus）；Type 35 管理组件（阈值句柄 `0xFFFF`=无）；Type 37 内存通道（`0x03`=RamBus / `0x04`=SyncLink，设备条目 load+handle）；Type 36 管理阈值（WORD 仅 `0x8000` 未指定）；Type 40 附加信息（引用句柄/偏移/字符串）；Type 42 管理控制器主机接口（`<=0x3F`=MCTP / `0x40`=Network，设备 `0x00`=USB / `0x03`=PCI）；Type 16 Physical Memory Array（位置 `0x06`=PCI add-on / ECC / 最大容量 / 槽位数）；Type 17 按 DSP0134：速度 `0x15`（`0xFFFF`→扩展 `0x54`）、类型 `0x12`、外形偏移 `0x0E`（`0x09`=DIMM）、配置速度 `0x20`（`0xFFFF`→扩展 `0x58`）、Attributes `0x1B` rank、Size=`0` 空槽 / `0xFFFF` 已装未知容量；厂商/序列/料号用字符串号（`0`=未用）；不调用 dmidecode，不扫 I2C SPD |
 | hwmon | `/sys/class/hwmon/hwmonN/*_input` | thermal_zone + cooling_device |
 | NVMe | `/sys/class/nvme/nvmeN/` | `NVME_IOCTL_ADMIN_CMD` Get Log Page 0x02（ioctl request `as _`，兼容 musl `c_int` / glibc `c_ulong`） |
@@ -44,7 +118,7 @@
 | Filesystems | `/proc/self/mountinfo` | `/proc/swaps`；`statvfs`；ext4 sysfs；xfs stats；nfsd；fuse connections |
 | Modules | `/proc/modules` | 按名称排序 |
 | Clock | `clocksource0/current_clocksource` | `/sys/class/rtc`；`/sys/class/ptp`；`/sys/class/pps`；`clockevents` |
-| iomem | `/proc/iomem` | `/proc/ioports`；非 root 地址常为 0 |
+| iomem | `/proc/iomem` | `/proc/ioports`；非 root 起止常为 `0-0`，此时 `size=0`，界面和 HTML 显示 `—`，不用条目数冒充字节 |
 | PSI | `/proc/pressure/{cpu,memory,io}` | some/full avg10/60/300 |
 | IRQ | `/proc/interrupts` | `/proc/softirqs`；`smp_affinity_list`；`/sys/kernel/irq` |
 | ATA | `/sys/class/ata_port` | link `sata_spd`；IDENTIFY 型号 |
@@ -64,28 +138,65 @@
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf / fs.protected_* | bpf_jit_enable/harden；binfmt_misc status（不写 register）；seccomp `actions_avail`（不 dump `actions_logged`）；不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |
 | Ns | `/proc/self/ns` | `max_*_namespaces` |
-| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling`；`ostype`；dpkg/apk 状态文件已装包 |
+| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling`；`ostype`；os-release 缺键为 `Absent`；已装包来自 dpkg status 或 apk db，列表最多 256 |
 
 ## 界面
 
-- 左：`SidePanel` 树（摘要 / CPU / DMI / 内存 / GPU / 传感器 / 电源 / 存储 / 文件系统 / 网络 / USB / 输入 / 声卡 / PCI / 平台 / NUMA / OS / 历史记录 / 基准 / 导出）
-- 右：一层页面 `ScrollArea` + 对应面板；温度、CPU 利用率、网卡/磁盘吞吐、RAPL 瓦特用 `egui_plot` 保留约 120 个点（`allow_scroll(false)`）；界面重绘间隔与采集一致（前台 1s，失焦 2.5s）
-- 顶：权限条 +「提权后重新采集」（`elevate::reexec`）+ 无 DMI/GPU/传感器环境摘要
-- 主窗口：有边框、可缩放。任务栏对标 iStat Menus，窗口内常驻 CPU/内存/网络/磁盘/温度/loadavg；置顶 Dock 窄条默认关
-- 历史：默认记录。启动只读 JSONL 尾部最多 1800 条并裁掉更旧的磁盘内容；每次 live 采样进内存队列，勾选记录时追加文件（`$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`），录满后每隔 256 条再裁回 cap。「历史记录」横轴用本地时分秒
-- 告警：对照 `*_max`/`*_crit`/`*_min`，状态变化写入 JSONL（`$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`）
-- 中文标签：若系统有 Noto/文泉驿等 CJK 字体则加载，否则回退英文，避免方块字
+主窗口有边框、可缩放，最小约 800×560。置顶 Dock 窄条默认关，勾选「置顶任务栏」才弹出。
+
+布局四块：
+
+| 区域 | 做法 |
+| --- | --- |
+| 顶：权限 | 一行身份 +「提权后重新采集」。`environment_headline()` 有内容时再加一行橙色摘要。长说明放在折叠里 |
+| 顶：任务栏 | CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg，`horizontal_wrapped`，不用固定 36px 把右侧裁掉。`TEMP —` 点进传感器页 |
+| 左：导航 | `SidePanel` 自己一层纵向 `ScrollArea`（`id_salt=nav-scroll`）。项：摘要、处理器、主板/DMI、内存、显示适配器、传感器、电源、存储、文件系统、网络、USB、输入、声卡、PCI、平台、NUMA、操作系统、历史记录、基准、导出 |
+| 右：详情 | 每个 `Nav` 一层纵向 `ScrollArea`，`id_salt` 带页面 id，切页不带着上一页的滚动位置。`scroll_bar_visibility=AlwaysVisible`。内容宽度用 `set_width(available_width())` |
+
+滚动约束：详情区不要用 `ScrollArea::both()`。横向滚动里 `available_width()` 是无限的，再 `set_min_width` 会把内容高度算坏，滚不到页底。折线图 `allow_scroll(false)`，滚轮留给外层页面。CPU / OS 页不要再套内层 `ScrollArea`。
+
+其它：
+
+- 曲线：温度、CPU 利用率、网卡/磁盘吞吐、RAPL 各保留约 120 个点。历史页横轴是采样的 unix 秒，刻度格式化成本地 `HH:MM:SS`。记录文件路径放在折叠里。
+- 重绘与采集同拍：前台约 1s，失焦约 2.5s。基准在后台线程跑，界面显示「正在跑」，跑完一次更新数字。
+- 历史：默认记录。启动只读 JSONL 尾部最多 1800 条并裁掉更旧的磁盘内容；录满后每隔 256 条再裁回 cap。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
+- 告警：对照 `*_max` / `*_crit` / `*_min`，状态变化写入 `$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`。
+- 中文：有 Noto / 文泉驿等 CJK 字体就加载，否则界面标签回退英文。
 
 ## 报告导出
 
-`export` 在同一份 `HardwareSnapshot` 上生成：
+`export` 只读已经采好的 `HardwareSnapshot`，五种格式同一次采集：
 
-- JSON：全字段 + `access`/`source`/`hint`（`absent` = 文件在但键空）
-- HTML：单文件深色报告；缺 DMI/GPU/传感器时折叠摘要，不重复长提示
-- 文本 / CSV / Markdown：同一份摘要清单（CPU/DMI/内存/GPU/传感器/存储/网络/PCI/USB/OS），对标 AIDA64 TXT/CSV。CSV 表头 `section,key,value`
-- GUI 默认目录：`$AIDA_EXPORT_DIR`、XDG 文档目录，否则 `~/Documents`（没有就创建）
+| 格式 | 内容 |
+| --- | --- |
+| JSON | 全字段 + `access` / `source` / `hint`。`absent` 表示文件在但键空 |
+| HTML | 单文件深色页。表格 `overflow-wrap`。缺 DMI / GPU / 传感器时用 `<details>`，长提示不按字段复制 |
+| 文本 / CSV / Markdown | 同一份 `report_sections` 摘要。单元格用 `compact()`。CSV 表头 `section,key,value` |
 
-CLI：`aida collect --format text` 打 stdout；`--text`/`--csv`/`--md` 写文件。不要为换格式再采集一次。
+GUI 写出目录，按顺序取第一个非空值：
+
+1. `$AIDA_EXPORT_DIR`
+2. `$XDG_DOCUMENTS_DIR`
+3. `~/.config/user-dirs.dirs` 里的 `XDG_DOCUMENTS_DIR`
+4. `~/Documents`
+
+目录可以还不存在，点导出时 `create_dir_all`。成功或失败都显示完整路径。没有家目录时才退回当前目录。不要因为 `~/Documents` 还没建好就改写到 `~/.local/share/aida` 或安装目录。
+
+CLI：`aida collect --format text` 打 stdout；`--text` / `--csv` / `--md` / `--html` / `--json` 写文件，FILE=`-` 也是 stdout。可以和 `--format` 并存，按出现顺序追加。不要为换格式再采集一次。`collect` 只调用一次 `HardwareSnapshot::collect`，不走 GUI 的 `refresh_live`。
+
+## 命令行
+
+| 命令 | 行为 |
+| --- | --- |
+| `aida` | 有 `DISPLAY` 或 `WAYLAND_DISPLAY` 且编进 `gui` feature 则开界面，否则打印 JSON |
+| `aida gui` | 桌面界面 |
+| `aida collect` | 一次全量采集 |
+| `aida doctor` | 发行版 family、glibc、GUI `.so`；`--json` 打机器可读结果 |
+| `aida bench` | `--quick` / `--cpu` / `--memory` / `--disk` / `--no-direct` |
+| `aida elevate` | 见下一节。参数里再出现 `elevate` 直接拒绝 |
+| `aida version` | 打印 `Cargo.toml` 版本 |
+
+`AIDA_ALERT_LOG`、`AIDA_RECORD_LOG` 见界面一节。`AIDA_EXPORT_DIR` 只影响 GUI 写出目录，不影响 `collect` 的 stdout。
 
 ## 提权
 
@@ -97,7 +208,8 @@ CLI：`aida collect --format text` 打 stdout；`--text`/`--csv`/`--md` 写文�
 
 ## 刻意未做
 
-- GPU 计算基准（OpenCL/Vulkan）：会引入额外运行时依赖，与「尽量少依赖、可静态/AppImage 打包」冲突。需要时再单独一轮。
+- GPU 计算基准（OpenCL/Vulkan）：会引入额外运行时，和可打包目标冲突。
+- I2C SPD：内存条级厂商/料号只靠 SMBIOS Type 16/17。云主机没有 SMBIOS 时看不到料号，这是数据源没有，不是解析漏了。
 
 ## 打包
 
