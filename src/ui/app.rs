@@ -49,6 +49,33 @@ enum Nav {
     Export,
 }
 
+impl Nav {
+    fn page_id(self) -> &'static str {
+        match self {
+            Nav::Summary => "summary",
+            Nav::Cpu => "cpu",
+            Nav::Dmi => "dmi",
+            Nav::Memory => "memory",
+            Nav::Gpu => "gpu",
+            Nav::Sensors => "sensors",
+            Nav::Power => "power",
+            Nav::Storage => "storage",
+            Nav::Filesystems => "fs",
+            Nav::Network => "net",
+            Nav::Usb => "usb",
+            Nav::Input => "input",
+            Nav::Audio => "audio",
+            Nav::Pci => "pci",
+            Nav::Platform => "platform",
+            Nav::Numa => "numa",
+            Nav::Software => "os",
+            Nav::History => "history",
+            Nav::Bench => "bench",
+            Nav::Export => "export",
+        }
+    }
+}
+
 pub fn run() -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -330,7 +357,7 @@ impl AidaApp {
 
     fn ui_status_strip(&mut self, ui: &mut egui::Ui) {
         let meters = StatusMeters::from_snapshot(&self.snap);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(self.t("任务栏", "Taskbar")).strong());
             sparkline(
                 ui,
@@ -574,9 +601,19 @@ impl eframe::App for AidaApp {
             } else {
                 Color32::from_rgb(255, 179, 71)
             };
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(self.t("权限", "Privilege")).strong());
-                ui.colored_label(color, &self.snap.privilege.summary);
+                let who = if self.snap.privilege.is_root {
+                    "root".to_string()
+                } else {
+                    format!(
+                        "{} uid={} ({})",
+                        self.t("普通用户", "user"),
+                        self.snap.privilege.uid,
+                        self.snap.privilege.username.as_deref().unwrap_or("—")
+                    )
+                };
+                ui.colored_label(color, who);
                 if !self.snap.privilege.is_root {
                     let btn = egui::Button::new(
                         RichText::new(self.t("提权后重新采集", "Re-scan as admin"))
@@ -601,9 +638,16 @@ impl eframe::App for AidaApp {
             if let Some(m) = &self.elevate_msg {
                 ui.colored_label(Color32::from_rgb(255, 100, 100), m);
             }
-            for card in self.snap.environment_cards() {
-                ui.colored_label(Color32::from_rgb(255, 179, 71), card);
+            if let Some(line) = self.snap.environment_headline() {
+                ui.colored_label(Color32::from_rgb(255, 179, 71), line);
             }
+            ui.collapsing(self.t("权限与环境说明", "Privilege and environment"), |ui| {
+                ui.label(&self.snap.privilege.summary);
+                for card in self.snap.environment_cards() {
+                    ui.label(card);
+                }
+                ui.weak(crate::elevate::plan().summary);
+            });
             if !self.snap.alerts.is_empty() {
                 ui.colored_label(
                     Color32::from_rgb(255, 120, 80),
@@ -614,11 +658,9 @@ impl eframe::App for AidaApp {
                     ),
                 );
             }
-            ui.weak(crate::elevate::plan().summary);
         });
 
         egui::TopBottomPanel::top("istat")
-            .exact_height(36.0)
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(18, 22, 28))
@@ -633,6 +675,10 @@ impl eframe::App for AidaApp {
             .resizable(true)
             .default_width(200.0)
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("nav-scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 ui.heading("AIDA");
                 ui.label(RichText::new("Linux").italics().weak());
                 ui.separator();
@@ -708,14 +754,16 @@ impl eframe::App for AidaApp {
                     Nav::Export,
                     tr(cjk, "导出报告", "Export"),
                 );
+                    });
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both()
-                .id_salt("page-scroll")
+            egui::ScrollArea::vertical()
+                .id_salt(("page-scroll", self.nav.page_id()))
                 .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
+                    ui.set_width(ui.available_width());
                     match self.nav {
                         Nav::Summary => self.ui_summary(ui),
                         Nav::Cpu => self.ui_cpu(ui),
@@ -1160,10 +1208,10 @@ impl AidaApp {
             self.t("超线程", "SMT"),
             &format!(
                 "{} {}  {} {}",
-                self.t("启用", "active"),
-                self.snap.cpu.smt_active.display(),
-                self.t("控制", "control"),
-                self.snap.cpu.smt_control.display()
+                self.t("状态", "state"),
+                crate::probes::cpu::display_sysfs_token(&self.snap.cpu.smt_active),
+                self.t("热切换", "control"),
+                crate::probes::cpu::display_sysfs_token(&self.snap.cpu.smt_control)
             ),
         );
         kv(ui, self.t("在线 CPU", "CPUs online"), &self.snap.cpu.online.display());
@@ -4524,11 +4572,12 @@ impl AidaApp {
                 self.t("未发现 dpkg/apk 状态文件", "no dpkg/apk database"),
             ),
         }
-        ui.separator();
-        ui.weak(self.t(
-            "以下为内核/安全/cgroup 原始项（不是软件清单）。",
-            "Kernel/security/cgroup knobs, not an installed-software list.",
-        ));
+        ui.collapsing(
+            self.t(
+                "内核 / 安全 / cgroup（不是软件清单）",
+                "Kernel / security / cgroup",
+            ),
+            |ui| {
         kv(
             ui,
             "tainted",
@@ -5248,6 +5297,8 @@ impl AidaApp {
         ui.collapsing("/proc/version", |ui| {
             ui.label(self.snap.software.kernel_version_banner.display());
         });
+            },
+        );
     }
 
     fn ui_history(&mut self, ui: &mut egui::Ui) {
@@ -5435,7 +5486,7 @@ impl AidaApp {
             self.export_dir.display()
         ));
         ui.weak(self.t(
-            "默认写到文档目录（$AIDA_EXPORT_DIR / XDG 文档 / ~/.local/share/aida），不再写到安装目录。",
+            "默认写到 ~/Documents（或 $AIDA_EXPORT_DIR / XDG 文档目录）。目录不存在会在导出时创建，不再写到安装目录。",
             "Writes under Documents / XDG, not the install cwd.",
         ));
         if ui.button("JSON → aida-report.json").clicked() {

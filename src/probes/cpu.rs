@@ -277,7 +277,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         .as_deref()
         .is_some_and(|v| v == "notsupported" || v == "not implemented")
     {
-        notes.push("SMT sysfs 为 notsupported（虚拟机或未开 CONFIG_HOTPLUG_SMT 时常见）。".into());
+        notes.push("超线程热切换：内核不支持（虚拟机或未开 CONFIG_HOTPLUG_SMT 时常见）。".into());
     }
 
     CpuInfo {
@@ -317,6 +317,24 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         freq_policies: collect_freq_policies(ctx),
         schedstat_cpus: parse_schedstat_cpus(&access::read_trimmed(ctx.proc_path("schedstat"))),
         notes,
+    }
+}
+
+/// 把 sysfs 里的 `0`/`on`/`notsupported` 收成用户语言。JSON 仍保留原文。
+pub fn display_sysfs_token(sample: &Sample<String>) -> String {
+    match sample.value.as_deref() {
+        Some(v) => localize_sysfs_token(v),
+        None => sample.display(),
+    }
+}
+
+pub fn localize_sysfs_token(raw: &str) -> String {
+    match raw {
+        "0" | "off" | "disabled" | "disable" => "关".into(),
+        "1" | "on" | "enabled" | "enable" => "开".into(),
+        "notsupported" | "not supported" | "notimplemented" | "not implemented" => "内核不支持".into(),
+        "forceoff" => "强制关闭".into(),
+        other => other.to_string(),
     }
 }
 
@@ -594,6 +612,16 @@ pub fn parse_cpuinfo(text: &str) -> Vec<BTreeMap<String, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sysfs_token_is_user_language() {
+        assert_eq!(localize_sysfs_token("notsupported"), "内核不支持");
+        assert_eq!(localize_sysfs_token("0"), "关");
+        assert_eq!(localize_sysfs_token("on"), "开");
+        let s = Sample::ok("notsupported".into(), "smt/control");
+        assert_eq!(display_sysfs_token(&s), "内核不支持");
+        assert_eq!(s.value.as_deref(), Some("notsupported"));
+    }
 
     #[test]
     fn parse_two_logical_cpus() {

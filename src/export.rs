@@ -160,9 +160,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             (
                 "超线程",
                 format!(
-                    "启用 {} 控制 {}",
-                    snap.cpu.smt_active.display(),
-                    snap.cpu.smt_control.display()
+                    "状态 {} 热切换 {}",
+                    crate::probes::cpu::display_sysfs_token(&snap.cpu.smt_active),
+                    crate::probes::cpu::display_sysfs_token(&snap.cpu.smt_control)
                 ),
             ),
             ("在线 CPU", snap.cpu.online.display()),
@@ -3474,7 +3474,8 @@ pub fn format_iomem_size(n: u64) -> String {
     }
 }
 
-/// GUI 导出默认目录：`$AIDA_EXPORT_DIR` → 文档目录 → `XDG_DATA_HOME/aida` → 家目录。
+/// GUI 导出默认目录：`$AIDA_EXPORT_DIR` → `$XDG_DOCUMENTS_DIR` / `user-dirs.dirs` → `~/Documents`。
+/// 目录可以还不存在，点导出时再创建。不要因为没有 Documents 就改写到隐藏的 `.local/share`。
 pub fn default_export_dir() -> std::path::PathBuf {
     use std::path::PathBuf;
     if let Ok(p) = std::env::var("AIDA_EXPORT_DIR") {
@@ -3485,7 +3486,7 @@ pub fn default_export_dir() -> std::path::PathBuf {
     }
     if let Ok(p) = std::env::var("XDG_DOCUMENTS_DIR") {
         let p = PathBuf::from(p);
-        if p.is_dir() {
+        if !p.as_os_str().is_empty() {
             return p;
         }
     }
@@ -3499,21 +3500,13 @@ pub fn default_export_dir() -> std::path::PathBuf {
                         .trim()
                         .trim_matches('"')
                         .replace("$HOME", &home.to_string_lossy());
-                    let p = PathBuf::from(v);
-                    if p.is_dir() {
-                        return p;
+                    if !v.is_empty() {
+                        return PathBuf::from(v);
                     }
                 }
             }
         }
-        let docs = home.join("Documents");
-        if docs.is_dir() {
-            return docs;
-        }
-        let data = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".local/share"));
-        return data.join("aida");
+        return home.join("Documents");
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
@@ -3545,9 +3538,9 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
         pair(
             "超线程",
             format!(
-                "启用 {} 控制 {}",
-                snap.cpu.smt_active.compact(),
-                snap.cpu.smt_control.compact()
+                "状态 {} 热切换 {}",
+                crate::probes::cpu::display_sysfs_token(&snap.cpu.smt_active),
+                crate::probes::cpu::display_sysfs_token(&snap.cpu.smt_control)
             ),
         ),
         pair("microcode", snap.cpu.microcode.compact()),
@@ -3976,6 +3969,17 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
             h.device.as_deref().unwrap_or("—").to_string(),
         ));
     }
+    let dmi_present = snap.dmi.sys_vendor.value.is_some()
+        || snap.dmi.product_name.value.is_some()
+        || snap.dmi.bios_vendor.value.is_some()
+        || snap.dmi.board_name.value.is_some();
+    if !dmi_present {
+        dmi.clear();
+        dmi.push(pair(
+            "状态",
+            "本环境无 DMI/SMBIOS（云主机或容器常见，不是采集失败）",
+        ));
+    }
     sections.push(ReportSection {
         title: "DMI / 主板".into(),
         rows: dmi,
@@ -4264,6 +4268,11 @@ fn md_cell(s: &str) -> String {
 mod tests {
     use super::*;
 
+    fn export_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn csv_escape_quotes_specials() {
         assert_eq!(csv_escape("ok"), "ok");
@@ -4308,10 +4317,22 @@ mod tests {
         );
         assert_eq!(format_iomem_size(0), "—");
         assert!(format_iomem_size(4096).contains("KiB"));
+        if snap.dmi.sys_vendor.value.is_none() && snap.dmi.product_name.value.is_none() {
+            assert!(text.contains("本环境无 DMI"));
+            assert!(
+                !text.contains("序列号: —"),
+                "empty DMI must not list a dash for every field"
+            );
+        }
+        assert!(
+            !text.contains("notsupported"),
+            "SMT control should be translated: {text}"
+        );
     }
 
     #[test]
     fn default_export_dir_honors_env() {
+        let _guard = export_env_lock();
         let old = std::env::var_os("AIDA_EXPORT_DIR");
         let tmp = std::env::temp_dir().join(format!("aida-export-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
@@ -4322,5 +4343,33 @@ mod tests {
             None => std::env::remove_var("AIDA_EXPORT_DIR"),
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn documents_dir_used_when_folder_missing() {
+        let _guard = export_env_lock();
+        let old_export = std::env::var_os("AIDA_EXPORT_DIR");
+        let old_xdg = std::env::var_os("XDG_DOCUMENTS_DIR");
+        let old_home = std::env::var_os("HOME");
+        std::env::remove_var("AIDA_EXPORT_DIR");
+        std::env::remove_var("XDG_DOCUMENTS_DIR");
+        let home = std::env::temp_dir().join(format!("aida-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("HOME", &home);
+        assert_eq!(default_export_dir(), home.join("Documents"));
+        match old_export {
+            Some(v) => std::env::set_var("AIDA_EXPORT_DIR", v),
+            None => std::env::remove_var("AIDA_EXPORT_DIR"),
+        }
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_DOCUMENTS_DIR", v),
+            None => std::env::remove_var("XDG_DOCUMENTS_DIR"),
+        }
+        match old_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

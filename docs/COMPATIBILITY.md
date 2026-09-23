@@ -314,8 +314,8 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 290. **`rpl_seg_enabled` / `ra_honor_pio_life` 只列出与 `conf/all` 不同的接口。** `rpl_seg_enabled=1` 启用 RPL Segment Routing（RFC 6554）；`ra_honor_pio_life=1` 尊重 RA PIO 有效寿命（RFC 8981）。不要用 `default` 顶替已有 iface。
 291. **`AccessKind::Absent` 表示文件在、键/属性未提供。** 例如 Debian 的 `/etc/os-release` 没有 `ID_LIKE`。界面/HTML 写 `[未设置]`，不要写成 `[不存在] /etc/os-release`。`NotFound` 才是文件或节点本身没有，且不再把路径拼进 `display()`。
 292. **非 root 的 `/proc/iomem` 起止常为 `0-0`。** 这时 `size=0`，摘要「大小」显示 `—`，不要把条目数显示成 `3.00 B` / `5.00 B`。
-293. **GUI 每个详情页只有一层页面 `ScrollArea`。** 不要在 CPU/OS 等长页再套内层滚动；折线图 `allow_scroll(false)`，否则滚轮被图吃掉，底部 KVM/bpf 点不到。
-294. **GUI 导出默认写文档目录。** `$AIDA_EXPORT_DIR` → `$XDG_DOCUMENTS_DIR` / `user-dirs.dirs` / `~/Documents` → `$XDG_DATA_HOME/aida`。成功后提示完整路径，不要只写文件名、也不要写到安装目录 cwd。
+293. **GUI 每个详情页只有一层纵向 `ScrollArea`，滚动条常显。** 不要用 `ScrollArea::both()` 再 `set_min_width(available_width())`：横向滚动里可用宽度是无限的，内容高度算不准，滚不到页底。折线图 `allow_scroll(false)`。左侧导航单独一层滚动。每页用自己的 `id_salt`，避免切页带着上一页的滚动位置。
+294. **GUI 导出默认写 `~/Documents`。** `$AIDA_EXPORT_DIR` → `$XDG_DOCUMENTS_DIR` / `user-dirs.dirs` → `~/Documents`。目录可以还不存在，点导出时创建。不要因为没有 Documents 就改写到 `~/.local/share/aida` 或安装目录 cwd。成功后提示完整路径。
 295. **已装软件来自 dpkg/apk 状态文件。** 读 `/var/lib/dpkg/status` 或 `/lib/apk/db/installed`，不调用 `dpkg -l`。列表最多 256 条。OS 页内核/cgroup 原始项不是软件清单。
 296. **无 DMI / 无 GPU / 无 hwmon 用折叠摘要。** HTML `<details>` 一句话说明本环境不可用，不要把同一段 DMI 提示复制到每个空字段。GUI 顶部有环境摘要条，TEMP — 可点进传感器页。普通用户点「提权后重新采集」（`pkexec` / `sudo -E`）。
 297. **网卡 `speed=-1` 或 `EINVAL`（os error 22）标 Unsupported。** 文案用「网卡未报告链路速率」，不要把 `/proc` 路径和 errno 原文刷到界面。

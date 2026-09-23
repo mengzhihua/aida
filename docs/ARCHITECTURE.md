@@ -83,7 +83,7 @@
 - JSON：全字段 + `access`/`source`/`hint`（`absent` = 文件在但键空）
 - HTML：单文件深色报告；缺 DMI/GPU/传感器时折叠摘要，不重复长提示
 - 文本 / CSV / Markdown：同一份摘要清单（CPU/DMI/内存/GPU/传感器/存储/网络/PCI/USB/OS），对标 AIDA64 TXT/CSV。CSV 表头 `section,key,value`
-- GUI 默认目录：`$AIDA_EXPORT_DIR` 或 XDG 文档目录
+- GUI 默认目录：`$AIDA_EXPORT_DIR`、XDG 文档目录，否则 `~/Documents`（没有就创建）
 
 CLI：`aida collect --format text` 打 stdout；`--text`/`--csv`/`--md` 写文件。不要为换格式再采集一次。
 

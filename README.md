@@ -87,11 +87,12 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 - **历史记录**：默认写入 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`；启动加载最近约 30 分钟，左侧「历史记录」按本地时间画折线
 - **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc`、PTP、PPS、TPM、`firmware_attributes`、`pci_epf`、Slimbus、Memory Stick、SIOX、HSI、AMBA、FSI、`ppdev` 等 leftover class（空 = 无硬件，不是失败）
 - **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
-- **软件**：OS 页列出 dpkg/apk 已装包（读状态文件，不调用 `dpkg -l`）；内核/cgroup 原始项折叠在清单下面
+- **软件**：OS 页先给发行版和已装包（读 dpkg/apk 状态文件，不调用 `dpkg -l`，列表最多 256 条）。内核 / 安全 / cgroup 原始项收在折叠里，默认不铺开
 - **占用**：GUI 前台约 1Hz 只刷新传感器和速率；TCP 表 / sysctl / 挂载用量约每 8 秒才扫一次；窗口失焦降到约 2.5s
-- **导出**：JSON（每个字段带 `access` / `source` / `hint`）、单文件 HTML、可读文本、CSV、Markdown。GUI 写到 `$AIDA_EXPORT_DIR` 或 XDG 文档目录，并显示完整路径；CLI `--format` 打印到 stdout，FILE=`-` 也是 stdout
-- **提权**：GUI 顶部「提权后重新采集」；CLI `aida elevate gui`。无 DMI/GPU/传感器时顶部有环境摘要，不假装坏了
+- **导出**：JSON（每个字段带 `access` / `source` / `hint`）、单文件 HTML、可读文本、CSV、Markdown。GUI 默认写到 `~/Documents`（`$AIDA_EXPORT_DIR` 或 XDG 文档目录优先），目录没有会创建，并显示完整路径；无 DMI 时文本/HTML 只留一句「本环境无 DMI」，不逐项打横线。CLI `--format` 打印到 stdout，FILE=`-` 也是 stdout
+- **提权**：顶栏一行身份（普通用户 uid）和「提权后重新采集」；旁边一行「本环境：虚拟机 · 无 DMI · 无 GPU · 无温度传感器」。长说明在「权限与环境说明」里。CLI：`aida elevate gui`
 - **基准**：CPU / 内存 / 磁盘相对分（`--quick` 约 200ms）；GUI 在后台线程跑，有「正在跑」提示
+- **界面**：主窗口有边框、可缩放（最小约 800×560）。左侧导航和每个详情页各自滚动，详情页滚动条常显。置顶任务栏默认关。超线程等 sysfs 原文（`0` / `notsupported`）显示成「关 / 内核不支持」，JSON 仍保留原文
 
 刻意未做：GPU OpenCL/Vulkan 计算基准（会引入额外运行时，和可打包目标冲突）。内存条级厂商/料号只靠 SMBIOS Type 16/17，不扫 I2C SPD。
 
@@ -123,7 +124,9 @@ cargo build --release --no-default-features
 
 ## 权限
 
-缺权限时字段标记为 `permission_denied` 并给出路径，**不会伪造数据**。界面顶部有权限条。
+缺权限时字段标记为 `permission_denied` 并给出路径，**不会伪造数据**。文件在、键没有（例如 Debian 的 `os-release` 没有 `ID_LIKE`）是 `absent`，界面写 `[未设置]`，不要理解成文件丢了。
+
+界面顶部是一行身份和「提权后重新采集」。云主机上还会有一行「本环境：虚拟机 · 无 DMI · 无 GPU · 无温度传感器」。TEMP — 点进去是传感器页，表示没有 hwmon，不是坏了。更长的说明在「权限与环境说明」里，默认收起，避免把详情页顶出窗口。
 
 | 数据 | 普通用户 | 通常需要 root / disk 组 |
 | --- | --- | --- |
@@ -145,6 +148,7 @@ PolicyKit 策略：`packaging/polkit/com.aida.linux.policy`。细节见 [docs/PA
 | --- | --- | --- |
 | `AIDA_ALERT_LOG` | `$XDG_STATE_HOME/aida/alerts.jsonl` | 传感器越限 JSONL |
 | `AIDA_RECORD_LOG` | `$XDG_STATE_HOME/aida/history.jsonl` | 任务栏历史 JSONL |
+| `AIDA_EXPORT_DIR` | `~/Documents`（或 XDG 文档目录） | GUI 导出目录。没有这个目录时，第一次导出会创建 |
 
 ## 打包约定
 
