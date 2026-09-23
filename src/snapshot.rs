@@ -219,6 +219,28 @@ impl HardwareSnapshot {
         self.collected_at_unix_ms = unix_ms();
     }
 
+    /// 顶栏一行：虚拟机 / 无 DMI / 无 GPU / 无传感器。空则本环境没有这些缺口。
+    pub fn environment_headline(&self) -> Option<String> {
+        let mut bits = Vec::new();
+        if self.cpu.hypervisor {
+            bits.push("虚拟机");
+        }
+        if self.dmi.sys_vendor.value.is_none() && self.dmi.product_name.value.is_none() {
+            bits.push("无 DMI");
+        }
+        if self.gpu.devices.is_empty() {
+            bits.push("无 GPU");
+        }
+        if self.sensors.chips.is_empty() && self.sensors.thermal_zones.is_empty() {
+            bits.push("无温度传感器");
+        }
+        if bits.is_empty() {
+            None
+        } else {
+            Some(format!("本环境：{}", bits.join(" · ")))
+        }
+    }
+
     /// 云主机/无 GPU/无传感器时用一句话说明「不适用」，避免像坏了。
     pub fn environment_cards(&self) -> Vec<String> {
         let mut v = Vec::new();
