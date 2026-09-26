@@ -138,6 +138,81 @@ pub fn collect(ctx: &ProbeCtx) -> SensorReport {
     }
 }
 
+/// GUI 快路径：只重读已经发现的 `*_input`、thermal `temp`、cooling `cur_state`。
+/// 没有传感器时直接返回，不再扫目录。标签和阈值留在启动采集，慢路径才整份重扫。
+pub fn refresh_runtime(report: &mut SensorReport, _ctx: &ProbeCtx) {
+    if report.chips.is_empty() && report.thermal_zones.is_empty() && report.cooling.is_empty() {
+        return;
+    }
+    for chip in &mut report.chips {
+        let dir = std::path::Path::new(&chip.path);
+        for ch in &mut chip.channels {
+            let Some(prefix) = ch.key.rsplit_once(':').map(|(_, p)| p) else {
+                continue;
+            };
+            if prefix.is_empty() {
+                continue;
+            }
+            let (raw, value) = parse_scaled_input(
+                access::read_trimmed(dir.join(format!("{prefix}_input"))),
+                kind_scale(ch.kind),
+            );
+            ch.raw = raw;
+            ch.value = value;
+        }
+    }
+    for tz in &mut report.thermal_zones {
+        let raw = access::read_trimmed(std::path::Path::new(&tz.path).join("temp"));
+        tz.temp_c = match (raw.access, raw.value.as_deref()) {
+            (AccessKind::Ok, Some(t)) => match t.parse::<i64>() {
+                Ok(v) => Sample::ok(v as f64 / 1000.0, raw.source),
+                Err(_) => Sample::error(raw.source, "无法解析 thermal_zone temp"),
+            },
+            _ => Sample {
+                value: None,
+                access: raw.access,
+                source: raw.source,
+                hint: raw.hint,
+            },
+        };
+    }
+    for dev in &mut report.cooling {
+        if dev.cur_state.source.is_empty() {
+            continue;
+        }
+        dev.cur_state = access::read_trimmed(&dev.cur_state.source);
+    }
+}
+
+fn kind_scale(kind: SensorKind) -> f64 {
+    match kind {
+        SensorKind::Temp => 1000.0,
+        SensorKind::Fan => 1.0,
+        SensorKind::Voltage => 1000.0,
+        SensorKind::Power => 1_000_000.0,
+        SensorKind::Current => 1000.0,
+        SensorKind::Other => 1.0,
+    }
+}
+
+fn parse_scaled_input(sample: Sample<String>, scale: f64) -> (Sample<i64>, Option<f64>) {
+    match (sample.access, sample.value) {
+        (AccessKind::Ok, Some(t)) => match t.parse::<i64>() {
+            Ok(v) => (Sample::ok(v, sample.source), Some(v as f64 / scale)),
+            Err(_) => (Sample::error(sample.source, "非整数"), None),
+        },
+        _ => (
+            Sample {
+                value: None,
+                access: sample.access,
+                source: sample.source,
+                hint: sample.hint,
+            },
+            None,
+        ),
+    }
+}
+
 fn read_chip(dir: &std::path::Path) -> HwmonChip {
     let name = access::read_trimmed(dir.join("name"));
     let mut channels = Vec::new();
@@ -264,6 +339,23 @@ mod tests {
         assert_eq!(report.chips[0].channels[0].value, Some(45.0));
         assert_eq!(report.chips[0].channels[0].max, Some(80.0));
         assert_eq!(report.chips[0].channels[0].crit, Some(100.0));
+        fs::write(chip.join("temp1_input"), "50000\n").unwrap();
+        fs::write(chip.join("temp1_max"), "1\n").unwrap();
+        fs::write(chip.join("temp1_label"), "changed\n").unwrap();
+        let mut report = report;
+        refresh_runtime(&mut report, &ctx);
+        assert_eq!(report.chips[0].channels[0].value, Some(50.0));
+        assert_eq!(report.chips[0].channels[0].max, Some(80.0));
+        assert_eq!(report.chips[0].channels[0].label, "Package id 0");
+        let empty = SensorReport {
+            chips: Vec::new(),
+            thermal_zones: Vec::new(),
+            cooling: Vec::new(),
+            notes: Vec::new(),
+        };
+        let mut empty = empty;
+        refresh_runtime(&mut empty, &ctx);
+        assert!(empty.chips.is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 }

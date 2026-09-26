@@ -360,19 +360,21 @@ pub fn refresh_runtime(
     dt_sec: f64,
 ) {
     let stats = parse_diskstats(ctx);
+    let prev_map: std::collections::HashMap<&str, (u64, u64)> = prev
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| (s.name.as_str(), (s.rd_bytes, s.wr_bytes)))
+        .collect();
     for d in &mut report.devices {
         let io = stats.get(&d.name);
-        let (rd_bps, wr_bps) = match (prev, io) {
-            (Some(p), Some(now)) if dt_sec > 0.0 => {
-                if let Some(old) = p.iter().find(|x| x.name == d.name) {
-                    (
-                        Some((now.rd_bytes.saturating_sub(old.rd_bytes) as f64) / dt_sec),
-                        Some((now.wr_bytes.saturating_sub(old.wr_bytes) as f64) / dt_sec),
-                    )
-                } else {
-                    (None, None)
-                }
-            }
+        let (rd_bps, wr_bps) = match io {
+            Some(now) if dt_sec > 0.0 => match prev_map.get(d.name.as_str()) {
+                Some((old_rd, old_wr)) => (
+                    Some((now.rd_bytes.saturating_sub(*old_rd) as f64) / dt_sec),
+                    Some((now.wr_bytes.saturating_sub(*old_wr) as f64) / dt_sec),
+                ),
+                None => (None, None),
+            },
             _ => (None, None),
         };
         if let Some(s) = io {

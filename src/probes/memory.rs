@@ -195,6 +195,16 @@ pub fn refresh_runtime(report: &mut MemoryReport, ctx: &ProbeCtx) {
     report.vmstat = parse_vmstat(&access::read_trimmed(ctx.proc_path("vmstat")));
 }
 
+/// 慢路径：更新大页、buddy、KSM、zoneinfo。不逐块读 `memoryN/state`
+/// （大内存机器上这块有几千个文件，在线数量留在启动采集）。
+pub fn refresh_slow(report: &mut MemoryReport, ctx: &ProbeCtx) {
+    refresh_runtime(report, ctx);
+    report.hugepages = read_hugepages(ctx);
+    report.buddy = parse_buddyinfo(&access::read_trimmed(ctx.proc_path("buddyinfo")));
+    report.ksm = read_ksm(ctx);
+    report.zones = parse_zoneinfo(&access::read_trimmed(ctx.proc_path("zoneinfo")));
+}
+
 struct ParsedMem {
     total_kb: Sample<u64>,
     available_kb: Sample<u64>,
@@ -636,5 +646,31 @@ Node 0, zone   Normal
         assert_eq!(z[0].present, Some(3998));
         assert_eq!(z[1].zone, "Normal");
         assert_eq!(z[1].managed, Some(180));
+    }
+
+    #[test]
+    fn refresh_slow_keeps_memory_block_counts() {
+        let root = std::env::temp_dir().join(format!("aida-mem-slow-{}", std::process::id()));
+        let mem = root.join("sys/devices/system/memory");
+        fs::create_dir_all(mem.join("memory0")).unwrap();
+        fs::write(mem.join("block_size_bytes"), "8000000\n").unwrap();
+        fs::write(mem.join("memory0/state"), "online\n").unwrap();
+        fs::create_dir_all(root.join("proc")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        assert_eq!(r.mem_blocks.online, 1);
+        fs::write(mem.join("memory0/state"), "offline\n").unwrap();
+        refresh_slow(&mut r, &ctx);
+        assert_eq!(
+            r.mem_blocks.online, 1,
+            "slow path must not re-read memoryN/state"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }
