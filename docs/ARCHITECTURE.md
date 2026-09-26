@@ -88,7 +88,7 @@ sysfs 开关不要把内核原文直接给用户。`cpu::display_sysfs_token` �
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
 4. GUI 轮询：窗口聚焦约 2s，失焦约 10s。每一拍都更新 hwmon 与告警、电源、RAPL 差分、PSI、`buses.devcoredump`。界面关掉悬停动画，避免 llvmpipe 按显示器刷新率空转。
 5. 快路径（`full=false`；失焦时永远走这里）：CPU 利用率（`/proc/stat`）和 cpuidle 当前驱动。当前频率只对启动时已经读到 cpufreq 的核更新，虚拟机不再逐核打开 `scaling_*`。governor / online 不在这一拍读。GPU 忙闲、显存、时钟和连接器状态（不重读 EDID，不扫 PCI 回退）。网卡计数优先一次 `/proc/net/dev`，没有该文件才退回每块网卡的 `statistics/*_bytes`；同时读 sockstat、snmp、conntrack。不读 TCP 表、调优项、operstate。`/proc/diskstats` 吞吐（不重扫 queue / loop / mapper）。meminfo / vmstat。loadavg / uptime / entropy。已有 zram 的 `mm_stat`。
-6. 慢路径：聚焦且 `poll_tick % 30 == 0` 时 `full=true`（约 60 秒一次），整份替换 CPU、GPU、网络、块设备、内存、电源管理、时钟、EDAC、文件系统、IRQ、平台、zram、sysctl、cgroup、security。软件只更新 taint / oops / load，不重读已装包和 `config.gz`。PCI / USB / DMI / virtio / KVM / IOMMU / MD / SCSI / iSCSI / 模块 / iomem / ATA / crypto 只在启动的 `collect` 里扫，不进 `refresh_live`。nfs / cifs / fuse 不调用 `statvfs`。
+6. 慢路径：聚焦且 `poll_tick % 30 == 0` 时 `full=true`（约 60 秒一次），整份替换 CPU、GPU、网络、块设备、内存、电源管理、时钟、EDAC、文件系统、IRQ、平台、zram、sysctl、cgroup、security。软件只更新 taint / oops / load，不重读已装包和 `config.gz`。PCI / USB / DMI / virtio / KVM / IOMMU / MD / SCSI / iSCSI / 模块 / iomem / ATA / crypto 只在启动的 `collect` 里扫，不进 `refresh_live`。nfs / cifs / fuse 不调用 `statvfs`。IRQ 亲和只打开计数最高的 48 条。`conf/all` 的接口差异先看物理网卡，veth/docker 等靠后，最多比较 48 个接口。
 
 ## 夹具
 
@@ -158,10 +158,10 @@ sysfs 开关不要把内核原文直接给用户。`cpu::display_sysfs_token` �
 其它：
 
 - 曲线：温度、CPU 利用率、网卡/磁盘吞吐、RAPL 各保留约 120 个点。历史页横轴是采样的 unix 秒，刻度格式化成本地 `HH:MM:SS`。记录文件路径放在折叠里。
-- 重绘与采集同拍：聚焦约 2s，失焦约 10s。悬停动画时间为 0。基准在后台线程跑，界面显示「正在跑」，跑完一次更新数字。
+- 重绘与采集同拍：聚焦约 2s，失焦约 10s。悬停动画时间为 0，形状羽化和像素抖动关掉。指针移动最多约 5 次/秒触发重绘（拖拽约 20 次/秒）；点击、滚轮、按键不封顶。egui 在移动后再要的那一帧也等 200ms，避免事件变密后空转。提示不在鼠标移动时每帧请求重绘。`third_party/egui` 和 `third_party/egui-winit` 是这两处的同版本补丁。基准在后台线程跑，界面显示「正在跑」，跑完一次更新数字。
 - 历史：默认记录。启动只读 JSONL 尾部最多 1800 条并裁掉更旧的磁盘内容；录满后每隔 256 条再裁回 cap。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
 - 告警：对照 `*_max` / `*_crit` / `*_min`，状态变化写入 `$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`。
-- 中文：有 Noto / 文泉驿等 CJK 字体就加载，否则界面标签回退英文。
+- 中文：有 Noto / 文泉驿等 CJK 字体就作为回退。拉丁字母仍用内置字体。不要把 CJK 插到字体列表最前，否则每个英文标签都走那份大字体，鼠标移动时会占满一核。
 
 ## 报告导出
 

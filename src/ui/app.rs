@@ -87,6 +87,8 @@ pub fn run() -> Result<(), String> {
             .with_resizable(true)
             .with_min_inner_size([800.0, 560.0])
             .with_inner_size([1100.0, 720.0]),
+        // 软件渲染下抖动是逐像素噪声，llvmpipe 会按整窗再算一遍。
+        dithering: false,
         ..Default::default()
     };
     eframe::run_native(
@@ -138,8 +140,15 @@ impl AidaApp {
         let visuals = egui::Visuals::dark();
         cc.egui_ctx.set_visuals(visuals);
         // 悬停动画会不停 request_repaint，软件渲染（llvmpipe）上等于占满一核。
+        // 羽化给每个圆角多一圈三角形，文字不受影响，但 llvmpipe 填这些三角形很贵。
         cc.egui_ctx.style_mut(|style| {
             style.animation_time = 0.0;
+            // 默认「等鼠标停下再显示提示」会在移动期间每帧 request_repaint，
+            // 软件渲染就空转。提示改为到点再显示，不追着指针重绘。
+            style.interaction.show_tooltips_only_when_still = false;
+        });
+        cc.egui_ctx.tessellation_options_mut(|tess| {
+            tess.feathering = false;
         });
         let ctx = ProbeCtx::live();
         // GUI 不在启动时 sleep 测利用率，改为后续帧差分。
@@ -5747,10 +5756,28 @@ fn dimm_line(m: &crate::probes::dmi::MemoryDevice) -> String {
 }
 
 fn kv(ui: &mut egui::Ui, k: &str, v: &str) {
-    ui.horizontal_wrapped(|ui| {
-        ui.strong(format!("{k}:"));
-        ui.label(v);
-    });
+    // 一行一个文本块。horizontal_wrapped 每次指针移动都要再排两套控件。
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        k,
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: ui.visuals().strong_text_color(),
+            ..Default::default()
+        },
+    );
+    job.append(
+        &format!(": {v}"),
+        0.0,
+        egui::TextFormat {
+            font_id: font,
+            color: ui.visuals().text_color(),
+            ..Default::default()
+        },
+    );
+    ui.label(job);
 }
 
 fn alert_color(level: AlertLevel) -> Color32 {
@@ -5831,8 +5858,10 @@ fn install_fonts(ctx: &egui::Context) -> bool {
             fonts
                 .font_data
                 .insert("cjk".into(), FontData::from_owned(bytes));
+            // CJK 放在内置字体后面。文泉驿/Noto 自己带拉丁字母，插到最前会让
+            // 每个英文标签都走几兆的 CJK 字体，鼠标一动就把一核占满。
             if let Some(fam) = fonts.families.get_mut(&FontFamily::Proportional) {
-                fam.insert(0, "cjk".into());
+                fam.push("cjk".into());
             }
             if let Some(fam) = fonts.families.get_mut(&FontFamily::Monospace) {
                 fam.push("cjk".into());

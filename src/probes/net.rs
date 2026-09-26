@@ -1,6 +1,8 @@
 //! 网络接口：`/sys/class/net` + `/proc/net/dev` 计数，地址用 `getifaddrs`（不是 `ip`/`ifconfig`）。
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::ffi::CStr;
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -511,6 +513,7 @@ pub fn collect(ctx: &ProbeCtx) -> NetReport {
 }
 
 pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) -> NetReport {
+    clear_conf_cache();
     let mut notes = Vec::new();
     let addrs = interface_addresses();
     let snmp = parse_snmp(&access::read_trimmed(ctx.proc_path("net/snmp")));
@@ -2166,21 +2169,67 @@ pub fn parse_rt6_stats(sample: &Sample<String>) -> Sample<u64> {
     }
 }
 
+/// 一次 collect 里同一目录会被问几十次。缓存名字，并且最多看 48 个接口。
+const CONF_SCAN_CAP: usize = 48;
+
+thread_local! {
+    static CONF_NAMES: RefCell<HashMap<PathBuf, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+fn clear_conf_cache() {
+    CONF_NAMES.with(|c| c.borrow_mut().clear());
+}
+
+fn conf_scan_rank(name: &str) -> u8 {
+    // 容器网卡经常上百个，而且名字排在 eth/en 前面。先比物理口。
+    const LATE: &[&str] = &[
+        "veth", "docker", "br-", "cni", "flannel", "cali", "lxc", "virbr", "tap", "tun", "ifb",
+        "dummy", "vxlan", "geneve", "podman",
+    ];
+    if LATE.iter().any(|p| name.starts_with(p)) {
+        1
+    } else {
+        0
+    }
+}
+
+fn cached_conf_names(root: &std::path::Path) -> Vec<String> {
+    CONF_NAMES.with(|c| {
+        let mut map = c.borrow_mut();
+        if let Some(v) = map.get(root) {
+            return v.clone();
+        }
+        let mut names = match access::list_dir_names(root) {
+            Sample {
+                access: AccessKind::Ok,
+                value: Some(n),
+                ..
+            } => n,
+            _ => Vec::new(),
+        };
+        names.sort_by(|a, b| {
+            conf_scan_rank(a)
+                .cmp(&conf_scan_rank(b))
+                .then_with(|| a.cmp(b))
+        });
+        map.insert(root.to_path_buf(), names.clone());
+        names
+    })
+}
+
 fn conf_dev_diffs(ctx: &ProbeCtx, family: &str, attr: &str, all: Option<&str>) -> Vec<String> {
     let root = ctx.proc_path(format!("sys/net/{family}/conf"));
-    let names = match access::list_dir_names(&root) {
-        Sample {
-            access: AccessKind::Ok,
-            value: Some(n),
-            ..
-        } => n,
-        _ => return Vec::new(),
-    };
+    let names = cached_conf_names(&root);
     let mut out = Vec::new();
+    let mut seen = 0usize;
     for name in names {
         if name == "all" || name == "default" {
             continue;
         }
+        if seen >= CONF_SCAN_CAP {
+            break;
+        }
+        seen += 1;
         let s = access::read_trimmed(root.join(&name).join(attr));
         if let Some(v) = s.value.as_deref() {
             if all != Some(v) {
@@ -4016,5 +4065,32 @@ mod tests {
         assert_eq!(ipv6_accept_source_route_display(&pos), "2 RH2");
         let neg = Sample::ok("-1".into(), "accept_source_route");
         assert_eq!(ipv6_accept_source_route_display(&neg), "-1 拒RH");
+    }
+
+    #[test]
+    fn conf_scan_keeps_physical_iface_ahead_of_veth_crowd() {
+        let root = std::env::temp_dir().join(format!("aida-conf-cap-{}", std::process::id()));
+        let conf = root.join("proc/sys/net/ipv4/conf");
+        fs::create_dir_all(conf.join("all")).unwrap();
+        fs::write(conf.join("all/rp_filter"), "0\n").unwrap();
+        fs::create_dir_all(conf.join("eth0")).unwrap();
+        fs::write(conf.join("eth0/rp_filter"), "2\n").unwrap();
+        for i in 0..60 {
+            let name = format!("veth{i}");
+            fs::create_dir_all(conf.join(&name)).unwrap();
+            fs::write(conf.join(&name).join("rp_filter"), "1\n").unwrap();
+        }
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        clear_conf_cache();
+        let diffs = conf_dev_diffs(&ctx, "ipv4", "rp_filter", Some("0"));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(diffs.len(), 8, "{diffs:?}");
+        assert_eq!(diffs[0], "eth0:2", "physical iface must be compared first: {diffs:?}");
     }
 }
