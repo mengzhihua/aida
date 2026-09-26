@@ -15,7 +15,7 @@ use crate::export;
 use crate::probes::block::DiskSnap;
 use crate::probes::cpu::CpuStatSnap;
 use crate::probes::hwmon;
-use crate::probes::net::NetSnap;
+use crate::probes::net::{iface_counters_only, NetSnap};
 use crate::probes::rapl::RaplSnap;
 use crate::record::StatusMeters;
 use crate::snapshot::HardwareSnapshot;
@@ -267,7 +267,16 @@ impl AidaApp {
         for (key, value) in hwmon::temperature_series(&self.snap.sensors) {
             push_hist(self.temps.entry(key).or_default(), t, value);
         }
+        let mut virt_rx = 0.0;
+        let mut virt_tx = 0.0;
+        let mut saw_virtual = false;
         for i in &self.snap.net.interfaces {
+            if iface_counters_only(&i.name) {
+                saw_virtual = true;
+                virt_rx += i.rx_bps.unwrap_or(0.0);
+                virt_tx += i.tx_bps.unwrap_or(0.0);
+                continue;
+            }
             if let Some(bps) = i.rx_bps {
                 push_hist(
                     self.net_hist.entry(format!("{} RX", i.name)).or_default(),
@@ -282,6 +291,18 @@ impl AidaApp {
                     bps,
                 );
             }
+        }
+        if saw_virtual {
+            push_hist(
+                self.net_hist.entry("virtual RX".into()).or_default(),
+                t,
+                virt_rx,
+            );
+            push_hist(
+                self.net_hist.entry("virtual TX".into()).or_default(),
+                t,
+                virt_tx,
+            );
         }
         for d in &self.snap.block.devices {
             if let Some(bps) = d.rd_bps {
@@ -305,13 +326,24 @@ impl AidaApp {
                 push_hist(self.rapl_hist.entry(label).or_default(), t, w);
             }
         }
-        let net_keys: std::collections::HashSet<String> = self
+        let mut net_keys: std::collections::HashSet<String> = self
             .snap
             .net
             .interfaces
             .iter()
+            .filter(|i| !iface_counters_only(&i.name))
             .flat_map(|i| [format!("{} RX", i.name), format!("{} TX", i.name)])
             .collect();
+        if self
+            .snap
+            .net
+            .interfaces
+            .iter()
+            .any(|i| iface_counters_only(&i.name))
+        {
+            net_keys.insert("virtual RX".into());
+            net_keys.insert("virtual TX".into());
+        }
         self.net_hist.retain(|k, _| net_keys.contains(k));
         let disk_keys: std::collections::HashSet<String> = self
             .snap
@@ -1326,6 +1358,40 @@ impl AidaApp {
         }
         kv(ui, "nx_huge_pages", &self.snap.kvm.nx_huge_pages.display());
         ui.separator();
+        let mhz_of = |l: &crate::probes::cpu::LogicalCpu| {
+            l.scaling_cur_khz
+                .value
+                .map(|k| format!("{:.0}", k as f64 / 1000.0))
+                .or_else(|| l.mhz_from_cpuinfo.map(|m| format!("{m:.0}")))
+                .unwrap_or_else(|| l.scaling_cur_khz.access_label())
+        };
+        let pct_of = |l: &crate::probes::cpu::LogicalCpu| {
+            l.utilization_pct
+                .map(|u| format!("{u:.0}"))
+                .unwrap_or_else(|| "—".into())
+        };
+        if self.snap.cpu.logical.len() > 32 {
+            ui.weak(self.t(
+                "逻辑处理器超过 32 个，改成一行一个。",
+                "More than 32 logical CPUs; one line each.",
+            ));
+            for l in &self.snap.cpu.logical {
+                let core = l
+                    .core_id
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "-".into());
+                ui.label(format!(
+                    "#{}  {} {}  {} MHz  {}%  {}  {}",
+                    l.processor,
+                    self.t("核心", "core"),
+                    core,
+                    mhz_of(l),
+                    pct_of(l),
+                    l.governor.display(),
+                    l.thread_siblings.display(),
+                ));
+            }
+        } else {
             egui::Grid::new("cpu_grid").striped(true).show(ui, |ui| {
                 ui.strong("#");
                 ui.strong(self.t("核心", "core"));
@@ -1341,23 +1407,14 @@ impl AidaApp {
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| "-".into()),
                     );
-                    let mhz = l
-                        .scaling_cur_khz
-                        .value
-                        .map(|k| format!("{:.0}", k as f64 / 1000.0))
-                        .or_else(|| l.mhz_from_cpuinfo.map(|m| format!("{m:.0}")))
-                        .unwrap_or_else(|| l.scaling_cur_khz.access_label());
-                    ui.label(mhz);
-                    ui.label(
-                        l.utilization_pct
-                            .map(|u| format!("{u:.0}"))
-                            .unwrap_or_else(|| "—".into()),
-                    );
+                    ui.label(mhz_of(l));
+                    ui.label(pct_of(l));
                     ui.label(l.governor.display());
                     ui.label(l.thread_siblings.display());
                     ui.end_row();
                 }
             });
+        }
             ui.separator();
             ui.strong(self.t("缓存 (cpu0)", "Caches (cpu0)"));
             for c in &self.snap.cpu.caches {
@@ -2942,6 +2999,7 @@ impl AidaApp {
         for n in &self.snap.net.notes {
             ui.colored_label(Color32::from_rgb(255, 179, 71), n);
         }
+            let mut virtual_n = 0usize;
             egui::Grid::new("net").striped(true).show(ui, |ui| {
                 ui.strong(self.t("接口", "iface"));
                 ui.strong(self.t("状态", "state"));
@@ -2952,6 +3010,10 @@ impl AidaApp {
                 ui.strong(self.t("地址", "addr"));
                 ui.end_row();
                 for i in &self.snap.net.interfaces {
+                    if iface_counters_only(&i.name) {
+                        virtual_n += 1;
+                        continue;
+                    }
                     ui.label(&i.name);
                     ui.label(i.operstate.display());
                     ui.label(if i.wireless {
@@ -2965,25 +3027,16 @@ impl AidaApp {
                             .map(|v| format!("{v}"))
                             .unwrap_or_else(|| i.speed_mbps.display()),
                     );
-                    let rx = i.rx_bps.map(crate::export::format_bps).unwrap_or_else(|| {
-                        i.rx_bytes
-                            .value
-                            .map(crate::export::format_bytes)
-                            .unwrap_or_else(|| i.rx_bytes.access_label())
-                    });
-                    let tx = i.tx_bps.map(crate::export::format_bps).unwrap_or_else(|| {
-                        i.tx_bytes
-                            .value
-                            .map(crate::export::format_bytes)
-                            .unwrap_or_else(|| i.tx_bytes.access_label())
-                    });
-                    ui.label(rx);
-                    ui.label(tx);
+                    ui.label(traffic_text(i.rx_bps, &i.rx_bytes));
+                    ui.label(traffic_text(i.tx_bps, &i.tx_bytes));
                     ui.label(i.addresses.join(", "));
                     ui.end_row();
                 }
             });
             for i in &self.snap.net.interfaces {
+                if iface_counters_only(&i.name) {
+                    continue;
+                }
                 ui.collapsing(&i.name, |ui| {
                     kv(ui, "MAC", &i.mac.display());
                     kv(ui, "MTU", &i.mtu.display());
@@ -3022,6 +3075,31 @@ impl AidaApp {
                     );
                     kv(ui, "RX err", &i.rx_errors.display());
                     kv(ui, "TX err", &i.tx_errors.display());
+                });
+            }
+            if virtual_n > 0 {
+                let zh = format!("虚拟接口 ({virtual_n})");
+                let en = format!("Virtual interfaces ({virtual_n})");
+                ui.collapsing(self.t(&zh, &en), |ui| {
+                    ui.weak(self.t(
+                        "这些接口只记 /proc/net/dev 计数，展开后才画表。",
+                        "Counters only, from /proc/net/dev. The table is built when opened.",
+                    ));
+                    egui::Grid::new("net-virt").striped(true).show(ui, |ui| {
+                        ui.strong(self.t("接口", "iface"));
+                        ui.strong("RX");
+                        ui.strong("TX");
+                        ui.end_row();
+                        for i in &self.snap.net.interfaces {
+                            if !iface_counters_only(&i.name) {
+                                continue;
+                            }
+                            ui.label(&i.name);
+                            ui.label(traffic_text(i.rx_bps, &i.rx_bytes));
+                            ui.label(traffic_text(i.tx_bps, &i.tx_bytes));
+                            ui.end_row();
+                        }
+                    });
                 });
             }
                 let ss = &self.snap.net.sockstat;
@@ -5643,6 +5721,15 @@ fn push_hist(q: &mut VecDeque<[f64; 2]>, t: f64, v: f64) {
     while q.len() > HISTORY {
         q.pop_front();
     }
+}
+
+fn traffic_text(bps: Option<f64>, bytes: &crate::Sample<u64>) -> String {
+    bps.map(crate::export::format_bps).unwrap_or_else(|| {
+        bytes
+            .value
+            .map(crate::export::format_bytes)
+            .unwrap_or_else(|| bytes.access_label())
+    })
 }
 
 fn plot_lines(

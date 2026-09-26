@@ -596,10 +596,10 @@ impl State {
     }
 
     /// Software GL redraws the whole window per paint. Uncapped motion events
-    /// pin a core on llvmpipe. Hover still updates at this rate; clicks,
-    /// wheels, and keys are not capped. Drags repaint a bit faster.
+    /// pin a core on llvmpipe. Hover repaints about every 400ms; clicks,
+    /// wheels, and keys are not capped. Drags repaint about every 50ms.
     fn pointer_move_should_repaint(&mut self) -> bool {
-        let gap_ms = if self.any_pointer_button_down { 50 } else { 200 };
+        let gap_ms = if self.any_pointer_button_down { 50 } else { 400 };
         let now = web_time::Instant::now();
         if now.duration_since(self.last_pointer_repaint)
             >= web_time::Duration::from_millis(gap_ms)
