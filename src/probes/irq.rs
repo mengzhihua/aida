@@ -34,11 +34,25 @@ pub fn collect(ctx: &ProbeCtx) -> IrqReport {
         }
     };
     lines.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.irq.cmp(&b.irq)));
+    // 大型机器上 /proc/interrupts 有几百条。只读最忙的 48 个数字 IRQ 的亲和。
+    const AFFINITY_CAP: usize = 48;
+    let mut affinity_reads = 0usize;
+    let mut affinity_skipped = false;
     for line in &mut lines {
         if line.irq.chars().all(|c| c.is_ascii_digit()) {
+            if affinity_reads >= AFFINITY_CAP {
+                affinity_skipped = true;
+                continue;
+            }
+            affinity_reads += 1;
             line.affinity =
                 access::read_trimmed(ctx.proc_path(format!("irq/{}/smp_affinity_list", line.irq)));
         }
+    }
+    if affinity_skipped {
+        notes.push(
+            "IRQ 亲和只读计数最高的 48 条，避免在大型服务器上逐个打开 /proc/irq。".into(),
+        );
     }
     let soft_sample = access::read_trimmed(ctx.proc_path("softirqs"));
     let softirqs = match (soft_sample.access, soft_sample.value.as_deref()) {
@@ -232,6 +246,47 @@ ERR:          0
                 .iter()
                 .any(|n| n.contains("权限") || n.contains("失败")),
             "denied kernel/irq must not look like zero IRQs: {:?}",
+            r.notes
+        );
+    }
+
+    #[test]
+    fn affinity_reads_only_busiest_48() {
+        let root = std::env::temp_dir().join(format!("aida-irq-cap-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        let mut text = String::from("           CPU0\nNMI:          999999   Non-maskable interrupts\n");
+        for i in 0..60 {
+            text.push_str(&format!("{i}:          {}\n", i + 1));
+            let dir = root.join(format!("proc/irq/{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("smp_affinity_list"), format!("{i}\n")).unwrap();
+        }
+        std::fs::write(root.join("proc/interrupts"), text).unwrap();
+        std::fs::write(root.join("proc/softirqs"), "                    CPU0\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let _ = std::fs::remove_dir_all(&root);
+        let ok = r
+            .lines
+            .iter()
+            .filter(|l| l.affinity.access == AccessKind::Ok)
+            .count();
+        assert_eq!(ok, 48, "only the busiest numeric IRQs get affinity files");
+        let quiet = r.lines.iter().find(|l| l.irq == "0").unwrap();
+        assert_eq!(quiet.affinity.access, AccessKind::NotFound);
+        let busy = r.lines.iter().find(|l| l.irq == "59").unwrap();
+        assert_eq!(busy.affinity.value.as_deref(), Some("59"));
+        let nmi = r.lines.iter().find(|l| l.irq == "NMI").unwrap();
+        assert_eq!(nmi.affinity.access, AccessKind::NotFound);
+        assert!(
+            r.notes.iter().any(|n| n.contains("48")),
+            "cap must be visible: {:?}",
             r.notes
         );
     }
