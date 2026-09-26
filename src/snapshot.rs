@@ -195,7 +195,8 @@ impl HardwareSnapshot {
             *prev_disk = Some(block::counters(&self.block));
             self.memory = memory::collect(ctx);
             self.pm = pm::collect(ctx);
-            self.software = software::collect(ctx);
+            // 已装包和 config.gz 只在启动时读。周期刷新再扫 dpkg 会把空闲机器顶起来。
+            software::refresh_slow(&mut self.software, ctx);
             self.clock = clock::collect(ctx);
             self.edac = edac::collect(ctx);
             self.fs = fs::collect(ctx);

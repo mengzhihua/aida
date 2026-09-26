@@ -59,8 +59,14 @@ pub fn collect(ctx: &ProbeCtx) -> FsReport {
             Vec::new()
         }
     };
+    let mut skipped_remote = false;
     for m in &mut mounts {
         if m.kind == "virtual" {
+            continue;
+        }
+        // nfs/cifs/fuse 的 statvfs 在服务器无响应时会一直堵住调用线程。
+        if statvfs_may_block(&m.fstype) {
+            skipped_remote = true;
             continue;
         }
         if let Some((total, used, avail)) = usage_of(&m.target) {
@@ -68,6 +74,9 @@ pub fn collect(ctx: &ProbeCtx) -> FsReport {
             m.used_bytes = Some(used);
             m.avail_bytes = Some(avail);
         }
+    }
+    if skipped_remote {
+        notes.push("远程文件系统未调用 statvfs，避免挂载无响应时拖住采集。".into());
     }
     let swaps = parse_swaps(&access::read_trimmed(ctx.proc_path("swaps")));
     let ext4 = read_ext4(ctx);
@@ -142,6 +151,14 @@ pub fn parse_mountinfo_line(line: &str) -> Option<Mount> {
         used_bytes: None,
         avail_bytes: None,
     })
+}
+
+fn statvfs_may_block(fstype: &str) -> bool {
+    matches!(
+        fstype,
+        "nfs" | "nfs4" | "cifs" | "smb" | "smb3" | "ceph" | "glusterfs" | "afs" | "9p" | "fuse"
+            | "fuseblk"
+    ) || fstype.starts_with("fuse.")
 }
 
 fn classify(fstype: &str) -> &'static str {
@@ -289,6 +306,18 @@ mod tests {
             "volumes",
         ));
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn remote_mounts_skip_statvfs() {
+        assert!(statvfs_may_block("nfs"));
+        assert!(statvfs_may_block("nfs4"));
+        assert!(statvfs_may_block("fuse.sshfs"));
+        assert!(!statvfs_may_block("ext4"));
+        assert!(!statvfs_may_block("xfs"));
+        assert!(!statvfs_may_block("btrfs"));
+        assert!(!statvfs_may_block("overlay"));
+        assert!(!statvfs_may_block("tmpfs"));
     }
 
     #[test]

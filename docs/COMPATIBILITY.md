@@ -262,7 +262,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 238. **`tcp_ehash_entries` / `udp_hash_entries` 是只读哈希桶数。** `tcp_child_ehash_entries=0` 表示子命名空间沿用父表。`ip_autobind_reuse=0` 表示 bind 不复用 TIME_WAIT 端口。
 239. **`accept_ra_from_local` 只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 不接受来自本机的 RA。
 240. **`bootloader_type` / `bootloader_version` 来自 x86 启动协议。** `type=0` 表示未声明 bootloader；version 常为 `0`。
-241. **GUI 快路径不重读 TCP 连接表和 sysctl。** 前台约 1Hz 只更新传感器/利用率/网卡磁盘计数；`full` 每 8 拍才扫 `/proc/net/tcp*`、IRQ 亲和、挂载 `statvfs`、zoneinfo。窗口失焦时采集降到约 2.5s 且不做 full。不是采集失败。
+241. **GUI 快路径不重读 TCP 连接表和 sysctl。** 聚焦约每 2 秒更新传感器、利用率、网卡和磁盘计数；`full` 每 30 拍（约 60 秒）才扫 `/proc/net/tcp*`、IRQ 亲和、挂载 `statvfs`、zoneinfo。失焦约 10 秒一拍且不做 full。没有 cpufreq 时快路径不再逐核打开 `scaling_*`。网卡字节优先 `/proc/net/dev` 一次读完。已装包和 `config.gz` 不在周期刷新里重读。不是采集失败。
 242. **空的 wakeup / msr / dpll 表示没有对应硬件。** wakeup 只列 `class/wakeup` 名，不读 `event_count`。MSR 只列 `class/msr` 名，不 dump `/dev/cpu/N/msr`。`PermissionDenied` 仍写 note。
 243. **`accept_redirects`（IPv6）只列出与 `conf/all` 不同的接口。** 不要用 `default` 顶替已有 iface。`0` 忽略 ICMPv6 重定向。
 244. **`drop_unsolicited_na` 只列出与 `conf/all` 不同的接口。** `1` 丢掉未经请求的 Neighbor Advertisement。
@@ -296,7 +296,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 272. **空的 amba / fsi / ppdev 表示没有对应硬件。** AMBA 先看 `bus/amba/devices`，没有再看 `class/amba`。FSI 合并 `bus/fsi/devices` 与 `class/fsi-master`（连字符 ABI，不是 `class/fsi_master`）；bus 目录存在但为空仍回退 master class。`ppdev` 只看 `class/ppdev`。`PermissionDenied` 仍写 note。
 273. **`mc_forwarding` / `force_forwarding` 只列出与 `conf/all` 不同的接口。** 前者 `1` 启用 IPv6 组播转发（常由组播路由守护进程置位）；后者 `1` 即使 `forwarding=0` 也强制转发。不要用 `default` 顶替已有 iface。
 274. **GUI 置顶任务栏默认关闭。** 主窗口有边框、可缩放（最小约 800×560）。勾选「置顶任务栏」才弹出无装饰 Dock 窄条（贴顶、always-on-top）。后端不支持多窗口时退回主窗内嵌条，不是采集失败。
-275. **GUI 默认写 JSONL 历史。** 启动只读文件尾部最多 1800 条（约 30 分钟 @ 1Hz）；若磁盘比这段尾部更长则立刻裁掉。录满后每隔 256 条再裁回 cap。左侧「历史记录」画 CPU/MEM/NET/DISK/温度/load。暂停只停落盘，不清内存曲线。清空截断文件。缺文件当空历史，坏行跳过，不是失败。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
+275. **GUI 默认写 JSONL 历史。** 启动只读文件尾部最多 1800 条（聚焦约 2 秒一条时大约一小时）；若磁盘比这段尾部更长则立刻裁掉。录满后每隔 256 条再裁回 cap。左侧「历史记录」画 CPU/MEM/NET/DISK/温度/load。暂停只停落盘，不清内存曲线。清空截断文件。缺文件当空历史，坏行跳过，不是失败。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
 276. **SMBIOS Type 3/25/29/38 按 DSP0134 偏移解析。** Type 3 Type 字节 bit7 是 Lock、低 7 位是机箱类型（`0x17`=Rack Mount Chassis）；高度 `0x11` / 电源线 `0x12` 为 `0` 表示未指定；SKU 在 `0x15 + n*m`（不含 contained elements）。Type 25 下次开机是 BCD，月=`00` 表示未排程。Type 29 与 Type 26 同布局，单位毫安，WORD 仅 `0x8000` 未知。Type 38 接口 `0x01`=KCS / `0x02`=SMIC / `0x03`=BT / `0x04`=SSIF；规格 BYTE 高/低半字节为 major.minor；NV `0xFF` 表示无存储；基址 QWORD bit0=`1` 为 I/O。不调用 dmidecode。
 277. **空的 pcmcia / vmbus / bcma 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
 278. **`temp_valid_lft` / `temp_prefered_lft` 只列出与 `conf/all` 不同的接口。** 二者是 SLAAC 临时地址有效/首选寿命（秒）。内核拼写是 `prefered`，不要写成 `preferred`。不要用 `default` 顶替已有 iface。
@@ -319,6 +319,7 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 295. **已装软件来自 dpkg/apk 状态文件。** 读 `/var/lib/dpkg/status` 或 `/lib/apk/db/installed`，不调用 `dpkg -l`。列表最多 256 条。OS 页内核/cgroup 原始项不是软件清单。
 296. **无 DMI / 无 GPU / 无 hwmon 用折叠摘要。** HTML `<details>` 一句话说明本环境不可用，不要把同一段 DMI 提示复制到每个空字段。GUI 顶部有环境摘要条，TEMP — 可点进传感器页。普通用户点「提权后重新采集」（`pkexec` / `sudo -E`）。
 297. **网卡 `speed=-1` 或 `EINVAL`（os error 22）标 Unsupported。** 文案用「网卡未报告链路速率」，不要把 `/proc` 路径和 errno 原文刷到界面。
+298. **不要对 nfs/cifs/fuse 调用 `statvfs`。** 服务器上挂载无响应时这个系统调用会一直堵住采集线程。这些挂载仍列在表里，只是没有容量；note 里写明跳过了。ext4/xfs/btrfs/overlay/tmpfs 照常统计。
 
 ## 测试方案
 

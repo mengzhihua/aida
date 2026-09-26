@@ -19,7 +19,7 @@
 | `record` / `alerts` | 任务栏 JSONL、阈值告警 JSONL | 采集时改硬件状态 |
 | `elevate` | 用户点击或 `aida elevate` 时 `exec` 替换进程 | 采集路径里 spawn sudo |
 | `doctor` | 读 os-release、扫 glibc 与 GUI `.so`，给出 apt 或 dnf/yum | 调用 `lsb_release` / `ldd` |
-| `ui` | egui 布局与约 1Hz 刷新 | 直接 `fs::read_to_string` 读硬件 |
+| `ui` | egui 布局。聚焦约 2 秒一拍，失焦约 10 秒 | 直接 `fs::read_to_string` 读硬件；悬停动画（会把软件渲染打满） |
 
 ## 数据模型
 
@@ -86,9 +86,9 @@ sysfs 开关不要把内核原文直接给用户。`cpu::display_sysfs_token` �
    - 对每个属性调用 `read_trimmed` / `read_bytes`
    - 数值字段在 probe 内换算（温度 m°C → °C，块设备 `size` 扇区 → 字节）
 3. 失败不 panic：`Sample.value = None`，`hint` 写给人看的原因。
-4. GUI 轮询：窗口聚焦约 1s，失焦约 2.5s。每一拍都更新 hwmon 与告警、电源、RAPL 差分、PSI、`buses.devcoredump`。
-5. 快路径（`full=false`；失焦时永远走这里）：CPU 利用率、当前频率、governor、cpuidle 当前驱动；GPU 忙闲、显存、时钟和连接器状态（不重读 EDID，不扫 PCI 回退）；网卡计数、sockstat、snmp、conntrack（不读 TCP 表和调优项）；`/proc/diskstats` 吞吐（不重扫 queue / loop / mapper）；meminfo / vmstat；loadavg / uptime / entropy；已有 zram 的 `mm_stat`。
-6. 慢路径：聚焦且 `poll_tick % 8 == 0` 时 `full=true`，整份替换 CPU、GPU、网络、块设备、内存、软件、电源管理、时钟、EDAC、文件系统、IRQ、平台、zram、sysctl、cgroup、security。PCI / USB / DMI / virtio / KVM / IOMMU / MD / SCSI / iSCSI / 模块 / iomem / ATA / crypto 只在启动的 `collect` 里扫，不进 `refresh_live`。
+4. GUI 轮询：窗口聚焦约 2s，失焦约 10s。每一拍都更新 hwmon 与告警、电源、RAPL 差分、PSI、`buses.devcoredump`。界面关掉悬停动画，避免 llvmpipe 按显示器刷新率空转。
+5. 快路径（`full=false`；失焦时永远走这里）：CPU 利用率（`/proc/stat`）和 cpuidle 当前驱动。当前频率只对启动时已经读到 cpufreq 的核更新，虚拟机不再逐核打开 `scaling_*`。governor / online 不在这一拍读。GPU 忙闲、显存、时钟和连接器状态（不重读 EDID，不扫 PCI 回退）。网卡计数优先一次 `/proc/net/dev`，没有该文件才退回每块网卡的 `statistics/*_bytes`；同时读 sockstat、snmp、conntrack。不读 TCP 表、调优项、operstate。`/proc/diskstats` 吞吐（不重扫 queue / loop / mapper）。meminfo / vmstat。loadavg / uptime / entropy。已有 zram 的 `mm_stat`。
+6. 慢路径：聚焦且 `poll_tick % 30 == 0` 时 `full=true`（约 60 秒一次），整份替换 CPU、GPU、网络、块设备、内存、电源管理、时钟、EDAC、文件系统、IRQ、平台、zram、sysctl、cgroup、security。软件只更新 taint / oops / load，不重读已装包和 `config.gz`。PCI / USB / DMI / virtio / KVM / IOMMU / MD / SCSI / iSCSI / 模块 / iomem / ATA / crypto 只在启动的 `collect` 里扫，不进 `refresh_live`。nfs / cifs / fuse 不调用 `statvfs`。
 
 ## 夹具
 
@@ -138,7 +138,7 @@ sysfs 开关不要把内核原文直接给用户。`cpu::display_sysfs_token` �
 | Security | lockdown / yama / kptr / dmesg / FIPS / bpf / perf / fs.protected_* | bpf_jit_enable/harden；binfmt_misc status（不写 register）；seccomp `actions_avail`（不 dump `actions_logged`）；不调用 sysctl/aa-status |
 | Crypto | `/proc/crypto` | 非 internal 截断 32 条 |
 | Ns | `/proc/self/ns` | `max_*_namespaces` |
-| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling`；`ostype`；os-release 缺键为 `Absent`；已装包来自 dpkg status 或 apk db，列表最多 256 |
+| Software | `/etc/os-release`，`/proc/meminfo` | loadavg / tainted / LSM / entropy / machine-id；`/proc/config.gz` 读字节长度；`/proc/locks`；oops/kexec；`/proc/filesystems`；`cpu_byteorder`/`address_bits`/`profiling`；`ostype`；os-release 缺键为 `Absent`；已装包来自 dpkg status 或 apk db，列表最多 256。GUI 周期刷新不重读已装包和 config.gz |
 
 ## 界面
 
@@ -158,7 +158,7 @@ sysfs 开关不要把内核原文直接给用户。`cpu::display_sysfs_token` �
 其它：
 
 - 曲线：温度、CPU 利用率、网卡/磁盘吞吐、RAPL 各保留约 120 个点。历史页横轴是采样的 unix 秒，刻度格式化成本地 `HH:MM:SS`。记录文件路径放在折叠里。
-- 重绘与采集同拍：前台约 1s，失焦约 2.5s。基准在后台线程跑，界面显示「正在跑」，跑完一次更新数字。
+- 重绘与采集同拍：聚焦约 2s，失焦约 10s。悬停动画时间为 0。基准在后台线程跑，界面显示「正在跑」，跑完一次更新数字。
 - 历史：默认记录。启动只读 JSONL 尾部最多 1800 条并裁掉更旧的磁盘内容；录满后每隔 256 条再裁回 cap。路径 `$AIDA_RECORD_LOG` 或 `$XDG_STATE_HOME/aida/history.jsonl`。
 - 告警：对照 `*_max` / `*_crit` / `*_min`，状态变化写入 `$AIDA_ALERT_LOG` 或 `$XDG_STATE_HOME/aida/alerts.jsonl`。
 - 中文：有 Noto / 文泉驿等 CJK 字体就加载，否则界面标签回退英文。

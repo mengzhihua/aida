@@ -21,9 +21,12 @@ use crate::record::StatusMeters;
 use crate::snapshot::HardwareSnapshot;
 
 const HISTORY: usize = 120;
-const FAST_POLL_MS: u64 = 1000;
-const BACKGROUND_POLL_MS: u64 = 2500;
-const SLOW_EVERY: u32 = 8;
+/// 聚焦时刷新利用率、温度和速率。再快的话，软件渲染每帧都在占 CPU。
+const FAST_POLL_MS: u64 = 2000;
+/// 失焦后拉长。GUI 留在服务器后台时不要继续按前台节奏打 sysfs。
+const BACKGROUND_POLL_MS: u64 = 10_000;
+/// 聚焦时每这么多次快刷新才重扫 TCP / sysctl / 挂载。30 × 2s = 60s。
+const SLOW_EVERY: u32 = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Nav {
@@ -134,6 +137,10 @@ impl AidaApp {
         let cjk = install_fonts(&cc.egui_ctx);
         let visuals = egui::Visuals::dark();
         cc.egui_ctx.set_visuals(visuals);
+        // 悬停动画会不停 request_repaint，软件渲染（llvmpipe）上等于占满一核。
+        cc.egui_ctx.style_mut(|style| {
+            style.animation_time = 0.0;
+        });
         let ctx = ProbeCtx::live();
         // GUI 不在启动时 sleep 测利用率，改为后续帧差分。
         let snap = HardwareSnapshot::collect_cpu_sample(&ctx, false);

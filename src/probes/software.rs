@@ -161,6 +161,19 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
     }
 }
 
+/// 慢路径：更新会变的内核计数。不重读已装包和 `config.gz`（这两项在启动时读一次）。
+pub fn refresh_slow(info: &mut SoftwareInfo, ctx: &ProbeCtx) {
+    refresh_runtime(info, ctx);
+    let (tainted, taint_flags) =
+        parse_taint(&access::read_trimmed(ctx.proc_path("sys/kernel/tainted")));
+    info.tainted = tainted;
+    info.taint_flags = taint_flags;
+    info.oops_count = access::read_u64(ctx.sys_path("kernel/oops_count"));
+    info.warn_count = access::read_u64(ctx.sys_path("kernel/warn_count"));
+    info.kexec_loaded = access::read_trimmed(ctx.sys_path("kernel/kexec_loaded"));
+    info.uevent_seqnum = access::read_u64(ctx.sys_path("kernel/uevent_seqnum"));
+}
+
 /// GUI 快路径：只更新 loadavg / uptime / entropy，不读 os-release、config.gz、locks。
 pub fn refresh_runtime(info: &mut SoftwareInfo, ctx: &ProbeCtx) {
     let uptime = match access::read_trimmed(ctx.proc_path("uptime")) {
@@ -705,6 +718,49 @@ mod tests {
         let (s, flags) = parse_taint(&Sample::ok("4096".into(), "tainted"));
         assert_eq!(s.value, Some(4096));
         assert_eq!(flags, f);
+    }
+
+    #[test]
+    fn refresh_slow_keeps_packages_and_config_gz() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("aida-pkg-slow-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc/sys/kernel")).unwrap();
+        fs::create_dir_all(root.join("sys/kernel")).unwrap();
+        fs::create_dir_all(root.join("var/lib/dpkg")).unwrap();
+        fs::create_dir_all(root.join("etc")).unwrap();
+        fs::write(root.join("proc/loadavg"), "0.10 0.20 0.30 1/2 3\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/tainted"), "0\n").unwrap();
+        fs::write(root.join("proc/config.gz"), [1, 2, 3, 4]).unwrap();
+        fs::write(
+            root.join("var/lib/dpkg/status"),
+            "Package: bash\nStatus: install ok installed\nVersion: 1\n\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut info = collect(&ctx);
+        assert_eq!(info.package_count, 1);
+        assert_eq!(info.config_gz.value.as_deref(), Some("4 bytes"));
+        fs::write(
+            root.join("var/lib/dpkg/status"),
+            "Package: bash\nStatus: install ok installed\nVersion: 1\n\nPackage: coreutils\nStatus: install ok installed\nVersion: 2\n\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/config.gz"), [1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        fs::write(root.join("proc/loadavg"), "1.50 1.00 0.50 2/9 8\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/tainted"), "1\n").unwrap();
+        refresh_slow(&mut info, &ctx);
+        assert_eq!(info.package_count, 1, "periodic refresh must not re-read dpkg");
+        assert_eq!(info.packages.len(), 1);
+        assert_eq!(info.config_gz.value.as_deref(), Some("4 bytes"));
+        assert_eq!(info.load_1.value, Some(1.50));
+        assert_eq!(info.tainted.value, Some(1));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
