@@ -173,27 +173,29 @@ impl HardwareSnapshot {
         dt_sec: f64,
         full: bool,
     ) {
-        self.sensors = hwmon::collect(ctx);
-        self.alerts = alerts::evaluate(&self.sensors);
-        self.power = power::collect(ctx);
-        self.rapl = rapl::collect_with_prev(ctx, prev_rapl.as_deref(), dt_sec);
+        // 快路径只更新会变的读数。整份重扫（新传感器、新电池、新 RAPL 区）留在慢路径。
+        if full {
+            self.sensors = hwmon::collect(ctx);
+            self.power = power::collect(ctx);
+            self.rapl = rapl::collect_with_prev(ctx, prev_rapl.as_deref(), dt_sec);
+        } else {
+            hwmon::refresh_runtime(&mut self.sensors, ctx);
+            power::refresh_runtime(&mut self.power, ctx);
+            rapl::refresh_runtime(&mut self.rapl, ctx, prev_rapl.as_deref(), dt_sec);
+        }
         *prev_rapl = Some(rapl::counters(&self.rapl));
+        self.alerts = alerts::evaluate(&self.sensors);
         self.psi = psi::collect(ctx);
         // devcoredump 是崩溃后才出现、读完/超时即消失的瞬时 class，不能停在启动清单。
         buses::refresh_devcoredump(&mut self.buses, ctx);
         if full {
-            let now = cpu::read_proc_stat(ctx);
-            let mut cpu = cpu::collect_with_util(ctx, None);
-            cpu.utilization_pct = cpu::utilization(prev_stat, &now);
-            cpu::apply_per_cpu(&mut cpu.logical, prev_stat, &now);
-            self.cpu = cpu;
-            *prev_stat = now;
-            self.gpu = gpu::collect(ctx);
-            self.net = net::collect_with_prev(ctx, prev_net.as_deref(), dt_sec);
+            cpu::refresh_slow(&mut self.cpu, ctx, prev_stat);
+            gpu::refresh_runtime(&mut self.gpu, ctx);
+            net::refresh_slow(&mut self.net, ctx, prev_net.as_deref(), dt_sec);
             *prev_net = Some(net::counters(&self.net));
             self.block = block::collect_with_prev(ctx, prev_disk.as_deref(), dt_sec);
             *prev_disk = Some(block::counters(&self.block));
-            self.memory = memory::collect(ctx);
+            memory::refresh_slow(&mut self.memory, ctx);
             self.pm = pm::collect(ctx);
             // 已装包和 config.gz 只在启动时读。周期刷新再扫 dpkg 会把空闲机器顶起来。
             software::refresh_slow(&mut self.software, ctx);

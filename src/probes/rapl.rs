@@ -97,6 +97,33 @@ fn energy_delta(now: u64, old: u64, max_range: Option<u64>) -> Option<f64> {
     }
 }
 
+/// GUI 快路径：只重读 `energy_uj` 并重算功率。名字、量程、功率上限留在启动采集。
+/// 没有 RAPL 区时不再打开 powercap。
+pub fn refresh_runtime(
+    report: &mut RaplReport,
+    ctx: &ProbeCtx,
+    prev: Option<&[RaplSnap]>,
+    dt_sec: f64,
+) {
+    if report.zones.is_empty() {
+        return;
+    }
+    let root = ctx.sys_path("class/powercap");
+    for z in &mut report.zones {
+        let energy = access::read_u64(root.join(&z.name).join("energy_uj"));
+        let power_w = match (prev, energy.value) {
+            (Some(p), Some(now)) if dt_sec > 0.0 => p
+                .iter()
+                .find(|x| x.name == z.name)
+                .and_then(|old| energy_delta(now, old.energy_uj, z.max_energy_range_uj.value))
+                .map(|duj| duj / dt_sec / 1_000_000.0),
+            _ => None,
+        };
+        z.energy_uj = energy;
+        z.power_w = power_w;
+    }
+}
+
 pub fn counters(report: &RaplReport) -> Vec<RaplSnap> {
     report
         .zones
@@ -147,6 +174,17 @@ mod tests {
         }];
         let wrap = collect_with_prev(&ctx, Some(&wrap_prev), 1.0);
         assert_eq!(wrap.zones[0].power_w, Some(1.0));
+        fs::write(z.join("name"), "renamed\n").unwrap();
+        fs::write(z.join("energy_uj"), "4000000\n").unwrap();
+        let mut live = collect_with_prev(&ctx, None, 0.0);
+        assert_eq!(live.zones[0].label.value.as_deref(), Some("renamed"));
+        fs::write(z.join("name"), "ignored\n").unwrap();
+        fs::write(z.join("energy_uj"), "5000000\n").unwrap();
+        let prev = counters(&live);
+        refresh_runtime(&mut live, &ctx, Some(&prev), 1.0);
+        assert_eq!(live.zones[0].energy_uj.value, Some(5_000_000));
+        assert_eq!(live.zones[0].label.value.as_deref(), Some("renamed"));
+        assert_eq!(live.zones[0].power_w, Some(1.0));
         let _ = fs::remove_dir_all(&root);
     }
 }
