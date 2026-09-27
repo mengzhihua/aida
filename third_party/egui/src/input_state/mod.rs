@@ -503,7 +503,7 @@ impl InputState {
             return Some(Duration::ZERO);
         }
         if self.pointer.wants_repaint() || !self.events.is_empty() {
-            return Some(Duration::from_millis(200));
+            return Some(Duration::from_millis(400));
         }
 
         if self.any_touches() && !self.pointer.is_decidedly_dragging() {

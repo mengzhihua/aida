@@ -1,6 +1,6 @@
 //! `egui`:  an easy-to-use GUI in pure Rust!
 //!
-//! Local patch (aida): `InputState::wants_repaint_after` waits 200ms after
+//! Local patch (aida): `InputState::wants_repaint_after` waits 400ms after
 //! pointer motion instead of requesting another frame immediately.
 //!
 //! Try the live web demo: <https://www.egui.rs/#demo>. Read more about egui at <https://github.com/emilk/egui>.

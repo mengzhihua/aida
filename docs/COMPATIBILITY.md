@@ -320,7 +320,8 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 296. **无 DMI / 无 GPU / 无 hwmon 用折叠摘要。** HTML `<details>` 一句话说明本环境不可用，不要把同一段 DMI 提示复制到每个空字段。GUI 顶部有环境摘要条，TEMP — 可点进传感器页。普通用户点「提权后重新采集」（`pkexec` / `sudo -E`）。
 297. **网卡 `speed=-1` 或 `EINVAL`（os error 22）标 Unsupported。** 文案用「网卡未报告链路速率」，不要把 `/proc` 路径和 errno 原文刷到界面。
 298. **不要对 nfs/cifs/fuse 调用 `statvfs`。** 服务器上挂载无响应时这个系统调用会一直堵住采集线程。这些挂载仍列在表里，只是没有容量；note 里写明跳过了。ext4/xfs/btrfs/overlay/tmpfs 照常统计。
-299. **鼠标移动不要按事件速率整窗重绘。** 软件 OpenGL（没有 `/dev/dri` 时的 llvmpipe）每帧都要铺满窗口。指针移动大约 200ms 才重绘一次，按住拖拽大约 50ms；点击、滚轮、键盘仍立即重绘。egui 默认还会在指针移动后立刻再要一帧，这里改成同样等 200ms，避免事件一密就空转。CJK 只作拉丁字体的回退。IRQ 亲和最多打开计数最高的 48 条，多出来的写在 note 里。`conf/all` 的 per-iface 差异先比物理网卡，veth/docker/br-/cni 等靠后，最多看 48 个接口、列出 8 处不同。形状羽化和像素抖动关掉。
+299. **鼠标移动不要按事件速率整窗重绘。** 软件 OpenGL（没有 `/dev/dri` 时的 llvmpipe）每帧都要铺满窗口。指针移动大约 400ms 才重绘一次，按住拖拽大约 50ms；点击、滚轮、键盘仍立即重绘。egui 默认还会在指针移动后立刻再要一帧，这里改成同样等 400ms，避免事件一密就空转。CJK 只作拉丁字体的回退。IRQ 亲和最多打开计数最高的 48 条，多出来的写在 note 里。`conf/all` 的 per-iface 差异先比物理网卡，veth/docker/br-/cni 等靠后，最多看 48 个接口、列出 8 处不同。形状羽化和像素抖动关掉。
+300. **veth 等高基数网卡不逐个打开 sysfs。** 计数来自 `/proc/net/dev`，文件里没有这一行也仍列出名字。note 写明跳过了多少个。docker0、`br-*`、virbr 仍读 `bridge/`，type=1 的 docker0 仍是网桥。`br0` 不以 `br-` 开头，走完整 sysfs。界面把只记计数的接口收进一个折叠，曲线合成一条 virtual RX/TX。逻辑 CPU 超过 32 个时一行一个。
 
 ## 测试方案
 

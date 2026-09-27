@@ -88,7 +88,7 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 - **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc`、PTP、PPS、TPM、`firmware_attributes`、`pci_epf`、Slimbus、Memory Stick、SIOX、HSI、AMBA、FSI、`ppdev` 等 leftover class（空 = 无硬件，不是失败）
 - **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
 - **软件**：OS 页先给发行版和已装包（读 dpkg/apk 状态文件，不调用 `dpkg -l`，列表最多 256 条）。内核 / 安全 / cgroup 原始项收在折叠里，默认不铺开
-- **占用**：GUI 聚焦约每 2 秒刷新利用率、温度和速率（没有 cpufreq 的虚拟机不再逐核打开 `scaling_*`；网卡计数读一次 `/proc/net/dev`）。TCP 表 / sysctl / 挂载用量约每 60 秒才扫。失焦降到约 10 秒，并且不做这次慢扫描。已装包和 `config.gz` 只在启动时读。悬停动画关掉。指针移动大约每 200ms 才重绘一次，避免软件 OpenGL 按鼠标事件铺满窗口。CJK 字体只做中文回退。形状羽化和像素抖动关掉。IRQ 亲和最多 48 条；per-iface sysctl 差异先看物理网卡，最多 48 个接口。nfs/cifs/fuse 不调用 `statvfs`
+- **占用**：GUI 聚焦约每 2 秒刷新利用率、温度和速率（没有 cpufreq 的虚拟机不再逐核打开 `scaling_*`；网卡计数读一次 `/proc/net/dev`）。TCP 表 / sysctl / 挂载用量约每 60 秒才扫。失焦降到约 10 秒，并且不做这次慢扫描。已装包和 `config.gz` 只在启动时读。veth/cni 等高基数接口不逐个打开 sysfs，界面收进一个折叠；docker0 / `br-*` / virbr 仍读网桥。逻辑 CPU 超过 32 个时一行一个。悬停动画关掉。指针移动大约每 400ms 才重绘一次（拖拽约 50ms），避免软件 OpenGL 按鼠标事件铺满窗口。CJK 字体只做中文回退。形状羽化和像素抖动关掉。IRQ 亲和最多 48 条；per-iface sysctl 差异先看物理网卡，最多 48 个接口。nfs/cifs/fuse 不调用 `statvfs`
 - **导出**：JSON（每个字段带 `access` / `source` / `hint`）、单文件 HTML、可读文本、CSV、Markdown。GUI 默认写到 `~/Documents`（`$AIDA_EXPORT_DIR` 或 XDG 文档目录优先），目录没有会创建，并显示完整路径；无 DMI 时文本/HTML 只留一句「本环境无 DMI」，不逐项打横线。CLI `--format` 打印到 stdout，FILE=`-` 也是 stdout
 - **提权**：顶栏一行身份（普通用户 uid）和「提权后重新采集」；旁边一行「本环境：虚拟机 · 无 DMI · 无 GPU · 无温度传感器」。长说明在「权限与环境说明」里。CLI：`aida elevate gui`
 - **基准**：CPU / 内存 / 磁盘相对分（`--quick` 约 200ms）；GUI 在后台线程跑，有「正在跑」提示
