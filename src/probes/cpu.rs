@@ -418,7 +418,7 @@ pub fn utilization(a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) -> Option<f
 
 /// GUI 快路径：利用率来自 `/proc/stat`。只有启动时已经读到 cpufreq 的核才更新当前频率。
 /// 云主机通常没有 cpufreq，不能每拍对每个核打开 `scaling_*`（ENOENT 也会占 CPU）。
-/// governor / online 留给慢路径整份替换。
+/// governor / online 留给 `refresh_slow`，并且只打开启动时已经读到的节点。
 pub fn refresh_runtime(
     info: &mut CpuInfo,
     ctx: &ProbeCtx,
@@ -439,12 +439,54 @@ pub fn refresh_runtime(
         access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_driver"));
     info.cpuidle_governor =
         access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_governor"));
+    refresh_cpufreq_cur(info, ctx);
+}
+
+fn refresh_cpufreq_cur(info: &mut CpuInfo, ctx: &ProbeCtx) {
     let root = ctx.sys_path("devices/system/cpu/cpufreq");
     for p in &mut info.freq_policies {
         if p.scaling_cur_khz.access != AccessKind::Ok {
             continue;
         }
         p.scaling_cur_khz = access::read_u64(root.join(&p.name).join("scaling_cur_freq"));
+    }
+}
+
+/// 慢路径：补 governor / online / 频率上下限。不重读 cpuinfo、拓扑、cache、漏洞。
+/// 启动时没有 cpufreq 或 online 的核，这里也不打开。
+pub fn refresh_slow(
+    info: &mut CpuInfo,
+    ctx: &ProbeCtx,
+    prev_stat: &mut Option<CpuStatSnap>,
+) {
+    refresh_runtime(info, ctx, prev_stat);
+    for l in &mut info.logical {
+        let cpu_dir = ctx.sys_path(format!("devices/system/cpu/cpu{}", l.processor));
+        if l.governor.access == AccessKind::Ok {
+            l.governor = access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor"));
+        }
+        if l.scaling_min_khz.access == AccessKind::Ok {
+            l.scaling_min_khz = read_u64(cpu_dir.join("cpufreq/scaling_min_freq"));
+        }
+        if l.online.access == AccessKind::Ok {
+            l.online = access::read_trimmed(cpu_dir.join("online"));
+        }
+    }
+    let root = ctx.sys_path("devices/system/cpu/cpufreq");
+    for p in &mut info.freq_policies {
+        let dir = root.join(&p.name);
+        if p.governor.access == AccessKind::Ok {
+            p.governor = access::read_trimmed(dir.join("scaling_governor"));
+        }
+        if p.scaling_min_khz.access == AccessKind::Ok {
+            p.scaling_min_khz = access::read_u64(dir.join("scaling_min_freq"));
+        }
+        if p.scaling_max_khz.access == AccessKind::Ok {
+            p.scaling_max_khz = access::read_u64(dir.join("scaling_max_freq"));
+        }
+        if p.epp.access == AccessKind::Ok {
+            p.epp = access::read_trimmed(dir.join("energy_performance_preference"));
+        }
     }
 }
 
@@ -778,6 +820,62 @@ flags\t\t: fpu hypervisor sse
             info.logical[0].scaling_cur_khz.access,
             AccessKind::NotFound,
             "fast path must not reopen cpufreq that was missing at startup"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_slow_updates_governor_not_topology() {
+        let root = std::env::temp_dir().join(format!("aida-cpu-slow-{}", std::process::id()));
+        let cpu = root.join("sys/devices/system/cpu/cpu0");
+        std::fs::create_dir_all(cpu.join("cpufreq")).unwrap();
+        std::fs::create_dir_all(cpu.join("topology")).unwrap();
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::write(
+            root.join("proc/cpuinfo"),
+            "processor\t: 0\nmodel name\t: Test\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/stat"),
+            "cpu  10 0 0 90 0 0 0 0 0 0\ncpu0 10 0 0 90 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        std::fs::write(cpu.join("cpufreq/scaling_governor"), "performance\n").unwrap();
+        std::fs::write(cpu.join("cpufreq/scaling_cur_freq"), "2000000\n").unwrap();
+        std::fs::write(cpu.join("cpufreq/scaling_min_freq"), "800000\n").unwrap();
+        std::fs::write(cpu.join("topology/thread_siblings_list"), "0\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut info = collect_with_util(&ctx, None);
+        assert_eq!(info.logical[0].governor.value.as_deref(), Some("performance"));
+        assert_eq!(
+            info.logical[0].thread_siblings.value.as_deref(),
+            Some("0")
+        );
+        assert_eq!(info.logical[0].online.access, AccessKind::NotFound);
+        std::fs::write(cpu.join("cpufreq/scaling_governor"), "powersave\n").unwrap();
+        std::fs::write(cpu.join("cpufreq/scaling_min_freq"), "400000\n").unwrap();
+        std::fs::write(cpu.join("topology/thread_siblings_list"), "0-1\n").unwrap();
+        std::fs::write(cpu.join("online"), "0\n").unwrap();
+        let mut prev = None;
+        refresh_slow(&mut info, &ctx, &mut prev);
+        assert_eq!(info.logical[0].governor.value.as_deref(), Some("powersave"));
+        assert_eq!(info.logical[0].scaling_min_khz.value, Some(400000));
+        assert_eq!(
+            info.logical[0].thread_siblings.value.as_deref(),
+            Some("0"),
+            "slow path must not re-read topology"
+        );
+        assert_eq!(
+            info.logical[0].online.access,
+            AccessKind::NotFound,
+            "slow path must not open online that was missing at startup"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -1,7 +1,7 @@
 //! 网络接口：`/sys/class/net` + `/proc/net/dev` 计数，地址用 `getifaddrs`（不是 `ip`/`ifconfig`）。
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::ffi::CStr;
 use std::fs;
@@ -1354,118 +1354,17 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             ));
             continue;
         }
+        let addresses = addrs.get(&name).cloned().unwrap_or_default();
         let dir = root.join(&name);
-        let kind_code = access::read_trimmed(dir.join("type"));
-        let kind = {
-            let mut k = match kind_code
-                .value
-                .as_deref()
-                .and_then(|s| s.parse::<u32>().ok())
-            {
-                Some(1) => "Ethernet",
-                Some(772) => "Loopback",
-                Some(776) => "Sit / tunnel",
-                Some(778) => "GRE",
-                Some(803) => "IEEE 802.11",
-                Some(823) => "WireGuard",
-                Some(n) => {
-                    let _ = n;
-                    "Other"
-                }
-                None => "Unknown",
-            }
-            .to_string();
-            if dir.join("bridge").is_dir() {
-                k = "Bridge".into();
-            } else if dir.join("bonding").is_dir() {
-                k = "Bond".into();
-            }
-            k
-        };
-        let speed = match access::read_trimmed(dir.join("speed")) {
-            Sample {
-                access: AccessKind::Ok,
-                value: Some(s),
-                source,
-                ..
-            } => match s.parse::<i64>() {
-                Ok(v) if v >= 0 => Sample::ok(v, source),
-                Ok(_) => Sample::unsupported(source, "网卡未报告链路速率（虚拟接口常见）"),
-                Err(_) => Sample::error(source, "无法解析 speed"),
-            },
-            s => {
-                if s.access == AccessKind::Error
-                    && s.hint.as_deref().is_some_and(|h| {
-                        h.contains("Invalid argument") || h.contains("os error 22")
-                    })
-                {
-                    Sample::unsupported(
-                        s.source,
-                        "网卡未报告链路速率（loopback / 虚拟接口常见）",
-                    )
-                } else {
-                    Sample {
-                        value: None,
-                        access: s.access,
-                        source: s.source,
-                        hint: s.hint,
-                    }
-                }
-            }
-        };
-        let stats = dir.join("statistics");
-        let rx = access::read_u64(stats.join("rx_bytes"));
-        let tx = access::read_u64(stats.join("tx_bytes"));
-        let (rx_bps, tx_bps) = match (rx.value, tx.value) {
-            (Some(rxb), Some(txb)) => rate_bps(&prev_by_name, &name, rxb, txb, dt_sec),
-            _ => (None, None),
-        };
-        let (rx_queues, tx_queues) = count_queues(&dir.join("queues"));
-        if dir.join("bridge").is_dir() {
-            let br = dir.join("bridge");
-            let members = access::list_dir_names(dir.join("brif"))
-                .value
-                .unwrap_or_default();
-            bridges.push(Bridge {
-                bridge_id: access::read_trimmed(br.join("bridge_id")),
-                stp_state: access::read_trimmed(br.join("stp_state")),
-                forward_delay: access::read_trimmed(br.join("forward_delay")),
-                members,
-                name: name.clone(),
-            });
-        }
-        if dir.join("bonding").is_dir() {
-            let b = dir.join("bonding");
-            bonds.push(Bond {
-                mode: access::read_trimmed(b.join("mode")),
-                slaves: access::read_trimmed(b.join("slaves")),
-                active_slave: access::read_trimmed(b.join("active_slave")),
-                name: name.clone(),
-            });
-        }
-        interfaces.push(NetIface {
-            kind,
-            driver: read_driver(&dir),
-            operstate: access::read_trimmed(dir.join("operstate")),
-            mac: access::read_trimmed(dir.join("address")),
-            mtu: access::read_u64(dir.join("mtu")),
-            speed_mbps: speed,
-            duplex: access::read_trimmed(dir.join("duplex")),
-            carrier: access::read_trimmed(dir.join("carrier")),
-            rx_packets: access::read_u64(stats.join("rx_packets")),
-            tx_packets: access::read_u64(stats.join("tx_packets")),
-            rx_errors: access::read_u64(stats.join("rx_errors")),
-            tx_errors: access::read_u64(stats.join("tx_errors")),
-            rx_bytes: rx,
-            tx_bytes: tx,
-            rx_bps,
-            tx_bps,
-            addresses: addrs.get(&name).cloned().unwrap_or_default(),
-            wireless: dir.join("wireless").exists(),
-            rx_queues,
-            tx_queues,
+        interfaces.push(read_detailed_iface(
             name,
-        });
+            &dir,
+            &prev_by_name,
+            dt_sec,
+            addresses,
+            &mut bridges,
+            &mut bonds,
+        ));
     }
     if skipped_virtual > 0 {
         notes.push(format!(
@@ -1808,6 +1707,125 @@ fn rate_bps(
     }
 }
 
+fn read_detailed_iface(
+    name: String,
+    dir: &std::path::Path,
+    prev: &HashMap<&str, (u64, u64)>,
+    dt_sec: f64,
+    addresses: Vec<String>,
+    bridges: &mut Vec<Bridge>,
+    bonds: &mut Vec<Bond>,
+) -> NetIface {
+    let kind_code = access::read_trimmed(dir.join("type"));
+    let kind = {
+        let mut k = match kind_code
+            .value
+            .as_deref()
+            .and_then(|s| s.parse::<u32>().ok())
+        {
+            Some(1) => "Ethernet",
+            Some(772) => "Loopback",
+            Some(776) => "Sit / tunnel",
+            Some(778) => "GRE",
+            Some(803) => "IEEE 802.11",
+            Some(823) => "WireGuard",
+            Some(n) => {
+                let _ = n;
+                "Other"
+            }
+            None => "Unknown",
+        }
+        .to_string();
+        if dir.join("bridge").is_dir() {
+            k = "Bridge".into();
+        } else if dir.join("bonding").is_dir() {
+            k = "Bond".into();
+        }
+        k
+    };
+    let speed = match access::read_trimmed(dir.join("speed")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(s),
+            source,
+            ..
+        } => match s.parse::<i64>() {
+            Ok(v) if v >= 0 => Sample::ok(v, source),
+            Ok(_) => Sample::unsupported(source, "网卡未报告链路速率（虚拟接口常见）"),
+            Err(_) => Sample::error(source, "无法解析 speed"),
+        },
+        s => {
+            if s.access == AccessKind::Error
+                && s.hint.as_deref().is_some_and(|h| {
+                    h.contains("Invalid argument") || h.contains("os error 22")
+                })
+            {
+                Sample::unsupported(s.source, "网卡未报告链路速率（loopback / 虚拟接口常见）")
+            } else {
+                Sample {
+                    value: None,
+                    access: s.access,
+                    source: s.source,
+                    hint: s.hint,
+                }
+            }
+        }
+    };
+    let stats = dir.join("statistics");
+    let rx = access::read_u64(stats.join("rx_bytes"));
+    let tx = access::read_u64(stats.join("tx_bytes"));
+    let (rx_bps, tx_bps) = match (rx.value, tx.value) {
+        (Some(rxb), Some(txb)) => rate_bps(prev, &name, rxb, txb, dt_sec),
+        _ => (None, None),
+    };
+    let (rx_queues, tx_queues) = count_queues(&dir.join("queues"));
+    if dir.join("bridge").is_dir() {
+        let br = dir.join("bridge");
+        let members = access::list_dir_names(dir.join("brif"))
+            .value
+            .unwrap_or_default();
+        bridges.push(Bridge {
+            bridge_id: access::read_trimmed(br.join("bridge_id")),
+            stp_state: access::read_trimmed(br.join("stp_state")),
+            forward_delay: access::read_trimmed(br.join("forward_delay")),
+            members,
+            name: name.clone(),
+        });
+    }
+    if dir.join("bonding").is_dir() {
+        let b = dir.join("bonding");
+        bonds.push(Bond {
+            mode: access::read_trimmed(b.join("mode")),
+            slaves: access::read_trimmed(b.join("slaves")),
+            active_slave: access::read_trimmed(b.join("active_slave")),
+            name: name.clone(),
+        });
+    }
+    NetIface {
+        kind,
+        driver: read_driver(dir),
+        operstate: access::read_trimmed(dir.join("operstate")),
+        mac: access::read_trimmed(dir.join("address")),
+        mtu: access::read_u64(dir.join("mtu")),
+        speed_mbps: speed,
+        duplex: access::read_trimmed(dir.join("duplex")),
+        carrier: access::read_trimmed(dir.join("carrier")),
+        rx_packets: access::read_u64(stats.join("rx_packets")),
+        tx_packets: access::read_u64(stats.join("tx_packets")),
+        rx_errors: access::read_u64(stats.join("rx_errors")),
+        tx_errors: access::read_u64(stats.join("tx_errors")),
+        rx_bytes: rx,
+        tx_bytes: tx,
+        rx_bps,
+        tx_bps,
+        addresses,
+        wireless: dir.join("wireless").exists(),
+        rx_queues,
+        tx_queues,
+        name,
+    }
+}
+
 /// veth/cni 等只带 `/proc/net/dev` 计数。MAC、速率、队列不打开 sysfs。
 fn ephemeral_iface(
     name: &str,
@@ -1945,6 +1963,95 @@ pub fn refresh_runtime(
     report.sockstat = parse_sockstat(&access::read_trimmed(ctx.proc_path("net/sockstat")));
     report.snmp = parse_snmp(&access::read_trimmed(ctx.proc_path("net/snmp")));
     report.conntrack_count = access::read_u64(ctx.proc_path("sys/net/netfilter/nf_conntrack_count"));
+}
+
+/// 慢路径：补上新网卡、丢掉已经消失的，并更新计数和物理口链路状态。
+/// 不重读 TCP/IPv6 sysctl，也不做 per-iface conf 差异扫描。
+pub fn refresh_slow(
+    report: &mut NetReport,
+    ctx: &ProbeCtx,
+    prev: Option<&[NetSnap]>,
+    dt_sec: f64,
+) {
+    let root = ctx.sys_path("class/net");
+    if let Sample {
+        access: AccessKind::Ok,
+        value: Some(names),
+        ..
+    } = access::list_dir_names(&root)
+    {
+        let want: HashSet<String> = names.iter().cloned().collect();
+        let have: HashSet<String> = report.interfaces.iter().map(|i| i.name.clone()).collect();
+        report.interfaces.retain(|i| want.contains(&i.name));
+        report.bridges.retain(|b| want.contains(&b.name));
+        report.bonds.retain(|b| want.contains(&b.name));
+        let missing: Vec<String> = names.into_iter().filter(|n| !have.contains(n)).collect();
+        if !missing.is_empty() {
+            let addrs = interface_addresses();
+            let dev_sample = access::read_trimmed(ctx.proc_path("net/dev"));
+            let dev_by_name: HashMap<String, DevCounters> = dev_sample
+                .value
+                .as_deref()
+                .map(|text| {
+                    parse_proc_net_dev(text)
+                        .into_iter()
+                        .map(|row| (row.name.clone(), row))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let prev_by_name: HashMap<&str, (u64, u64)> = prev
+                .unwrap_or(&[])
+                .iter()
+                .map(|s| (s.name.as_str(), (s.rx_bytes, s.tx_bytes)))
+                .collect();
+            let mut added_virtual = 0usize;
+            for name in missing {
+                if iface_counters_only(&name) {
+                    added_virtual += 1;
+                    let iface = ephemeral_iface(
+                        &name,
+                        dev_by_name.get(&name),
+                        &dev_sample.source,
+                        &prev_by_name,
+                        dt_sec,
+                        addrs.get(&name).cloned().unwrap_or_default(),
+                    );
+                    report.interfaces.push(iface);
+                } else {
+                    let addresses = addrs.get(&name).cloned().unwrap_or_default();
+                    let dir = root.join(&name);
+                    let iface = read_detailed_iface(
+                        name,
+                        &dir,
+                        &prev_by_name,
+                        dt_sec,
+                        addresses,
+                        &mut report.bridges,
+                        &mut report.bonds,
+                    );
+                    report.interfaces.push(iface);
+                }
+            }
+            report
+                .notes
+                .retain(|n| !n.starts_with("慢扫描新发现虚拟接口"));
+            if added_virtual > 0 {
+                report.notes.push(format!(
+                    "慢扫描新发现虚拟接口 {added_virtual} 个，只记了 /proc/net/dev 计数。"
+                ));
+            }
+        }
+        for iface in &mut report.interfaces {
+            if iface_counters_only(&iface.name) {
+                continue;
+            }
+            let dir = root.join(&iface.name);
+            iface.operstate = access::read_trimmed(dir.join("operstate"));
+            iface.carrier = access::read_trimmed(dir.join("carrier"));
+        }
+    }
+    refresh_runtime(report, ctx, prev, dt_sec);
+    report.softnet = parse_softnet(&access::read_trimmed(ctx.proc_path("net/softnet_stat")));
 }
 
 fn count_queues(dir: &std::path::Path) -> (usize, usize) {
@@ -2693,6 +2800,61 @@ mod tests {
         assert_eq!(docker0.kind, "Bridge");
         assert_eq!(docker0.mac.value.as_deref(), Some("11:22:33:44:55:66"));
         assert!(r.bridges.iter().any(|b| b.name == "docker0"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_slow_adds_veth_without_rereading_tcp_knobs() {
+        let root = std::env::temp_dir().join(format!("aida-net-slow-{}", std::process::id()));
+        let eth = root.join("sys/class/net/eth0");
+        fs::create_dir_all(eth.join("statistics")).unwrap();
+        fs::write(eth.join("operstate"), "up\n").unwrap();
+        fs::write(eth.join("type"), "1\n").unwrap();
+        fs::write(eth.join("address"), "aa:bb:cc:dd:ee:ff\n").unwrap();
+        fs::write(eth.join("statistics/rx_bytes"), "10\n").unwrap();
+        fs::write(eth.join("statistics/tx_bytes"), "20\n").unwrap();
+        fs::create_dir_all(root.join("proc/sys/net/ipv4")).unwrap();
+        fs::write(root.join("proc/sys/net/ipv4/tcp_ehash_entries"), "131072\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        assert_eq!(r.tcp_ehash_entries.value, Some(131072));
+        fs::write(root.join("proc/sys/net/ipv4/tcp_ehash_entries"), "1\n").unwrap();
+        fs::write(eth.join("operstate"), "down\n").unwrap();
+        fs::create_dir_all(root.join("sys/class/net/veth9")).unwrap();
+        fs::write(
+            root.join("sys/class/net/veth9/address"),
+            "should-not-be-read\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::write(
+            root.join("proc/net/dev"),
+            "Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n  veth9: 3000 4 1 0 0 0 0 0 8000 5 2 0 0 0 0 0\n   eth0: 100 1 0 0 0 0 0 0 200 1 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        let prev = counters(&r);
+        refresh_slow(&mut r, &ctx, Some(&prev), 1.0);
+        assert_eq!(
+            r.tcp_ehash_entries.value,
+            Some(131072),
+            "slow path must not re-read tcp knobs"
+        );
+        let eth0 = r.interfaces.iter().find(|i| i.name == "eth0").unwrap();
+        assert_eq!(eth0.operstate.value.as_deref(), Some("down"));
+        assert_eq!(eth0.mac.value.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
+        let veth9 = r.interfaces.iter().find(|i| i.name == "veth9").unwrap();
+        assert_eq!(veth9.rx_bytes.value, Some(3000));
+        assert_ne!(veth9.mac.value.as_deref(), Some("should-not-be-read"));
+        fs::remove_dir_all(&eth).unwrap();
+        refresh_slow(&mut r, &ctx, Some(&prev), 1.0);
+        assert!(r.interfaces.iter().all(|i| i.name != "eth0"));
+        assert!(r.interfaces.iter().any(|i| i.name == "veth9"));
         let _ = fs::remove_dir_all(&root);
     }
 
