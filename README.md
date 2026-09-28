@@ -81,11 +81,11 @@ GUI 需要 OpenGL/EGL 和 `libxkbcommon`（X11 还要 `libxkbcommon-x11`）。mu
 
 ## 能做什么
 
-- **硬件与拓扑**：CPU（拓扑 / cpuidle / 漏洞 / 利用率）、DMI / 主板、SMBIOS Type 4 处理器插座、Type 7 缓存、Type 8 端口连接器、Type 9 系统插槽、Type 11 OEM 字符串、Type 12 配置选项、Type 13 BIOS 语言、Type 22 便携电池、Type 23 系统复位、Type 24 硬件安全、Type 26 电压探头、Type 27 冷却装置、Type 28 温度探头、Type 32 启动状态、Type 39 电源、Type 41 板载设备、Type 43 TPM、Type 14 分组、Type 15 事件日志、Type 45 固件清单、Type 0 BIOS ROM/Release、Type 16/17 内存阵列与 DIMM（容量、外形、额定/配置速度、位宽、rank、厂商/序列/料号；对标 AIDA64 CPU/主板/Memory/SPD，不扫 I2C）、PCI/PCIe、NVMe、GPU/DRM、USB、输入设备、NUMA、virtio / KVM / IOMMU
+- **硬件与拓扑**：CPU（拓扑 / cpuidle / 漏洞 / 利用率）、DMI / 主板、SMBIOS Type 4 处理器插座、Type 7 缓存、Type 8 端口连接器、Type 9 系统插槽、Type 11 OEM 字符串、Type 12 配置选项、Type 13 BIOS 语言、Type 22 便携电池、Type 23 系统复位、Type 24 硬件安全、Type 26 电压探头、Type 27 冷却装置、Type 28 温度探头、Type 32 启动状态、Type 39 电源、Type 41 板载设备、Type 43 TPM、Type 14 分组、Type 15 事件日志、Type 45 固件清单、Type 10 旧板载设备、Type 44 处理器附加、Type 46 字符串属性、Type 0 BIOS ROM/Release、Type 16/17 内存阵列与 DIMM（容量、外形、额定/配置速度、位宽、rank、厂商/序列/料号；对标 AIDA64 CPU/主板/Memory/SPD，不扫 I2C）、PCI/PCIe、NVMe、GPU/DRM、USB、输入设备、NUMA、virtio / KVM / IOMMU
 - **传感器**：hwmon + thermal，阈值告警写 JSONL；RAPL 瓦特、PSI、EDAC
 - **任务栏**：窗口内常驻 CPU / 内存 / 网络 / 磁盘 / 温度 / loadavg；置顶无边框窄条可选，默认关闭（对标 iStat Menus，但不挡住旁边的浏览器）
 - **历史记录**：默认写入 `$AIDA_RECORD_LOG` 或 `~/.local/state/aida/history.jsonl`；启动加载最近 1800 条（聚焦约 2 秒一条时大约一小时），左侧「历史记录」按本地时间画折线
-- **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc`、PTP、PPS、TPM、`firmware_attributes`、`pci_epf`、Slimbus、Memory Stick、SIOX、HSI、AMBA、FSI、`ppdev`、HD Audio、CDX、VIO 等 leftover class（空 = 无硬件，不是失败）
+- **存储与总线**：块设备 / MD / SCSI / iSCSI / NBD / zram / zswap，以及 rfkill、HID、GPIO、红外 `rc`、STM、PECI、wakeup、MSR、DPLL、FireWire、Greybus、RapidIO、ULPI、SPMI、`pci_epc`、PTP、PPS、TPM、`firmware_attributes`、`pci_epf`、Slimbus、Memory Stick、SIOX、HSI、AMBA、FSI、`ppdev`、HD Audio、CDX、VIO、EISA、host1x、MOXTET 等 leftover class（空 = 无硬件，不是失败）
 - **内核与网络**：sysctl、cgroup、lockdown、conntrack、TCP/IPv6 knobs（缺权限标 `permission_denied`，不填假数据）
 - **软件**：OS 页先给发行版和已装包（读 dpkg/apk 状态文件，不调用 `dpkg -l`，列表最多 256 条）。内核 / 安全 / cgroup 原始项收在折叠里，默认不铺开
 - **占用**：GUI 聚焦约每 2 秒刷新利用率、温度和速率（没有 cpufreq 的虚拟机不再逐核打开 `scaling_*`；网卡计数读一次 `/proc/net/dev`；已有传感器只重读输入值，没有传感器/电源/RAPL 时不再扫目录）。TCP 表、per-iface sysctl、CPU 拓扑、内存块 online 状态只在启动时读。约每 60 秒补 governor、新网卡、新传感器，并扫挂载用量。失焦降到约 10 秒，并且不做这次慢扫描。已装包和 `config.gz` 只在启动时读。veth/cni 等高基数接口不逐个打开 sysfs，界面收进一个折叠；docker0 / `br-*` / virbr 仍读网桥。逻辑 CPU 超过 32 个时一行一个。悬停动画关掉。指针移动大约每 400ms 才重绘一次（拖拽约 50ms），避免软件 OpenGL 按鼠标事件铺满窗口。CJK 字体只做中文回退。形状羽化和像素抖动关掉。IRQ 亲和最多 48 条；per-iface sysctl 差异先看物理网卡，最多 48 个接口。nfs/cifs/fuse 不调用 `statvfs`

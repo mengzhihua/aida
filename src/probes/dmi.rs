@@ -102,6 +102,12 @@ pub struct DmiInfo {
     pub event_logs: Vec<SystemEventLog>,
     /// SMBIOS Type 45 固件清单（BMC / 设备固件版本；对标 AIDA64 Firmware）。
     pub firmware_inventory: Vec<FirmwareInventory>,
+    /// SMBIOS Type 10 板载设备（旧结构；bit7 启用。对标 AIDA64 主板）。
+    pub onboard_legacy: Vec<OnboardDeviceLegacy>,
+    /// SMBIOS Type 44 处理器附加信息（架构；AArch64 带 JEP-106）。
+    pub processor_extra: Vec<ProcessorExtra>,
+    /// SMBIOS Type 46 字符串属性（UEFI 设备路径等）。
+    pub string_properties: Vec<StringProperty>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -216,6 +222,9 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         groups: Vec::new(),
         event_logs: Vec::new(),
         firmware_inventory: Vec::new(),
+        onboard_legacy: Vec::new(),
+        processor_extra: Vec::new(),
+        string_properties: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -440,6 +449,24 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| firmware_from_raw(bytes, r))
                     .take(16)
                     .collect();
+                info.onboard_legacy = parsed
+                    .iter()
+                    .filter(|r| r.kind == 10)
+                    .flat_map(|r| onboard_legacy_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
+                info.processor_extra = parsed
+                    .iter()
+                    .filter(|r| r.kind == 44)
+                    .filter_map(|r| processor_extra_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.string_properties = parsed
+                    .iter()
+                    .filter(|r| r.kind == 46)
+                    .filter_map(|r| string_property_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -571,12 +598,15 @@ fn kind_name(kind: u8) -> String {
         37 => "Memory Channel",
         39 => "Power Supply",
         40 => "Additional Information",
+        10 => "On Board Devices",
         14 => "Group Associations",
         15 => "System Event Log",
         42 => "MC Host Interface",
         41 => "Onboard Device",
         43 => "TPM Device",
+        44 => "Processor Additional",
         45 => "Firmware Inventory",
+        46 => "String Property",
         127 => "End of Table",
         n => return format!("Type {n}"),
     }
@@ -977,6 +1007,30 @@ pub struct FirmwareInventory {
     pub updatable: bool,
     pub write_protect: bool,
     pub state: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OnboardDeviceLegacy {
+    pub kind: String,
+    pub enabled: bool,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessorExtra {
+    /// Type 4 句柄。
+    pub processor: u16,
+    pub arch: Option<String>,
+    /// AArch64 JEP-106 厂商码。其它架构不填。
+    pub vendor_jep106: Option<u16>,
+    pub subtype: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StringProperty {
+    pub kind: String,
+    pub value: Option<String>,
+    pub parent: u16,
 }
 
 pub fn hex_range(start: Option<u64>, end: Option<u64>) -> String {
@@ -2545,6 +2599,128 @@ fn fw_state(t: u8) -> String {
         0x07 => "StandbySpare".into(),
         0x08 => "UnavailableOffline".into(),
         n => format!("0x{n:02X}"),
+    }
+}
+
+fn onboard_legacy_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Vec<OnboardDeviceLegacy> {
+    let Some(i) = rec_offset(buf, rec) else {
+        return Vec::new();
+    };
+    let length = buf[i + 1] as usize;
+    if length < 0x04 || i + length > buf.len() {
+        return Vec::new();
+    }
+    let n = (length - 4) / 2;
+    let mut out = Vec::new();
+    for k in 0..n.min(8) {
+        let off = 4 + k * 2;
+        let raw = buf[i + off];
+        out.push(OnboardDeviceLegacy {
+            kind: onboard_legacy_type(raw & 0x7F),
+            enabled: raw & 0x80 != 0,
+            description: smbios_str(&rec.strings, buf[i + off + 1]),
+        });
+    }
+    out
+}
+
+fn onboard_legacy_type(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Video".into(),
+        0x04 => "SCSI Controller".into(),
+        0x05 => "Ethernet".into(),
+        0x06 => "Token Ring".into(),
+        0x07 => "Sound".into(),
+        0x08 => "PATA Controller".into(),
+        0x09 => "SATA Controller".into(),
+        0x0A => "SAS Controller".into(),
+        0x0B => "Wireless LAN".into(),
+        0x0C => "Bluetooth".into(),
+        0x0D => "WWAN".into(),
+        0x0E => "eMMC".into(),
+        0x0F => "NVMe Controller".into(),
+        0x10 => "UFS Controller".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn processor_extra_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<ProcessorExtra> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    // 头是 6 字节；Processor-specific Block 从 0x06 开始，长度记在块内。
+    if length < 0x06 || i + length > buf.len() {
+        return None;
+    }
+    let mut arch = None;
+    let mut vendor_jep106 = None;
+    let mut subtype = None;
+    if length >= 0x08 {
+        let block_len = buf[i + 0x06] as usize;
+        if block_len >= 2 && 0x06 + block_len <= length {
+            let ptype = buf[i + 0x07];
+            arch = Some(proc_arch_name(ptype));
+            // AArch64：块内 0x04 是 JEP-106，0x06 是 sub-type。块长至少 9。
+            if ptype == 0x05 && block_len >= 9 {
+                vendor_jep106 = Some(word(buf, i, 0x0C));
+                subtype = Some(aarch64_subtype(buf[i + 0x0E]));
+            }
+        }
+    }
+    Some(ProcessorExtra {
+        processor: word(buf, i, 0x04),
+        arch,
+        vendor_jep106,
+        subtype,
+    })
+}
+
+fn proc_arch_name(t: u8) -> String {
+    match t {
+        0x00 => "Reserved".into(),
+        0x01 => "IA32".into(),
+        0x02 => "x64".into(),
+        0x03 => "Itanium".into(),
+        0x04 => "AArch32".into(),
+        0x05 => "AArch64".into(),
+        0x06 => "RV32".into(),
+        0x07 => "RV64".into(),
+        0x08 => "RV128".into(),
+        0x09 => "LoongArch32".into(),
+        0x0A => "LoongArch64".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn aarch64_subtype(t: u8) -> String {
+    match t {
+        0 => "AArch64".into(),
+        1 => "Vendor".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn string_property_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<StringProperty> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x09 || i + length > buf.len() {
+        return None;
+    }
+    Some(StringProperty {
+        kind: string_property_kind(word(buf, i, 0x04)),
+        value: smbios_str(&rec.strings, buf[i + 0x06]),
+        parent: word(buf, i, 0x07),
+    })
+}
+
+fn string_property_kind(id: u16) -> String {
+    match id {
+        0 => "Reserved".into(),
+        1 => "UEFI device path".into(),
+        2..=32767 => format!("DMTF {id}"),
+        32768..=49151 => format!("Firmware {id}"),
+        id => format!("OEM {id}"),
     }
 }
 
@@ -4835,6 +5011,128 @@ mod tests {
             .iter()
             .find(|r| r.kind == 45)
             .and_then(|r| firmware_from_raw(&rec, r))
+            .is_none());
+    }
+
+    #[test]
+    fn type10_onboard_enabled_bit_is_not_the_type() {
+        // length 8 = 4 + 2*2. Ethernet enabled, Sound disabled.
+        let mut rec = vec![10u8, 8, 0, 0, 0x85, 1, 0x07, 2];
+        rec.extend_from_slice(b"LAN\0");
+        rec.extend_from_slice(b"Audio\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let devs = recs
+            .iter()
+            .find(|r| r.kind == 10)
+            .map(|r| onboard_legacy_from_raw(&rec, r))
+            .expect("type 10");
+        assert_eq!(devs.len(), 2);
+        assert_eq!(devs[0].kind, "Ethernet");
+        assert!(devs[0].enabled);
+        assert_eq!(devs[0].description.as_deref(), Some("LAN"));
+        assert_eq!(devs[1].kind, "Sound");
+        assert!(!devs[1].enabled);
+        assert_eq!(devs[1].description.as_deref(), Some("Audio"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 10).map(|r| r.kind_name.as_str()),
+            Some("On Board Devices")
+        );
+    }
+
+    #[test]
+    fn type44_aarch64_keeps_jep106_and_x64_skips_it() {
+        // length 15 = 6 + block 9. Type 4 handle 0x0004, arch AArch64, JEP-106 0x043B, subtype 0.
+        let mut rec = vec![0u8; 15];
+        rec[0] = 44;
+        rec[1] = 15;
+        rec[0x04] = 0x04;
+        rec[0x06] = 9;
+        rec[0x07] = 0x05;
+        rec[0x0C] = 0x3B;
+        rec[0x0D] = 0x04;
+        rec[0x0E] = 0;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 44)
+            .and_then(|r| processor_extra_from_raw(&rec, r))
+            .expect("type 44");
+        assert_eq!(p.processor, 0x0004);
+        assert_eq!(p.arch.as_deref(), Some("AArch64"));
+        assert_eq!(p.vendor_jep106, Some(0x043B));
+        assert_eq!(p.subtype.as_deref(), Some("AArch64"));
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 44).map(|r| r.kind_name.as_str()),
+            Some("Processor Additional")
+        );
+
+        let mut rec = vec![0u8; 8];
+        rec[0] = 44;
+        rec[1] = 8;
+        rec[0x04] = 0x01;
+        rec[0x06] = 2;
+        rec[0x07] = 0x02; // x64
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let p = recs
+            .iter()
+            .find(|r| r.kind == 44)
+            .and_then(|r| processor_extra_from_raw(&rec, r))
+            .expect("type 44 x64");
+        assert_eq!(p.arch.as_deref(), Some("x64"));
+        assert_eq!(p.vendor_jep106, None);
+
+        let mut rec = vec![0u8; 5];
+        rec[0] = 44;
+        rec[1] = 5;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        assert!(recs
+            .iter()
+            .find(|r| r.kind == 44)
+            .and_then(|r| processor_extra_from_raw(&rec, r))
+            .is_none());
+    }
+
+    #[test]
+    fn type46_uefi_device_path_and_short_record() {
+        let mut rec = vec![0u8; 9];
+        rec[0] = 46;
+        rec[1] = 9;
+        rec[0x04] = 1; // UEFI device path
+        rec[0x06] = 1;
+        rec[0x07] = 0x10; // parent 0x0010
+        rec.extend_from_slice(b"PciRoot(0x0)/Pci(0x1,0x0)\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let s = recs
+            .iter()
+            .find(|r| r.kind == 46)
+            .and_then(|r| string_property_from_raw(&rec, r))
+            .expect("type 46");
+        assert_eq!(s.kind, "UEFI device path");
+        assert_eq!(s.value.as_deref(), Some("PciRoot(0x0)/Pci(0x1,0x0)"));
+        assert_eq!(s.parent, 0x0010);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 46).map(|r| r.kind_name.as_str()),
+            Some("String Property")
+        );
+
+        let mut rec = vec![0u8; 8];
+        rec[0] = 46;
+        rec[1] = 8;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        assert!(recs
+            .iter()
+            .find(|r| r.kind == 46)
+            .and_then(|r| string_property_from_raw(&rec, r))
             .is_none());
     }
 }
