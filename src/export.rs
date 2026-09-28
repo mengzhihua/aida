@@ -996,6 +996,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("hdaudio", &snap.buses.hdaudio),
         ("cdx", &snap.buses.cdx),
         ("vio", &snap.buses.vio),
+        ("eisa", &snap.buses.eisa),
+        ("host1x", &snap.buses.host1x),
+        ("moxtet", &snap.buses.moxtet),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1508,7 +1511,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {} regen {} desync {}s ioam6 {} seg6 {} rpl {} pio_life {} hmac {} ra_metric {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {} regen {} desync {}s ioam6 {} seg6 {} rpl {} pio_life {} hmac {} ra_metric {} pio_p {} oif {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1670,7 +1673,17 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("1") => "1 要 HMAC".into(),
             _ => snap.net.ipv6_seg6_require_hmac.display(),
         },
-        snap.net.ipv6_ra_defrtr_metric.display()
+        snap.net.ipv6_ra_defrtr_metric.display(),
+        match snap.net.ipv6_ra_honor_pio_pflag.value.as_deref() {
+            Some("0") => "0 忽略".into(),
+            Some("1") => "1 尊重".into(),
+            _ => snap.net.ipv6_ra_honor_pio_pflag.display(),
+        },
+        match snap.net.ipv6_use_oif_addrs_only.value.as_deref() {
+            Some("0") => "0 任意".into(),
+            Some("1") => "1 仅本接口".into(),
+            _ => snap.net.ipv6_use_oif_addrs_only.display(),
+        }
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1940,6 +1953,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">seg6_require_hmac iface {}</p>",
             esc(&snap.net.ipv6_seg6_require_hmac_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_ra_honor_pio_pflag_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ra_honor_pio_pflag iface {}</p>",
+            esc(&snap.net.ipv6_ra_honor_pio_pflag_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_use_oif_addrs_only_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">use_oif_addrs_only iface {}</p>",
+            esc(&snap.net.ipv6_use_oif_addrs_only_dev.join(" "))
         ));
     }
     if !snap.net.ipv6_ra_defrtr_metric_dev.is_empty() {
@@ -3513,6 +3538,48 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.onboard_legacy.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 10 旧板载设备</p>");
+        html.push_str("<table><tr><th>类型</th><th>状态</th><th>描述</th></tr>");
+        for d in &snap.dmi.onboard_legacy {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(&d.kind),
+                if d.enabled { "enabled" } else { "disabled" },
+                esc(d.description.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.processor_extra.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 44 处理器附加</p>");
+        html.push_str("<table><tr><th>处理器</th><th>架构</th><th>厂商</th></tr>");
+        for p in &snap.dmi.processor_extra {
+            html.push_str(&format!(
+                "<tr><td>{:#06X}</td><td>{}</td><td>{}</td></tr>",
+                p.processor,
+                esc(p.arch.as_deref().unwrap_or("—")),
+                esc(&p
+                    .vendor_jep106
+                    .map(|v| format!("{v:#06X}"))
+                    .unwrap_or_else(|| "—".into()))
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.string_properties.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 46 字符串属性</p>");
+        html.push_str("<table><tr><th>属性</th><th>父句柄</th><th>值</th></tr>");
+        for s in &snap.dmi.string_properties {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{:#06X}</td><td>{}</td></tr>",
+                esc(&s.kind),
+                s.parent,
+                esc(s.value.as_deref().unwrap_or("—"))
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -4085,6 +4152,38 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
                 f.size_bytes
                     .map(|n| format!("{n} B"))
                     .unwrap_or_else(|| "—".into())
+            ),
+        ));
+    }
+    for d in snap.dmi.onboard_legacy.iter().take(8) {
+        dmi.push(pair(
+            &d.kind,
+            format!(
+                "{}  {}",
+                if d.enabled { "enabled" } else { "disabled" },
+                d.description.as_deref().unwrap_or("—")
+            ),
+        ));
+    }
+    for p in snap.dmi.processor_extra.iter().take(4) {
+        dmi.push(pair(
+            format!("处理器 {:#06X}", p.processor),
+            format!(
+                "{}{}",
+                p.arch.as_deref().unwrap_or("—"),
+                p.vendor_jep106
+                    .map(|v| format!("  JEP106 {v:#06X}"))
+                    .unwrap_or_default()
+            ),
+        ));
+    }
+    for s in snap.dmi.string_properties.iter().take(8) {
+        dmi.push(pair(
+            &s.kind,
+            format!(
+                "#{:#06X}  {}",
+                s.parent,
+                s.value.as_deref().unwrap_or("—")
             ),
         ));
     }

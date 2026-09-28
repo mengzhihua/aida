@@ -326,6 +326,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 302. **SMBIOS Type 14/15/45 按 DSP0134 偏移解析。** Type 14 成员个数是 `(Length-5)/3`，每条是结构类型 BYTE + 句柄 WORD。Type 15 短于 `0x14` 不解释；Access Method `0x03`=Memory-mapped，Log Status bit0 有效、bit1 已满；`0x14` 才有 Header Format（`0x01`=Type 1）。Type 45 短于 `0x18` 不解释；镜像大小 QWORD 仅全 `FF` 未知；Characteristics bit0 可更新、bit1 写保护；State `0x04`=Enabled。不调用 dmidecode。
 303. **空的 hdaudio / cdx / vio 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
 304. **`seg6_require_hmac` / `ra_defrtr_metric` 只列出与 `conf/all` 不同的接口。** HMAC：`-1` 默认，`0` 不校验 SRH，`1` 只收带有效 HMAC 的 SRH。`ra_defrtr_metric` 是 RA 默认路由度量，内核默认 1024。不要用 `default` 顶替已有 iface。
+305. **SMBIOS Type 10/44/46 按 DSP0134 偏移解析。** Type 10 设备数是 `(Length-4)/2`，类型取低 7 位（`0x05`=Ethernet / `0x07`=Sound），bit7 才是启用。Type 44 短于 6 不解释；Processor Type `0x02`=x64 / `0x05`=AArch64；只有 AArch64 且块长至少 9 才读 JEP-106 和 sub-type。Type 46 短于 9 不解释；String Property ID `1` 是 UEFI 设备路径，父句柄在 `0x07`。不调用 dmidecode。
+306. **空的 eisa / host1x / moxtet 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
+307. **`ra_honor_pio_pflag` / `use_oif_addrs_only` 只列出与 `conf/all` 不同的接口。** `ra_honor_pio_pflag=1` 尊重 RA PIO 选项里的 P 标志（RFC 8981）。`use_oif_addrs_only=1` 时经该接口出去的源地址只能用本接口地址。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

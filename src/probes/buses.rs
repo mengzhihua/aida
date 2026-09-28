@@ -190,6 +190,12 @@ pub struct BusesReport {
     pub cdx: Vec<String>,
     /// IBM Power Virtual I/O：先 `bus/vio/devices`，再 `class/vio`。
     pub vio: Vec<String>,
+    /// EISA：先 `bus/eisa/devices`，再 `class/eisa`。
+    pub eisa: Vec<String>,
+    /// NVIDIA Tegra host1x：先 `bus/host1x/devices`，再 `class/host1x`。
+    pub host1x: Vec<String>,
+    /// Turris MOXTET：先 `bus/moxtet/devices`，再 `class/moxtet`。
+    pub moxtet: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1153,6 +1159,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let eisa = list_alt_dirs(
+        ctx,
+        "bus/eisa/devices",
+        "class/eisa",
+        8,
+        "eisa",
+        &mut notes,
+        &mut missing,
+    );
+    let host1x = list_alt_dirs(
+        ctx,
+        "bus/host1x/devices",
+        "class/host1x",
+        8,
+        "host1x",
+        &mut notes,
+        &mut missing,
+    );
+    let moxtet = list_alt_dirs(
+        ctx,
+        "bus/moxtet/devices",
+        "class/moxtet",
+        8,
+        "moxtet",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1280,6 +1313,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         hdaudio,
         cdx,
         vio,
+        eisa,
+        host1x,
+        moxtet,
         notes,
     }
 }
@@ -2147,6 +2183,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/hdaudio/devices/ehdaudio0D2")).unwrap();
         fs::create_dir_all(root.join("sys/bus/cdx/devices/cdx-00:00")).unwrap();
         fs::create_dir_all(root.join("sys/bus/vio/devices/30000000")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/eisa/devices/00:01")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/host1x/devices/host1x")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/moxtet/devices/moxtet-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2275,6 +2314,9 @@ mod tests {
         assert_eq!(r.hdaudio, vec!["ehdaudio0D2".to_string()]);
         assert_eq!(r.cdx, vec!["cdx-00:00".to_string()]);
         assert_eq!(r.vio, vec!["30000000".to_string()]);
+        assert_eq!(r.eisa, vec!["00:01".to_string()]);
+        assert_eq!(r.host1x, vec!["host1x".to_string()]);
+        assert_eq!(r.moxtet, vec!["moxtet-0".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -4303,6 +4345,78 @@ mod tests {
                 inner.split('/').all(|s| s != "cdx")
             })),
             "present cdx class must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_eisa_host1x_moxtet_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-eisa-host1x-moxtet-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"eisa") && labels.contains(&"host1x") && labels.contains(&"moxtet"),
+            "missing eisa/host1x/moxtet must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn eisa_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-eisa-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/eisa/devices/00:01")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.eisa, vec!["00:01".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "eisa")
+            })),
+            "present eisa must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn host1x_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-host1x-class-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class/host1x/host1x")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.host1x, vec!["host1x".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "host1x")
+            })),
+            "present host1x class must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

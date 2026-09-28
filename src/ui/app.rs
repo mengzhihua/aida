@@ -1149,6 +1149,16 @@ impl AidaApp {
                 ),
             );
         }
+        if !self.snap.dmi.processor_extra.is_empty() {
+            kv(
+                ui,
+                self.t("处理器附加", "Processor extra"),
+                self.snap.dmi.processor_extra[0]
+                    .arch
+                    .as_deref()
+                    .unwrap_or("—"),
+            );
+        }
         kv(
             ui,
             self.t("固件", "Firmware"),
@@ -2343,6 +2353,50 @@ impl AidaApp {
                             .unwrap_or_else(|| "size ?".into()),
                         if f.updatable { "updatable" } else { "fixed" }
                     ),
+                );
+            }
+        }
+        if !self.snap.dmi.onboard_legacy.is_empty() {
+            ui.strong(self.t("旧板载设备 (Type 10)", "Onboard devices (legacy)"));
+            for d in &self.snap.dmi.onboard_legacy {
+                kv(
+                    ui,
+                    &d.kind,
+                    &format!(
+                        "{}  {}",
+                        if d.enabled { "enabled" } else { "disabled" },
+                        d.description.as_deref().unwrap_or("—")
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.processor_extra.is_empty() {
+            ui.strong(self.t("处理器附加 (Type 44)", "Processor additional"));
+            for p in &self.snap.dmi.processor_extra {
+                kv(
+                    ui,
+                    &format!("#{:#06X}", p.processor),
+                    &format!(
+                        "{}{}{}",
+                        p.arch.as_deref().unwrap_or("—"),
+                        p.vendor_jep106
+                            .map(|v| format!("  JEP106 {v:#06X}"))
+                            .unwrap_or_default(),
+                        p.subtype
+                            .as_deref()
+                            .map(|s| format!("  {s}"))
+                            .unwrap_or_default()
+                    ),
+                );
+            }
+        }
+        if !self.snap.dmi.string_properties.is_empty() {
+            ui.strong(self.t("字符串属性 (Type 46)", "String property"));
+            for s in &self.snap.dmi.string_properties {
+                kv(
+                    ui,
+                    &format!("{} #{:#06X}", s.kind, s.parent),
+                    s.value.as_deref().unwrap_or("—"),
                 );
             }
         }
@@ -3544,7 +3598,7 @@ impl AidaApp {
             ui,
             "qdisc / IPv6",
             &format!(
-                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s  dis_xfrm {}  skip_notify {}  regen {}  desync {}s  ioam6 {}  seg6 {}  rpl {}  pio_life {}  hmac {}  ra_metric {}",
+                "qdisc {}  disable_ipv6 {}  fwd {}  tempaddr {}  accept_ra {}  autoconf {}  hop {}  ttl {}  dad {}  addr_gen {}  ip6frag {}/{}  max_addrs {}  ra_defrtr {}  rs {}  rps {}  fib_mp {}  igmp {}  igmp6 {}  rt6 {}  force_mld {}  ra_pinfo {}  enhanced_dad {}  auto_flowlabels {}  flowlabel {}  idgen {}  ra_mtu {}  idgen_delay {}  ip6frag_time {}  keep_addr {}  ra_min_hop {}  ra_min_lft {}  ra_rt_min_plen {}  ra_rt_max_plen {}  ra_rtr_pref {}  ra_from_local {}  v6_redir {}  drop_una {}  drop_l2mcast {}  force_tllao {}  untracked_na {}  proxy_ndp {}  ndisc_tclass {}  frag_ndisc {}  opt_dad {}  v6_srcrt {}  use_opt {}  linkdown {}  evict_nc {}  dis_pol {}  mc_fwd {}  force_fwd {}  temp_valid {}s  temp_pref {}s  dis_xfrm {}  skip_notify {}  regen {}  desync {}s  ioam6 {}  seg6 {}  rpl {}  pio_life {}  hmac {}  ra_metric {}  pio_p {}  oif {}",
                 self.snap.net.default_qdisc.display(),
                 self.snap.net.ipv6_disable.display(),
                 self.snap.net.ipv6_forwarding.display(),
@@ -3712,7 +3766,17 @@ impl AidaApp {
                     Some("1") => "1 要 HMAC".into(),
                     _ => self.snap.net.ipv6_seg6_require_hmac.display(),
                 },
-                self.snap.net.ipv6_ra_defrtr_metric.display()
+                self.snap.net.ipv6_ra_defrtr_metric.display(),
+                match self.snap.net.ipv6_ra_honor_pio_pflag.value.as_deref() {
+                    Some("0") => "0 忽略".into(),
+                    Some("1") => "1 尊重".into(),
+                    _ => self.snap.net.ipv6_ra_honor_pio_pflag.display(),
+                },
+                match self.snap.net.ipv6_use_oif_addrs_only.value.as_deref() {
+                    Some("0") => "0 任意".into(),
+                    Some("1") => "1 仅本接口".into(),
+                    _ => self.snap.net.ipv6_use_oif_addrs_only.display(),
+                }
             ),
         );
         kv(
@@ -4044,6 +4108,20 @@ impl AidaApp {
                 ui,
                 "seg6_require_hmac iface",
                 &self.snap.net.ipv6_seg6_require_hmac_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_ra_honor_pio_pflag_dev.is_empty() {
+            kv(
+                ui,
+                "ra_honor_pio_pflag iface",
+                &self.snap.net.ipv6_ra_honor_pio_pflag_dev.join("  "),
+            );
+        }
+        if !self.snap.net.ipv6_use_oif_addrs_only_dev.is_empty() {
+            kv(
+                ui,
+                "use_oif_addrs_only iface",
+                &self.snap.net.ipv6_use_oif_addrs_only_dev.join("  "),
             );
         }
         if !self.snap.net.ipv6_ra_defrtr_metric_dev.is_empty() {
@@ -4697,6 +4775,9 @@ impl AidaApp {
             ("hdaudio", &self.snap.buses.hdaudio),
             ("cdx", &self.snap.buses.cdx),
             ("vio", &self.snap.buses.vio),
+            ("eisa", &self.snap.buses.eisa),
+            ("host1x", &self.snap.buses.host1x),
+            ("moxtet", &self.snap.buses.moxtet),
         ] {
             if !names.is_empty() {
                 kv(ui, label, &names.join(" "));
