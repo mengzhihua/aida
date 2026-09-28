@@ -96,6 +96,12 @@ pub struct DmiInfo {
     pub additional: Vec<AdditionalInfo>,
     /// SMBIOS Type 42 管理控制器主机接口（MCTP / Network）。
     pub mc_host: Vec<McHostInterface>,
+    /// SMBIOS Type 14 组件分组（对标 AIDA64 主板 Group Associations）。
+    pub groups: Vec<GroupAssociation>,
+    /// SMBIOS Type 15 系统事件日志（访问方式 / 有效 / 已满）。
+    pub event_logs: Vec<SystemEventLog>,
+    /// SMBIOS Type 45 固件清单（BMC / 设备固件版本；对标 AIDA64 Firmware）。
+    pub firmware_inventory: Vec<FirmwareInventory>,
     /// Type 0 BIOS ROM 大小（KiB）。
     pub bios_rom_kb: Option<u64>,
     /// Type 0 BIOS 版本号 major.minor（有则显示）。
@@ -207,6 +213,9 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
         mgmt_thresholds: Vec::new(),
         additional: Vec::new(),
         mc_host: Vec::new(),
+        groups: Vec::new(),
+        event_logs: Vec::new(),
+        firmware_inventory: Vec::new(),
         bios_rom_kb: None,
         bios_release: None,
         notes: Vec::new(),
@@ -413,6 +422,24 @@ pub fn collect(ctx: &ProbeCtx) -> DmiInfo {
                     .filter_map(|r| mc_host_from_raw(bytes, r))
                     .take(4)
                     .collect();
+                info.groups = parsed
+                    .iter()
+                    .filter(|r| r.kind == 14)
+                    .filter_map(|r| group_from_raw(bytes, r))
+                    .take(8)
+                    .collect();
+                info.event_logs = parsed
+                    .iter()
+                    .filter(|r| r.kind == 15)
+                    .filter_map(|r| event_log_from_raw(bytes, r))
+                    .take(4)
+                    .collect();
+                info.firmware_inventory = parsed
+                    .iter()
+                    .filter(|r| r.kind == 45)
+                    .filter_map(|r| firmware_from_raw(bytes, r))
+                    .take(16)
+                    .collect();
                 if let Some(bios) = parsed.iter().find(|r| r.kind == 0) {
                     let (rom, rel) = bios_extras(bytes, bios);
                     info.bios_rom_kb = rom;
@@ -544,9 +571,12 @@ fn kind_name(kind: u8) -> String {
         37 => "Memory Channel",
         39 => "Power Supply",
         40 => "Additional Information",
+        14 => "Group Associations",
+        15 => "System Event Log",
         42 => "MC Host Interface",
         41 => "Onboard Device",
         43 => "TPM Device",
+        45 => "Firmware Inventory",
         127 => "End of Table",
         n => return format!("Type {n}"),
     }
@@ -908,6 +938,45 @@ pub struct AdditionalInfo {
 pub struct McHostInterface {
     pub kind: String,
     pub device: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GroupItem {
+    pub kind: String,
+    pub handle: u16,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GroupAssociation {
+    pub name: Option<String>,
+    /// 最多 8 个成员。个数是 `(Length - 5) / 3`，余数丢掉。
+    pub items: Vec<GroupItem>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SystemEventLog {
+    pub area_bytes: u16,
+    pub access: String,
+    pub valid: bool,
+    pub full: bool,
+    /// SMBIOS 2.0 的长度是 `0x14`，没有这个字段。
+    pub header: Option<String>,
+    pub descriptors: u8,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FirmwareInventory {
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub version_format: String,
+    pub id: Option<String>,
+    pub manufacturer: Option<String>,
+    pub release: Option<String>,
+    /// 仅 `0xFFFFFFFFFFFFFFFF` 表示未知。`0` 仍是 0 字节。
+    pub size_bytes: Option<u64>,
+    pub updatable: bool,
+    pub write_protect: bool,
+    pub state: String,
 }
 
 pub fn hex_range(start: Option<u64>, end: Option<u64>) -> String {
@@ -2361,6 +2430,120 @@ fn mc_host_device(t: u8) -> String {
         0x01 => "Network Interface".into(),
         0x02 => "Host Interface".into(),
         0x03 => "PCI".into(),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn group_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<GroupAssociation> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    if length < 0x05 || i + length > buf.len() {
+        return None;
+    }
+    let n = (length - 5) / 3;
+    let mut items = Vec::new();
+    for k in 0..n.min(8) {
+        let off = 5 + k * 3;
+        items.push(GroupItem {
+            kind: kind_name(buf[i + off]),
+            handle: word(buf, i, off + 1),
+        });
+    }
+    Some(GroupAssociation {
+        name: smbios_str(&rec.strings, buf[i + 0x04]),
+        items,
+    })
+}
+
+fn event_log_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<SystemEventLog> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    // 2.0 固定 0x14，含 Access Method Address。更短的结构不解释。
+    if length < 0x14 || i + length > buf.len() {
+        return None;
+    }
+    let status = buf[i + 0x0B];
+    let header = if length >= 0x15 {
+        Some(log_header_format(buf[i + 0x14]))
+    } else {
+        None
+    };
+    let descriptors = if length >= 0x16 { buf[i + 0x15] } else { 0 };
+    Some(SystemEventLog {
+        area_bytes: word(buf, i, 0x04),
+        access: log_access_method(buf[i + 0x0A]),
+        valid: status & 0x01 != 0,
+        full: status & 0x02 != 0,
+        header,
+        descriptors,
+    })
+}
+
+fn log_access_method(t: u8) -> String {
+    match t {
+        0x00 => "Indexed I/O 8/8".into(),
+        0x01 => "Indexed I/O 8/8/8".into(),
+        0x02 => "Indexed I/O 16/8".into(),
+        0x03 => "Memory-mapped".into(),
+        0x04 => "GPNV".into(),
+        n if n >= 0x80 => format!("OEM 0x{n:02X}"),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn log_header_format(t: u8) -> String {
+    match t {
+        0x00 => "No header".into(),
+        0x01 => "Type 1".into(),
+        n if n >= 0x80 => format!("OEM 0x{n:02X}"),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn firmware_from_raw(buf: &[u8], rec: &SmbiosRecord) -> Option<FirmwareInventory> {
+    let i = rec_offset(buf, rec)?;
+    let length = buf[i + 1] as usize;
+    // 最小长度 24（n=0）。不要用 Length 反推关联句柄个数。
+    if length < 0x18 || i + length > buf.len() {
+        return None;
+    }
+    let size = qword(buf, i, 0x0C);
+    let ch = word(buf, i, 0x14);
+    Some(FirmwareInventory {
+        name: smbios_str(&rec.strings, buf[i + 0x04]),
+        version: smbios_str(&rec.strings, buf[i + 0x05]),
+        version_format: fw_version_format(buf[i + 0x06]),
+        id: smbios_str(&rec.strings, buf[i + 0x07]),
+        manufacturer: smbios_str(&rec.strings, buf[i + 0x0A]),
+        release: smbios_str(&rec.strings, buf[i + 0x09]),
+        size_bytes: if size == u64::MAX { None } else { Some(size) },
+        updatable: ch & 0x01 != 0,
+        write_protect: ch & 0x02 != 0,
+        state: fw_state(buf[i + 0x16]),
+    })
+}
+
+fn fw_version_format(t: u8) -> String {
+    match t {
+        0x00 => "free-form".into(),
+        0x01 => "major.minor".into(),
+        0x02 => "hex32".into(),
+        0x03 => "hex64".into(),
+        n if n >= 0x80 => format!("OEM 0x{n:02X}"),
+        n => format!("0x{n:02X}"),
+    }
+}
+
+fn fw_state(t: u8) -> String {
+    match t {
+        0x01 => "Other".into(),
+        0x02 => "Unknown".into(),
+        0x03 => "Disabled".into(),
+        0x04 => "Enabled".into(),
+        0x05 => "Absent".into(),
+        0x06 => "StandbyOffline".into(),
+        0x07 => "StandbySpare".into(),
+        0x08 => "UnavailableOffline".into(),
         n => format!("0x{n:02X}"),
     }
 }
@@ -4502,5 +4685,156 @@ mod tests {
             .expect("type 42 mctp");
         assert_eq!(h.kind, "MCTP");
         assert_eq!(h.device, None);
+    }
+
+    #[test]
+    fn type14_groups_cpus_with_shared_cache() {
+        // DSP0134 Example 1: length 11 = 5 + 3*2.
+        let mut rec = vec![
+            14u8, 11, 0x28, 0x00, 0x01, 0x04, 0x08, 0x00, 0x07, 0x09, 0x00,
+        ];
+        rec.extend_from_slice(b"Primary CPU Module\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let g = recs
+            .iter()
+            .find(|r| r.kind == 14)
+            .and_then(|r| group_from_raw(&rec, r))
+            .expect("type 14");
+        assert_eq!(g.name.as_deref(), Some("Primary CPU Module"));
+        assert_eq!(g.items.len(), 2);
+        assert_eq!(g.items[0].kind, "Processor");
+        assert_eq!(g.items[0].handle, 0x0008);
+        assert_eq!(g.items[1].kind, "Cache");
+        assert_eq!(g.items[1].handle, 0x0009);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 14).map(|r| r.kind_name.as_str()),
+            Some("Group Associations")
+        );
+
+        let mut rec = vec![14u8, 5, 0, 0, 0];
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let g = recs
+            .iter()
+            .find(|r| r.kind == 14)
+            .and_then(|r| group_from_raw(&rec, r))
+            .expect("type 14 empty");
+        assert!(g.name.is_none());
+        assert!(g.items.is_empty());
+    }
+
+    #[test]
+    fn type15_event_log_memory_mapped_valid_and_full() {
+        let mut rec = vec![0u8; 0x17];
+        rec[0] = 15;
+        rec[1] = 0x17;
+        rec[0x04] = 0x00;
+        rec[0x05] = 0x10; // area 0x1000
+        rec[0x0A] = 0x03; // memory-mapped
+        rec[0x0B] = 0x03; // valid + full
+        rec[0x14] = 0x01; // Type 1 header
+        rec[0x15] = 2;
+        rec[0x16] = 2;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let e = recs
+            .iter()
+            .find(|r| r.kind == 15)
+            .and_then(|r| event_log_from_raw(&rec, r))
+            .expect("type 15");
+        assert_eq!(e.area_bytes, 0x1000);
+        assert_eq!(e.access, "Memory-mapped");
+        assert!(e.valid && e.full);
+        assert_eq!(e.header.as_deref(), Some("Type 1"));
+        assert_eq!(e.descriptors, 2);
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 15).map(|r| r.kind_name.as_str()),
+            Some("System Event Log")
+        );
+
+        let mut rec = vec![0u8; 0x13];
+        rec[0] = 15;
+        rec[1] = 0x13;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        assert!(recs
+            .iter()
+            .find(|r| r.kind == 15)
+            .and_then(|r| event_log_from_raw(&rec, r))
+            .is_none());
+    }
+
+    #[test]
+    fn type45_firmware_inventory_size_unknown_is_not_zero() {
+        let mut rec = vec![0u8; 0x18];
+        rec[0] = 45;
+        rec[1] = 0x18;
+        rec[0x04] = 1;
+        rec[0x05] = 2;
+        rec[0x06] = 0x01; // major.minor
+        rec[0x07] = 3;
+        rec[0x09] = 4;
+        rec[0x0A] = 5;
+        rec[0x0C] = 0x00;
+        rec[0x0D] = 0x10; // 0x1000
+        rec[0x14] = 0x03; // updatable + write-protect
+        rec[0x16] = 0x04; // Enabled
+        rec.extend_from_slice(b"BMC Firmware\0");
+        rec.extend_from_slice(b"1.45\0");
+        rec.extend_from_slice(b"35EQP72B\0");
+        rec.extend_from_slice(b"2021-05-15T00:00:00Z\0");
+        rec.extend_from_slice(b"Acme\0\0");
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let f = recs
+            .iter()
+            .find(|r| r.kind == 45)
+            .and_then(|r| firmware_from_raw(&rec, r))
+            .expect("type 45");
+        assert_eq!(f.name.as_deref(), Some("BMC Firmware"));
+        assert_eq!(f.version.as_deref(), Some("1.45"));
+        assert_eq!(f.version_format, "major.minor");
+        assert_eq!(f.id.as_deref(), Some("35EQP72B"));
+        assert_eq!(f.manufacturer.as_deref(), Some("Acme"));
+        assert_eq!(f.release.as_deref(), Some("2021-05-15T00:00:00Z"));
+        assert_eq!(f.size_bytes, Some(0x1000));
+        assert!(f.updatable && f.write_protect);
+        assert_eq!(f.state, "Enabled");
+        assert_eq!(
+            recs.iter().find(|r| r.kind == 45).map(|r| r.kind_name.as_str()),
+            Some("Firmware Inventory")
+        );
+
+        let mut rec = vec![0u8; 0x18];
+        rec[0] = 45;
+        rec[1] = 0x18;
+        for b in &mut rec[0x0C..0x14] {
+            *b = 0xFF;
+        }
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        let f = recs
+            .iter()
+            .find(|r| r.kind == 45)
+            .and_then(|r| firmware_from_raw(&rec, r))
+            .expect("type 45 unknown size");
+        assert_eq!(f.size_bytes, None);
+
+        let mut rec = vec![0u8; 0x17];
+        rec[0] = 45;
+        rec[1] = 0x17;
+        rec.extend_from_slice(&[0, 0]);
+        rec.extend_from_slice(&[127u8, 4, 0, 0, 0, 0]);
+        let recs = parse_smbios(&rec);
+        assert!(recs
+            .iter()
+            .find(|r| r.kind == 45)
+            .and_then(|r| firmware_from_raw(&rec, r))
+            .is_none());
     }
 }
