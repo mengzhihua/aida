@@ -184,6 +184,12 @@ pub struct BusesReport {
     pub ishtp: Vec<String>,
     /// ARM SCMI：先 `bus/scmi/devices`，再 `bus/scmi_protocol/devices`。
     pub scmi: Vec<String>,
+    /// HD Audio codec：先 `bus/hdaudio/devices`，再 `class/hdaudio`。
+    pub hdaudio: Vec<String>,
+    /// AMD CDX：先 `bus/cdx/devices`，再 `class/cdx`。
+    pub cdx: Vec<String>,
+    /// IBM Power Virtual I/O：先 `bus/vio/devices`，再 `class/vio`。
+    pub vio: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1120,6 +1126,33 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         &mut notes,
         &mut missing,
     );
+    let hdaudio = list_alt_dirs(
+        ctx,
+        "bus/hdaudio/devices",
+        "class/hdaudio",
+        8,
+        "hdaudio",
+        &mut notes,
+        &mut missing,
+    );
+    let cdx = list_alt_dirs(
+        ctx,
+        "bus/cdx/devices",
+        "class/cdx",
+        8,
+        "cdx",
+        &mut notes,
+        &mut missing,
+    );
+    let vio = list_alt_dirs(
+        ctx,
+        "bus/vio/devices",
+        "class/vio",
+        8,
+        "vio",
+        &mut notes,
+        &mut missing,
+    );
     if !missing.is_empty() {
         notes.push(format!(
             "无 {}（云主机/无对应硬件时常见）。",
@@ -1244,6 +1277,9 @@ pub fn collect(ctx: &ProbeCtx) -> BusesReport {
         usb4,
         ishtp,
         scmi,
+        hdaudio,
+        cdx,
+        vio,
         notes,
     }
 }
@@ -2108,6 +2144,9 @@ mod tests {
         fs::create_dir_all(root.join("sys/bus/usb4/devices/0-0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/ishtp/devices/ishtp0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/scmi/devices/scmi.0")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/hdaudio/devices/ehdaudio0D2")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/cdx/devices/cdx-00:00")).unwrap();
+        fs::create_dir_all(root.join("sys/bus/vio/devices/30000000")).unwrap();
         fs::create_dir_all(root.join("sys/bus/spi/devices/spi0.0")).unwrap();
         fs::create_dir_all(root.join("sys/bus/serio/devices/serio0")).unwrap();
         fs::write(
@@ -2233,6 +2272,9 @@ mod tests {
         assert_eq!(r.usb4, vec!["0-0".to_string()]);
         assert_eq!(r.ishtp, vec!["ishtp0".to_string()]);
         assert_eq!(r.scmi, vec!["scmi.0".to_string()]);
+        assert_eq!(r.hdaudio, vec!["ehdaudio0D2".to_string()]);
+        assert_eq!(r.cdx, vec!["cdx-00:00".to_string()]);
+        assert_eq!(r.vio, vec!["30000000".to_string()]);
         assert_eq!(r.spi, vec!["spi0.0".to_string()]);
         assert_eq!(r.serio, vec!["serio0".to_string()]);
         assert!(
@@ -4189,6 +4231,78 @@ mod tests {
                 inner.split('/').all(|s| s != "scmi")
             })),
             "present scmi_protocol must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn leftover_hdaudio_cdx_vio_when_missing() {
+        let root = std::env::temp_dir()
+            .join(format!("aida-hdaudio-cdx-vio-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let inner = r.notes.iter().find_map(|n| leftover_note(n)).unwrap_or("");
+        let labels: Vec<&str> = inner.split('/').collect();
+        assert!(
+            labels.contains(&"hdaudio") && labels.contains(&"cdx") && labels.contains(&"vio"),
+            "missing hdaudio/cdx/vio must leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hdaudio_from_bus_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-hdaudio-present-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/bus/hdaudio/devices/ehdaudio0D2")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.hdaudio, vec!["ehdaudio0D2".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "hdaudio")
+            })),
+            "present hdaudio must not leftover: {:?}",
+            r.notes
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cdx_class_is_not_leftover() {
+        let root = std::env::temp_dir().join(format!("aida-cdx-class-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sys/class/cdx/cdx0")).unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        assert_eq!(r.cdx, vec!["cdx0".to_string()]);
+        assert!(
+            r.notes.iter().all(|n| leftover_note(n).is_none_or(|inner| {
+                inner.split('/').all(|s| s != "cdx")
+            })),
+            "present cdx class must not leftover: {:?}",
             r.notes
         );
         let _ = fs::remove_dir_all(&root);

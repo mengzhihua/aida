@@ -341,6 +341,12 @@ pub struct NetReport {
     /// `1` 尊重 RA PIO 有效寿命（RFC 8981）。
     pub ipv6_ra_honor_pio_life: Sample<String>,
     pub ipv6_ra_honor_pio_life_dev: Vec<String>,
+    /// SRv6 HMAC：`-1` 默认，`0` 不校验，`1` 只收带有效 HMAC 的 SRH。
+    pub ipv6_seg6_require_hmac: Sample<String>,
+    pub ipv6_seg6_require_hmac_dev: Vec<String>,
+    /// RA 默认路由的度量（内核默认 1024）。
+    pub ipv6_ra_defrtr_metric: Sample<String>,
+    pub ipv6_ra_defrtr_metric_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1048,6 +1054,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let pio_all = ipv6_ra_honor_pio_life.value.clone();
     let ipv6_ra_honor_pio_life_dev =
         conf_dev_diffs(ctx, "ipv6", "ra_honor_pio_life", pio_all.as_deref());
+    let ipv6_seg6_require_hmac =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/seg6_require_hmac"));
+    let hmac_all = ipv6_seg6_require_hmac.value.clone();
+    let ipv6_seg6_require_hmac_dev =
+        conf_dev_diffs(ctx, "ipv6", "seg6_require_hmac", hmac_all.as_deref());
+    let ipv6_ra_defrtr_metric =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/ra_defrtr_metric"));
+    let metric_all = ipv6_ra_defrtr_metric.value.clone();
+    let ipv6_ra_defrtr_metric_dev =
+        conf_dev_diffs(ctx, "ipv6", "ra_defrtr_metric", metric_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1317,6 +1333,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_rpl_seg_enabled_dev,
                 ipv6_ra_honor_pio_life,
                 ipv6_ra_honor_pio_life_dev,
+                ipv6_seg6_require_hmac,
+                ipv6_seg6_require_hmac_dev,
+                ipv6_ra_defrtr_metric,
+                ipv6_ra_defrtr_metric_dev,
                 notes,
             };
         }
@@ -1631,6 +1651,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_rpl_seg_enabled_dev,
         ipv6_ra_honor_pio_life,
         ipv6_ra_honor_pio_life_dev,
+        ipv6_seg6_require_hmac,
+        ipv6_seg6_require_hmac_dev,
+        ipv6_ra_defrtr_metric,
+        ipv6_ra_defrtr_metric_dev,
         notes,
     }
 }
@@ -3413,6 +3437,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/seg6_require_hmac"),
+            "-1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ra_defrtr_metric"),
+            "1024\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -3627,6 +3661,8 @@ mod tests {
         assert_eq!(r.ipv6_seg6_enabled.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_rpl_seg_enabled.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_ra_honor_pio_life.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_seg6_require_hmac.value.as_deref(), Some("-1"));
+        assert_eq!(r.ipv6_ra_defrtr_metric.value.as_deref(), Some("1024"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -4027,6 +4063,26 @@ mod tests {
             "1\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/seg6_require_hmac"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/seg6_require_hmac"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ra_defrtr_metric"),
+            "1024\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/ra_defrtr_metric"),
+            "256\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -4327,6 +4383,18 @@ mod tests {
             r.ipv6_ra_honor_pio_life_dev.iter().any(|s| s == "lo:1"),
             "lo ra_honor_pio_life=1 must differ from conf/all: {:?}",
             r.ipv6_ra_honor_pio_life_dev
+        );
+        assert_eq!(r.ipv6_seg6_require_hmac.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_seg6_require_hmac_dev.iter().any(|s| s == "lo:1"),
+            "lo seg6_require_hmac=1 must differ from conf/all: {:?}",
+            r.ipv6_seg6_require_hmac_dev
+        );
+        assert_eq!(r.ipv6_ra_defrtr_metric.value.as_deref(), Some("1024"));
+        assert!(
+            r.ipv6_ra_defrtr_metric_dev.iter().any(|s| s == "lo:256"),
+            "lo ra_defrtr_metric=256 must differ from conf/all: {:?}",
+            r.ipv6_ra_defrtr_metric_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
