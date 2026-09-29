@@ -1,6 +1,8 @@
 //! 网络接口：`/sys/class/net` + `/proc/net/dev` 计数，地址用 `getifaddrs`（不是 `ip`/`ifconfig`）。
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::ffi::CStr;
 use std::fs;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -511,6 +513,7 @@ pub fn collect(ctx: &ProbeCtx) -> NetReport {
 }
 
 pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) -> NetReport {
+    clear_conf_cache();
     let mut notes = Vec::new();
     let addrs = interface_addresses();
     let snmp = parse_snmp(&access::read_trimmed(ctx.proc_path("net/snmp")));
@@ -1318,10 +1321,39 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             };
         }
     };
+    let dev_sample = access::read_trimmed(ctx.proc_path("net/dev"));
+    let dev_by_name: HashMap<String, DevCounters> = dev_sample
+        .value
+        .as_deref()
+        .map(|text| {
+            parse_proc_net_dev(text)
+                .into_iter()
+                .map(|row| (row.name.clone(), row))
+                .collect()
+        })
+        .unwrap_or_default();
+    let prev_by_name: HashMap<&str, (u64, u64)> = prev
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| (s.name.as_str(), (s.rx_bytes, s.tx_bytes)))
+        .collect();
     let mut interfaces = Vec::new();
     let mut bridges = Vec::new();
     let mut bonds = Vec::new();
+    let mut skipped_virtual = 0usize;
     for name in names {
+        if iface_counters_only(&name) {
+            skipped_virtual += 1;
+            interfaces.push(ephemeral_iface(
+                &name,
+                dev_by_name.get(&name),
+                &dev_sample.source,
+                &prev_by_name,
+                dt_sec,
+                addrs.get(&name).cloned().unwrap_or_default(),
+            ));
+            continue;
+        }
         let dir = root.join(&name);
         let kind_code = access::read_trimmed(dir.join("type"));
         let kind = {
@@ -1358,30 +1390,34 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ..
             } => match s.parse::<i64>() {
                 Ok(v) if v >= 0 => Sample::ok(v, source),
-                Ok(_) => Sample::unsupported(source, "speed=-1 表示内核未知（虚拟网卡常见）"),
+                Ok(_) => Sample::unsupported(source, "网卡未报告链路速率（虚拟接口常见）"),
                 Err(_) => Sample::error(source, "无法解析 speed"),
             },
-            s => Sample {
-                value: None,
-                access: s.access,
-                source: s.source,
-                hint: s.hint,
-            },
+            s => {
+                if s.access == AccessKind::Error
+                    && s.hint.as_deref().is_some_and(|h| {
+                        h.contains("Invalid argument") || h.contains("os error 22")
+                    })
+                {
+                    Sample::unsupported(
+                        s.source,
+                        "网卡未报告链路速率（loopback / 虚拟接口常见）",
+                    )
+                } else {
+                    Sample {
+                        value: None,
+                        access: s.access,
+                        source: s.source,
+                        hint: s.hint,
+                    }
+                }
+            }
         };
         let stats = dir.join("statistics");
         let rx = access::read_u64(stats.join("rx_bytes"));
         let tx = access::read_u64(stats.join("tx_bytes"));
-        let (rx_bps, tx_bps) = match (prev, rx.value, tx.value) {
-            (Some(p), Some(rxb), Some(txb)) if dt_sec > 0.0 => {
-                if let Some(old) = p.iter().find(|x| x.name == name) {
-                    (
-                        Some((rxb.saturating_sub(old.rx_bytes) as f64) / dt_sec),
-                        Some((txb.saturating_sub(old.tx_bytes) as f64) / dt_sec),
-                    )
-                } else {
-                    (None, None)
-                }
-            }
+        let (rx_bps, tx_bps) = match (rx.value, tx.value) {
+            (Some(rxb), Some(txb)) => rate_bps(&prev_by_name, &name, rxb, txb, dt_sec),
             _ => (None, None),
         };
         let (rx_queues, tx_queues) = count_queues(&dir.join("queues"));
@@ -1430,6 +1466,11 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
             tx_queues,
             name,
         });
+    }
+    if skipped_virtual > 0 {
+        notes.push(format!(
+            "虚拟接口 {skipped_virtual} 个只记了 /proc/net/dev 计数，没有逐个打开 sysfs。"
+        ));
     }
     NetReport {
         interfaces,
@@ -1709,37 +1750,193 @@ pub fn counters(report: &NetReport) -> Vec<NetSnap> {
         .collect()
 }
 
-/// GUI 快路径：只更新已有接口计数与 sockstat/snmp/conntrack，不读 TCP 表和调优项。
+struct DevCounters {
+    name: String,
+    rx_bytes: u64,
+    rx_packets: u64,
+    rx_errors: u64,
+    tx_bytes: u64,
+    tx_packets: u64,
+    tx_errors: u64,
+}
+
+/// `/proc/net/dev` 一次给出全部接口计数。快路径用它，避免对每个网卡打开一串 sysfs。
+fn parse_proc_net_dev(text: &str) -> Vec<DevCounters> {
+    let mut out = Vec::new();
+    for line in text.lines().skip(2) {
+        let Some((name, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let nums: Vec<u64> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        // rx 8 列 + tx 至少 bytes/packets/errs
+        if nums.len() < 11 {
+            continue;
+        }
+        out.push(DevCounters {
+            name: name.to_string(),
+            rx_bytes: nums[0],
+            rx_packets: nums[1],
+            rx_errors: nums[2],
+            tx_bytes: nums[8],
+            tx_packets: nums[9],
+            tx_errors: nums[10],
+        });
+    }
+    out
+}
+
+fn rate_bps(
+    prev: &HashMap<&str, (u64, u64)>,
+    name: &str,
+    rxb: u64,
+    txb: u64,
+    dt_sec: f64,
+) -> (Option<f64>, Option<f64>) {
+    if dt_sec <= 0.0 {
+        return (None, None);
+    }
+    match prev.get(name) {
+        Some((old_rx, old_tx)) => (
+            Some((rxb.saturating_sub(*old_rx) as f64) / dt_sec),
+            Some((txb.saturating_sub(*old_tx) as f64) / dt_sec),
+        ),
+        None => (None, None),
+    }
+}
+
+/// veth/cni 等只带 `/proc/net/dev` 计数。MAC、速率、队列不打开 sysfs。
+fn ephemeral_iface(
+    name: &str,
+    row: Option<&DevCounters>,
+    source: &str,
+    prev: &HashMap<&str, (u64, u64)>,
+    dt_sec: f64,
+    addresses: Vec<String>,
+) -> NetIface {
+    let (rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors, rx_bps, tx_bps) =
+        if let Some(row) = row {
+            let (rx_bps, tx_bps) = rate_bps(prev, name, row.rx_bytes, row.tx_bytes, dt_sec);
+            (
+                Sample::ok(row.rx_bytes, source),
+                Sample::ok(row.tx_bytes, source),
+                Sample::ok(row.rx_packets, source),
+                Sample::ok(row.tx_packets, source),
+                Sample::ok(row.rx_errors, source),
+                Sample::ok(row.tx_errors, source),
+                rx_bps,
+                tx_bps,
+            )
+        } else {
+            (
+                Sample::missing(source),
+                Sample::missing(source),
+                Sample::missing(source),
+                Sample::missing(source),
+                Sample::missing(source),
+                Sample::missing(source),
+                None,
+                None,
+            )
+        };
+    NetIface {
+        name: name.to_string(),
+        operstate: Sample::missing(source),
+        mac: Sample::missing(source),
+        mtu: Sample::missing(source),
+        speed_mbps: Sample::missing(source),
+        duplex: Sample::missing(source),
+        carrier: Sample::missing(source),
+        kind: "Virtual".into(),
+        driver: Sample::missing(source),
+        rx_bytes,
+        tx_bytes,
+        rx_packets,
+        tx_packets,
+        rx_errors,
+        tx_errors,
+        rx_bps,
+        tx_bps,
+        addresses,
+        wireless: false,
+        rx_queues: 0,
+        tx_queues: 0,
+    }
+}
+
+/// GUI 快路径：优先读一次 `/proc/net/dev`，再更新 sockstat/snmp/conntrack。
+/// 不读 TCP 表、调优项，也不逐个网卡打开 operstate/队列。
 pub fn refresh_runtime(
     report: &mut NetReport,
     ctx: &ProbeCtx,
     prev: Option<&[NetSnap]>,
     dt_sec: f64,
 ) {
+    let dev_rows = match access::read_trimmed(ctx.proc_path("net/dev")) {
+        Sample {
+            access: AccessKind::Ok,
+            value: Some(text),
+            source,
+            ..
+        } => {
+            let rows = parse_proc_net_dev(&text);
+            if rows.is_empty() {
+                None
+            } else {
+                Some((source, rows))
+            }
+        }
+        _ => None,
+    };
+    let dev_map: Option<(String, HashMap<String, DevCounters>)> = dev_rows.map(|(source, rows)| {
+        (
+            source,
+            rows.into_iter().map(|row| (row.name.clone(), row)).collect(),
+        )
+    });
+    let prev_by_name: HashMap<&str, (u64, u64)> = prev
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| (s.name.as_str(), (s.rx_bytes, s.tx_bytes)))
+        .collect();
     for iface in &mut report.interfaces {
-        let dir = ctx.sys_path(format!("class/net/{}", iface.name));
-        let stats = dir.join("statistics");
+        let hit = dev_map.as_ref().and_then(|(source, rows)| {
+            rows.get(&iface.name).map(|row| {
+                (
+                    source.clone(),
+                    row.rx_bytes,
+                    row.rx_packets,
+                    row.rx_errors,
+                    row.tx_bytes,
+                    row.tx_packets,
+                    row.tx_errors,
+                )
+            })
+        });
+        if let Some((source, rx_b, rx_p, rx_e, tx_b, tx_p, tx_e)) = hit {
+            let (rx_bps, tx_bps) = rate_bps(&prev_by_name, &iface.name, rx_b, tx_b, dt_sec);
+            iface.rx_bytes = Sample::ok(rx_b, source.clone());
+            iface.tx_bytes = Sample::ok(tx_b, source.clone());
+            iface.rx_packets = Sample::ok(rx_p, source.clone());
+            iface.tx_packets = Sample::ok(tx_p, source.clone());
+            iface.rx_errors = Sample::ok(rx_e, source.clone());
+            iface.tx_errors = Sample::ok(tx_e, source);
+            iface.rx_bps = rx_bps;
+            iface.tx_bps = tx_bps;
+            continue;
+        }
+        let stats = ctx
+            .sys_path(format!("class/net/{}", iface.name))
+            .join("statistics");
         let rx = access::read_u64(stats.join("rx_bytes"));
         let tx = access::read_u64(stats.join("tx_bytes"));
-        let (rx_bps, tx_bps) = match (prev, rx.value, tx.value) {
-            (Some(p), Some(rxb), Some(txb)) if dt_sec > 0.0 => {
-                if let Some(old) = p.iter().find(|x| x.name == iface.name) {
-                    (
-                        Some((rxb.saturating_sub(old.rx_bytes) as f64) / dt_sec),
-                        Some((txb.saturating_sub(old.tx_bytes) as f64) / dt_sec),
-                    )
-                } else {
-                    (None, None)
-                }
-            }
+        let (rx_bps, tx_bps) = match (rx.value, tx.value) {
+            (Some(rxb), Some(txb)) => rate_bps(&prev_by_name, &iface.name, rxb, txb, dt_sec),
             _ => (None, None),
         };
-        iface.operstate = access::read_trimmed(dir.join("operstate"));
-        iface.carrier = access::read_trimmed(dir.join("carrier"));
-        iface.rx_packets = access::read_u64(stats.join("rx_packets"));
-        iface.tx_packets = access::read_u64(stats.join("tx_packets"));
-        iface.rx_errors = access::read_u64(stats.join("rx_errors"));
-        iface.tx_errors = access::read_u64(stats.join("tx_errors"));
         iface.rx_bytes = rx;
         iface.tx_bytes = tx;
         iface.rx_bps = rx_bps;
@@ -2074,21 +2271,76 @@ pub fn parse_rt6_stats(sample: &Sample<String>) -> Sample<u64> {
     }
 }
 
+/// 一次 collect 里同一目录会被问几十次。缓存名字，并且最多看 48 个接口。
+const CONF_SCAN_CAP: usize = 48;
+
+thread_local! {
+    static CONF_NAMES: RefCell<HashMap<PathBuf, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+fn clear_conf_cache() {
+    CONF_NAMES.with(|c| c.borrow_mut().clear());
+}
+
+/// 容器和隧道网卡经常上百个，名字还排在 eth/en 前面。sysctl 差异扫描把它们放后面。
+pub fn iface_is_ephemeral(name: &str) -> bool {
+    const LATE: &[&str] = &[
+        "veth", "docker", "br-", "cni", "flannel", "cali", "lxc", "virbr", "tap", "tun", "ifb",
+        "dummy", "vxlan", "geneve", "podman",
+    ];
+    LATE.iter().any(|p| name.starts_with(p))
+}
+
+/// 高基数临时口只记 `/proc/net/dev`。docker0、`br-*`、virbr 仍读 sysfs，网桥成员不丢。
+/// `br0` 不以 `br-` 开头，不算临时口。
+pub fn iface_counters_only(name: &str) -> bool {
+    iface_is_ephemeral(name)
+        && !name.starts_with("docker")
+        && !name.starts_with("br-")
+        && !name.starts_with("virbr")
+}
+
+fn conf_scan_rank(name: &str) -> u8 {
+    if iface_is_ephemeral(name) { 1 } else { 0 }
+}
+
+fn cached_conf_names(root: &std::path::Path) -> Vec<String> {
+    CONF_NAMES.with(|c| {
+        let mut map = c.borrow_mut();
+        if let Some(v) = map.get(root) {
+            return v.clone();
+        }
+        let mut names = match access::list_dir_names(root) {
+            Sample {
+                access: AccessKind::Ok,
+                value: Some(n),
+                ..
+            } => n,
+            _ => Vec::new(),
+        };
+        names.sort_by(|a, b| {
+            conf_scan_rank(a)
+                .cmp(&conf_scan_rank(b))
+                .then_with(|| a.cmp(b))
+        });
+        map.insert(root.to_path_buf(), names.clone());
+        names
+    })
+}
+
 fn conf_dev_diffs(ctx: &ProbeCtx, family: &str, attr: &str, all: Option<&str>) -> Vec<String> {
     let root = ctx.proc_path(format!("sys/net/{family}/conf"));
-    let names = match access::list_dir_names(&root) {
-        Sample {
-            access: AccessKind::Ok,
-            value: Some(n),
-            ..
-        } => n,
-        _ => return Vec::new(),
-    };
+    let names = cached_conf_names(&root);
     let mut out = Vec::new();
+    let mut seen = 0usize;
     for name in names {
         if name == "all" || name == "default" {
             continue;
         }
+        if seen >= CONF_SCAN_CAP {
+            break;
+        }
+        seen += 1;
         let s = access::read_trimmed(root.join(&name).join(attr));
         if let Some(v) = s.value.as_deref() {
             if all != Some(v) {
@@ -2320,6 +2572,127 @@ mod tests {
             Some(131072),
             "fast path must not re-read tcp knobs"
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_runtime_prefers_proc_net_dev() {
+        let rows = parse_proc_net_dev(
+            "Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n  eth0: 3000 4 1 0 0 0 0 0 8000 5 2 0 0 0 0 0\n    lo: 9 1 0 0 0 0 0 0 9 1 0 0 0 0 0 0\n",
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "eth0");
+        assert_eq!(rows[0].rx_bytes, 3000);
+        assert_eq!(rows[0].tx_errors, 2);
+        assert_eq!(rows[1].name, "lo");
+
+        let root = std::env::temp_dir().join(format!("aida-net-dev-{}", std::process::id()));
+        let iface = root.join("sys/class/net/eth0");
+        fs::create_dir_all(iface.join("statistics")).unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::write(iface.join("operstate"), "up\n").unwrap();
+        fs::write(iface.join("type"), "1\n").unwrap();
+        fs::write(iface.join("statistics/rx_bytes"), "1000\n").unwrap();
+        fs::write(iface.join("statistics/tx_bytes"), "2000\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        assert_eq!(r.interfaces[0].rx_bytes.value, Some(1000));
+        fs::write(
+            root.join("proc/net/dev"),
+            "Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n  eth0: 3000 4 1 0 0 0 0 0 8000 5 2 0 0 0 0 0\n",
+        )
+        .unwrap();
+        fs::write(iface.join("statistics/rx_bytes"), "1000\n").unwrap();
+        let prev = counters(&r);
+        refresh_runtime(&mut r, &ctx, Some(&prev), 1.0);
+        assert_eq!(r.interfaces[0].rx_bytes.value, Some(3000));
+        assert_eq!(r.interfaces[0].rx_bps, Some(2000.0));
+        assert_eq!(r.interfaces[0].tx_bps, Some(6000.0));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ephemeral_ifaces_skip_sysfs_and_take_proc_net_dev() {
+        assert!(iface_is_ephemeral("veth0"));
+        assert!(iface_is_ephemeral("br-1"));
+        assert!(iface_is_ephemeral("docker0"));
+        assert!(!iface_is_ephemeral("br0"));
+        assert!(!iface_is_ephemeral("eth0"));
+        assert!(iface_counters_only("veth0"));
+        assert!(iface_counters_only("cali123"));
+        assert!(!iface_counters_only("docker0"));
+        assert!(!iface_counters_only("br-1"));
+        assert!(!iface_counters_only("virbr0"));
+        assert!(!iface_counters_only("br0"));
+
+        let root = std::env::temp_dir().join(format!("aida-net-veth-{}", std::process::id()));
+        let eth = root.join("sys/class/net/eth0");
+        fs::create_dir_all(eth.join("statistics")).unwrap();
+        fs::write(eth.join("address"), "aa:bb:cc:dd:ee:ff\n").unwrap();
+        fs::write(eth.join("type"), "1\n").unwrap();
+        fs::write(eth.join("operstate"), "up\n").unwrap();
+        fs::write(eth.join("statistics/rx_bytes"), "10\n").unwrap();
+        fs::write(eth.join("statistics/tx_bytes"), "20\n").unwrap();
+        for i in 0..40 {
+            fs::create_dir_all(root.join(format!("sys/class/net/veth{i}"))).unwrap();
+        }
+        fs::write(
+            root.join("sys/class/net/veth0/address"),
+            "should-not-be-read\n",
+        )
+        .unwrap();
+        let docker = root.join("sys/class/net/docker0");
+        fs::create_dir_all(docker.join("bridge")).unwrap();
+        fs::create_dir_all(docker.join("brif/veth0")).unwrap();
+        fs::write(docker.join("type"), "1\n").unwrap();
+        fs::write(docker.join("operstate"), "up\n").unwrap();
+        fs::write(docker.join("address"), "11:22:33:44:55:66\n").unwrap();
+        fs::write(docker.join("bridge/bridge_id"), "8000.docker\n").unwrap();
+        fs::write(docker.join("bridge/stp_state"), "0\n").unwrap();
+        fs::create_dir_all(root.join("proc/net")).unwrap();
+        fs::write(
+            root.join("proc/net/dev"),
+            "Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n  veth0: 3000 4 1 0 0 0 0 0 8000 5 2 0 0 0 0 0\n   eth0: 10 1 0 0 0 0 0 0 20 1 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let r = collect(&ctx);
+        let eth0 = r.interfaces.iter().find(|i| i.name == "eth0").unwrap();
+        assert_eq!(eth0.mac.value.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(eth0.kind, "Ethernet");
+        let veth0 = r.interfaces.iter().find(|i| i.name == "veth0").unwrap();
+        assert_eq!(veth0.kind, "Virtual");
+        assert_eq!(veth0.rx_bytes.value, Some(3000));
+        assert_eq!(veth0.tx_bytes.value, Some(8000));
+        assert_ne!(veth0.mac.value.as_deref(), Some("should-not-be-read"));
+        assert!(
+            veth0.mac.source.contains("net/dev"),
+            "skipped sysfs, source={}",
+            veth0.mac.source
+        );
+        let veth1 = r.interfaces.iter().find(|i| i.name == "veth1").unwrap();
+        assert!(veth1.rx_bytes.value.is_none());
+        assert!(
+            r.notes.iter().any(|n| n.contains("虚拟接口 40")),
+            "notes={:?}",
+            r.notes
+        );
+        let docker0 = r.interfaces.iter().find(|i| i.name == "docker0").unwrap();
+        assert_eq!(docker0.kind, "Bridge");
+        assert_eq!(docker0.mac.value.as_deref(), Some("11:22:33:44:55:66"));
+        assert!(r.bridges.iter().any(|b| b.name == "docker0"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -3882,5 +4255,32 @@ mod tests {
         assert_eq!(ipv6_accept_source_route_display(&pos), "2 RH2");
         let neg = Sample::ok("-1".into(), "accept_source_route");
         assert_eq!(ipv6_accept_source_route_display(&neg), "-1 拒RH");
+    }
+
+    #[test]
+    fn conf_scan_keeps_physical_iface_ahead_of_veth_crowd() {
+        let root = std::env::temp_dir().join(format!("aida-conf-cap-{}", std::process::id()));
+        let conf = root.join("proc/sys/net/ipv4/conf");
+        fs::create_dir_all(conf.join("all")).unwrap();
+        fs::write(conf.join("all/rp_filter"), "0\n").unwrap();
+        fs::create_dir_all(conf.join("eth0")).unwrap();
+        fs::write(conf.join("eth0/rp_filter"), "2\n").unwrap();
+        for i in 0..60 {
+            let name = format!("veth{i}");
+            fs::create_dir_all(conf.join(&name)).unwrap();
+            fs::write(conf.join(&name).join("rp_filter"), "1\n").unwrap();
+        }
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        clear_conf_cache();
+        let diffs = conf_dev_diffs(&ctx, "ipv4", "rp_filter", Some("0"));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(diffs.len(), 8, "{diffs:?}");
+        assert_eq!(diffs[0], "eth0:2", "physical iface must be compared first: {diffs:?}");
     }
 }

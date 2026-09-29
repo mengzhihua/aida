@@ -561,8 +561,26 @@ fn live_snapshot_json_and_html() {
         !snap.numa.nodes.is_empty(),
         "至少应有 NUMA node0（非 NUMA 内核也会导出 node0）"
     );
+    assert!(json.contains("\"packages\""));
+    assert!(json.contains("\"package_count\""));
     let html = export::to_html(&snap);
     assert!(html.contains("AIDA Linux"));
+    assert!(
+        html.contains("本环境摘要")
+            || html.contains("本环境不可用")
+            || html.contains("普通用户"),
+        "empty DMI/GPU/sensors should collapse to an environment summary"
+    );
+    assert!(html.contains("已装软件"));
+    let dmi_spam = html.matches("容器或精简虚拟机可能不导出 DMI").count();
+    assert!(
+        dmi_spam <= 1,
+        "DMI hint should not repeat per field, got {dmi_spam}"
+    );
+    assert!(
+        !html.contains("3.00 B") && !html.contains("5.00 B"),
+        "iomem must not show hidden region counts as bytes"
+    );
     let text = export::to_text(&snap);
     assert!(text.contains("AIDA Linux 硬件报告"));
     assert!(text.contains("[CPU]"));

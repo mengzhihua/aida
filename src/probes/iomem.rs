@@ -71,7 +71,12 @@ pub fn parse_iomem(text: &str) -> Vec<IomemRegion> {
         };
         let start = u64::from_str_radix(a.trim(), 16).unwrap_or(0);
         let end = u64::from_str_radix(b.trim(), 16).unwrap_or(0);
-        let size = end.saturating_sub(start).saturating_add(1);
+        // 非 root 时内核把起止写成 0-0，此时 +1 会把「条目数」显示成 N 字节。
+        let size = if start == 0 && end == 0 {
+            0
+        } else {
+            end.saturating_sub(start).saturating_add(1)
+        };
         out.push(IomemRegion {
             start,
             end,
@@ -118,5 +123,16 @@ mod tests {
         let ports = parse_iomem("0000-0000 : serial\n0000-0000 : PCI conf1\n");
         assert_eq!(ports.len(), 2);
         assert_eq!(ports[0].name, "serial");
+        assert_eq!(ports[0].size, 0);
+        let hidden = parse_iomem(
+            "00000000-00000000 : System RAM\n00000000-00000000 : System RAM\n00000000-00000000 : System RAM\n00000000-00000000 : virtio-pci-modern\n00000000-00000000 : virtio-pci-modern\n00000000-00000000 : virtio-pci-modern\n00000000-00000000 : virtio-pci-modern\n00000000-00000000 : virtio-pci-modern\n",
+        );
+        let sum = summarize(&hidden);
+        let ram = sum.iter().find(|x| x.name == "System RAM").unwrap();
+        assert_eq!(ram.count, 3);
+        assert_eq!(ram.size, 0, "hidden addresses must not become N bytes");
+        let virt = sum.iter().find(|x| x.name == "virtio-pci-modern").unwrap();
+        assert_eq!(virt.count, 5);
+        assert_eq!(virt.size, 0);
     }
 }

@@ -205,7 +205,7 @@ pub fn format_rate(bps: f64) -> String {
     }
 }
 
-/// GUI 历史页最多回放这么多样本（约 30 分钟 @ 1Hz）。磁盘 JSONL 也按这个裁。
+/// GUI 历史页最多回放这么多样本（聚焦约 2 秒一条时大约一小时）。磁盘 JSONL 也按这个裁。
 pub const HISTORY_LOAD_CAP: usize = 1800;
 /// 从文件尾估算每条样本的字节，用来只读最后一段。
 pub const HISTORY_BYTES_PER_SAMPLE: u64 = 1024;

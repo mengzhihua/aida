@@ -1,5 +1,7 @@
 //! 系统软件信息：os-release、内核、内存、启动参数。不调用 hostnamectl / uname。
 
+use std::path::{Path, PathBuf};
+
 use serde::Serialize;
 
 use crate::access::{self, AccessKind, ProbeCtx, Sample};
@@ -46,7 +48,17 @@ pub struct SoftwareInfo {
     pub address_bits: Sample<String>,
     pub profiling: Sample<String>,
     pub filesystems: Vec<String>,
+    /// 已装软件（dpkg/apk 状态文件）。对标 AIDA64 Software，不调用 `dpkg -l`。
+    pub package_manager: Option<String>,
+    pub package_count: usize,
+    pub packages: Vec<InstalledPackage>,
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct InstalledPackage {
+    pub name: String,
+    pub version: String,
 }
 
 pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
@@ -86,13 +98,15 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
 
     let mut notes = Vec::new();
     let locks = access::read_trimmed(ctx.proc_path("locks"));
-    let file_locks =
-        if locks.access == AccessKind::PermissionDenied || locks.access == AccessKind::Error {
+        let file_locks =
+            if locks.access == AccessKind::PermissionDenied || locks.access == AccessKind::Error {
             notes.push(locks.access_label());
             0
         } else {
             count_lock_lines(&locks)
         };
+
+    let (package_manager, package_count, packages) = collect_packages(ctx);
 
     SoftwareInfo {
         os_name: os.pretty,
@@ -140,8 +154,24 @@ pub fn collect(ctx: &ProbeCtx) -> SoftwareInfo {
         address_bits: access::read_trimmed(ctx.sys_path("kernel/address_bits")),
         profiling: access::read_trimmed(ctx.sys_path("kernel/profiling")),
         filesystems: parse_filesystems(&access::read_trimmed(ctx.proc_path("filesystems"))),
+        package_manager,
+        package_count,
+        packages,
         notes,
     }
+}
+
+/// 慢路径：更新会变的内核计数。不重读已装包和 `config.gz`（这两项在启动时读一次）。
+pub fn refresh_slow(info: &mut SoftwareInfo, ctx: &ProbeCtx) {
+    refresh_runtime(info, ctx);
+    let (tainted, taint_flags) =
+        parse_taint(&access::read_trimmed(ctx.proc_path("sys/kernel/tainted")));
+    info.tainted = tainted;
+    info.taint_flags = taint_flags;
+    info.oops_count = access::read_u64(ctx.sys_path("kernel/oops_count"));
+    info.warn_count = access::read_u64(ctx.sys_path("kernel/warn_count"));
+    info.kexec_loaded = access::read_trimmed(ctx.sys_path("kernel/kexec_loaded"));
+    info.uevent_seqnum = access::read_u64(ctx.sys_path("kernel/uevent_seqnum"));
 }
 
 /// GUI 快路径：只更新 loadavg / uptime / entropy，不读 os-release、config.gz、locks。
@@ -398,16 +428,18 @@ pub(crate) fn parse_os_release_fields(sample: &Sample<String>) -> OsRelease {
     OsRelease {
         pretty: pretty
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source.clone())),
+            .unwrap_or_else(|| Sample::absent(source.clone(), "os-release 无 PRETTY_NAME")),
         id: id
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source.clone())),
+            .unwrap_or_else(|| Sample::absent(source.clone(), "os-release 无 ID")),
         id_like: id_like
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source.clone())),
+            .unwrap_or_else(|| {
+                Sample::absent(source.clone(), "os-release 无 ID_LIKE（Debian 等发行版常见）")
+            }),
         version: version
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source)),
+            .unwrap_or_else(|| Sample::absent(source, "os-release 无 VERSION_ID")),
     }
 }
 
@@ -497,14 +529,131 @@ fn parse_meminfo(sample: &Sample<String>) -> Mem {
     Mem {
         total: total
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source.clone())),
+            .unwrap_or_else(|| Sample::absent(source.clone(), "meminfo 无 MemTotal")),
         available: available
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source.clone())),
+            .unwrap_or_else(|| Sample::absent(source.clone(), "meminfo 无 MemAvailable")),
         swap: swap
             .map(|v| Sample::ok(v, source.clone()))
-            .unwrap_or_else(|| Sample::missing(source)),
+            .unwrap_or_else(|| Sample::absent(source, "meminfo 无 SwapTotal")),
     }
+}
+
+const PACKAGE_CAP: usize = 256;
+
+fn var_lib(ctx: &ProbeCtx, rel: &str) -> PathBuf {
+    if ctx.etc == Path::new("/etc") {
+        PathBuf::from("/var/lib").join(rel)
+    } else {
+        ctx.etc
+            .parent()
+            .unwrap_or(ctx.etc.as_path())
+            .join("var/lib")
+            .join(rel)
+    }
+}
+
+fn collect_packages(ctx: &ProbeCtx) -> (Option<String>, usize, Vec<InstalledPackage>) {
+    let dpkg = var_lib(ctx, "dpkg/status");
+    if let Sample {
+        access: AccessKind::Ok,
+        value: Some(text),
+        ..
+    } = access::read_trimmed(&dpkg)
+    {
+        let all = parse_dpkg_status(&text);
+        let count = all.len();
+        let mut packages = all;
+        packages.truncate(PACKAGE_CAP);
+        return (Some("dpkg".into()), count, packages);
+    }
+    let apk = if ctx.etc == Path::new("/etc") {
+        PathBuf::from("/lib/apk/db/installed")
+    } else {
+        ctx.etc
+            .parent()
+            .unwrap_or(ctx.etc.as_path())
+            .join("lib/apk/db/installed")
+    };
+    if let Sample {
+        access: AccessKind::Ok,
+        value: Some(text),
+        ..
+    } = access::read_trimmed(&apk)
+    {
+        let all = parse_apk_installed(&text);
+        let count = all.len();
+        let mut packages = all;
+        packages.truncate(PACKAGE_CAP);
+        return (Some("apk".into()), count, packages);
+    }
+    (None, 0, Vec::new())
+}
+
+pub(crate) fn parse_dpkg_status(text: &str) -> Vec<InstalledPackage> {
+    let mut out = Vec::new();
+    let mut name: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut installed = false;
+    let mut push = |name: &mut Option<String>, version: &mut Option<String>, installed: &mut bool| {
+        if *installed {
+            if let (Some(n), Some(v)) = (name.take(), version.take()) {
+                out.push(InstalledPackage {
+                    name: n,
+                    version: v,
+                });
+            }
+        }
+        *name = None;
+        *version = None;
+        *installed = false;
+    };
+    for line in text.lines() {
+        if line.is_empty() {
+            push(&mut name, &mut version, &mut installed);
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("Package: ") {
+            name = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("Version: ") {
+            version = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("Status: ") {
+            installed = v.contains("install ok installed");
+        }
+    }
+    push(&mut name, &mut version, &mut installed);
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+pub(crate) fn parse_apk_installed(text: &str) -> Vec<InstalledPackage> {
+    let mut out = Vec::new();
+    let mut name = None;
+    let mut version = None;
+    for line in text.lines() {
+        if line.is_empty() {
+            if let (Some(n), Some(v)) = (name.take(), version.take()) {
+                out.push(InstalledPackage {
+                    name: n,
+                    version: v,
+                });
+            }
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("P:") {
+            name = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("V:") {
+            version = Some(v.trim().to_string());
+        }
+    }
+    if let (Some(n), Some(v)) = (name, version) {
+        out.push(InstalledPackage {
+            name: n,
+            version: v,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 #[cfg(test)]
@@ -521,6 +670,12 @@ mod tests {
         assert_eq!(os.pretty.value.as_deref(), Some("Ubuntu 24.04.4 LTS"));
         assert_eq!(os.id.value.as_deref(), Some("ubuntu"));
         assert_eq!(os.id_like.value, None);
+        assert_eq!(os.id_like.access, AccessKind::Absent);
+        assert!(
+            !os.id_like.display().contains("不存在"),
+            "missing key must not look like a missing file: {}",
+            os.id_like.display()
+        );
     }
 
     #[test]
@@ -536,6 +691,12 @@ mod tests {
         assert_eq!(distro_family("ubuntu", "debian"), "debian");
         assert_eq!(distro_family("debian", ""), "debian");
         assert_eq!(distro_family("rocky", "rhel centos fedora"), "rhel");
+        let pkgs = parse_dpkg_status(
+            "Package: bash\nStatus: install ok installed\nVersion: 5.2\n\nPackage: foo\nStatus: deinstall ok config-files\nVersion: 1\n\nPackage: coreutils\nStatus: install ok installed\nVersion: 9.4\n",
+        );
+        assert_eq!(pkgs.len(), 2);
+        assert_eq!(pkgs[0].name, "bash");
+        assert_eq!(pkgs[1].name, "coreutils");
     }
 
     #[test]
@@ -557,6 +718,49 @@ mod tests {
         let (s, flags) = parse_taint(&Sample::ok("4096".into(), "tainted"));
         assert_eq!(s.value, Some(4096));
         assert_eq!(flags, f);
+    }
+
+    #[test]
+    fn refresh_slow_keeps_packages_and_config_gz() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("aida-pkg-slow-{}", std::process::id()));
+        fs::create_dir_all(root.join("proc/sys/kernel")).unwrap();
+        fs::create_dir_all(root.join("sys/kernel")).unwrap();
+        fs::create_dir_all(root.join("var/lib/dpkg")).unwrap();
+        fs::create_dir_all(root.join("etc")).unwrap();
+        fs::write(root.join("proc/loadavg"), "0.10 0.20 0.30 1/2 3\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/tainted"), "0\n").unwrap();
+        fs::write(root.join("proc/config.gz"), [1, 2, 3, 4]).unwrap();
+        fs::write(
+            root.join("var/lib/dpkg/status"),
+            "Package: bash\nStatus: install ok installed\nVersion: 1\n\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut info = collect(&ctx);
+        assert_eq!(info.package_count, 1);
+        assert_eq!(info.config_gz.value.as_deref(), Some("4 bytes"));
+        fs::write(
+            root.join("var/lib/dpkg/status"),
+            "Package: bash\nStatus: install ok installed\nVersion: 1\n\nPackage: coreutils\nStatus: install ok installed\nVersion: 2\n\n",
+        )
+        .unwrap();
+        fs::write(root.join("proc/config.gz"), [1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        fs::write(root.join("proc/loadavg"), "1.50 1.00 0.50 2/9 8\n").unwrap();
+        fs::write(root.join("proc/sys/kernel/tainted"), "1\n").unwrap();
+        refresh_slow(&mut info, &ctx);
+        assert_eq!(info.package_count, 1, "periodic refresh must not re-read dpkg");
+        assert_eq!(info.packages.len(), 1);
+        assert_eq!(info.config_gz.value.as_deref(), Some("4 bytes"));
+        assert_eq!(info.load_1.value, Some(1.50));
+        assert_eq!(info.tainted.value, Some(1));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

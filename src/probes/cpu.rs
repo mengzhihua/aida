@@ -277,7 +277,7 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         .as_deref()
         .is_some_and(|v| v == "notsupported" || v == "not implemented")
     {
-        notes.push("SMT sysfs 为 notsupported（虚拟机或未开 CONFIG_HOTPLUG_SMT 时常见）。".into());
+        notes.push("超线程热切换：内核不支持（虚拟机或未开 CONFIG_HOTPLUG_SMT 时常见）。".into());
     }
 
     CpuInfo {
@@ -317,6 +317,24 @@ pub fn collect_with_util(ctx: &ProbeCtx, sample_for: Option<Duration>) -> CpuInf
         freq_policies: collect_freq_policies(ctx),
         schedstat_cpus: parse_schedstat_cpus(&access::read_trimmed(ctx.proc_path("schedstat"))),
         notes,
+    }
+}
+
+/// 把 sysfs 里的 `0`/`on`/`notsupported` 收成用户语言。JSON 仍保留原文。
+pub fn display_sysfs_token(sample: &Sample<String>) -> String {
+    match sample.value.as_deref() {
+        Some(v) => localize_sysfs_token(v),
+        None => sample.display(),
+    }
+}
+
+pub fn localize_sysfs_token(raw: &str) -> String {
+    match raw {
+        "0" | "off" | "disabled" | "disable" => "关".into(),
+        "1" | "on" | "enabled" | "enable" => "开".into(),
+        "notsupported" | "not supported" | "notimplemented" | "not implemented" => "内核不支持".into(),
+        "forceoff" => "强制关闭".into(),
+        other => other.to_string(),
     }
 }
 
@@ -398,7 +416,9 @@ pub fn utilization(a: &Option<CpuStatSnap>, b: &Option<CpuStatSnap>) -> Option<f
     Some(((dt - di) as f32) * 100.0 / dt as f32)
 }
 
-/// GUI 快路径：只更新利用率、当前频率、governor，不重扫 cpuinfo/cache/漏洞。
+/// GUI 快路径：利用率来自 `/proc/stat`。只有启动时已经读到 cpufreq 的核才更新当前频率。
+/// 云主机通常没有 cpufreq，不能每拍对每个核打开 `scaling_*`（ENOENT 也会占 CPU）。
+/// governor / online 留给慢路径整份替换。
 pub fn refresh_runtime(
     info: &mut CpuInfo,
     ctx: &ProbeCtx,
@@ -409,22 +429,22 @@ pub fn refresh_runtime(
     apply_per_cpu(&mut info.logical, prev_stat, &now);
     *prev_stat = now;
     for l in &mut info.logical {
+        if l.scaling_cur_khz.access != AccessKind::Ok {
+            continue;
+        }
         let cpu_dir = ctx.sys_path(format!("devices/system/cpu/cpu{}", l.processor));
         l.scaling_cur_khz = read_u64(cpu_dir.join("cpufreq/scaling_cur_freq"));
-        l.governor = access::read_trimmed(cpu_dir.join("cpufreq/scaling_governor"));
-        l.online = access::read_trimmed(cpu_dir.join("online"));
     }
     info.cpuidle_driver =
         access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_driver"));
     info.cpuidle_governor =
         access::read_trimmed(ctx.sys_path("devices/system/cpu/cpuidle/current_governor"));
-    info.online = access::read_trimmed(ctx.sys_path("devices/system/cpu/online"));
     let root = ctx.sys_path("devices/system/cpu/cpufreq");
     for p in &mut info.freq_policies {
-        let dir = root.join(&p.name);
-        p.governor = access::read_trimmed(dir.join("scaling_governor"));
-        p.scaling_cur_khz = access::read_u64(dir.join("scaling_cur_freq"));
-        p.epp = access::read_trimmed(dir.join("energy_performance_preference"));
+        if p.scaling_cur_khz.access != AccessKind::Ok {
+            continue;
+        }
+        p.scaling_cur_khz = access::read_u64(root.join(&p.name).join("scaling_cur_freq"));
     }
 }
 
@@ -596,6 +616,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sysfs_token_is_user_language() {
+        assert_eq!(localize_sysfs_token("notsupported"), "内核不支持");
+        assert_eq!(localize_sysfs_token("0"), "关");
+        assert_eq!(localize_sysfs_token("on"), "开");
+        let s = Sample::ok("notsupported".into(), "smt/control");
+        assert_eq!(display_sysfs_token(&s), "内核不支持");
+        assert_eq!(s.value.as_deref(), Some("notsupported"));
+    }
+
+    #[test]
     fn parse_two_logical_cpus() {
         let text = "\
 processor\t: 0
@@ -708,6 +738,46 @@ flags\t\t: fpu hypervisor sse
         assert_eq!(
             info.cpuidle_available_governors.value.as_deref(),
             Some("ladder menu haltpoll")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fast_path_skips_missing_cpufreq() {
+        let root = std::env::temp_dir().join(format!("aida-cpu-fast-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("proc")).unwrap();
+        std::fs::create_dir_all(root.join("sys/devices/system/cpu/cpu0")).unwrap();
+        std::fs::write(
+            root.join("proc/cpuinfo"),
+            "processor\t: 0\nmodel name\t: Test\ncpu MHz\t\t: 2000.000\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("proc/stat"),
+            "cpu  10 0 0 90 0 0 0 0 0 0\ncpu0 10 0 0 90 0 0 0 0 0 0\n",
+        )
+        .unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut info = collect_with_util(&ctx, None);
+        assert_eq!(info.logical[0].scaling_cur_khz.access, AccessKind::NotFound);
+        std::fs::create_dir_all(root.join("sys/devices/system/cpu/cpu0/cpufreq")).unwrap();
+        std::fs::write(
+            root.join("sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+            "1500000\n",
+        )
+        .unwrap();
+        let mut prev = None;
+        refresh_runtime(&mut info, &ctx, &mut prev);
+        assert_eq!(
+            info.logical[0].scaling_cur_khz.access,
+            AccessKind::NotFound,
+            "fast path must not reopen cpufreq that was missing at startup"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

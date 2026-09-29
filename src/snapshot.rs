@@ -195,7 +195,8 @@ impl HardwareSnapshot {
             *prev_disk = Some(block::counters(&self.block));
             self.memory = memory::collect(ctx);
             self.pm = pm::collect(ctx);
-            self.software = software::collect(ctx);
+            // 已装包和 config.gz 只在启动时读。周期刷新再扫 dpkg 会把空闲机器顶起来。
+            software::refresh_slow(&mut self.software, ctx);
             self.clock = clock::collect(ctx);
             self.edac = edac::collect(ctx);
             self.fs = fs::collect(ctx);
@@ -217,6 +218,51 @@ impl HardwareSnapshot {
             zmem::refresh_runtime(&mut self.zmem, ctx);
         }
         self.collected_at_unix_ms = unix_ms();
+    }
+
+    /// 顶栏一行：虚拟机 / 无 DMI / 无 GPU / 无传感器。空则本环境没有这些缺口。
+    pub fn environment_headline(&self) -> Option<String> {
+        let mut bits = Vec::new();
+        if self.cpu.hypervisor {
+            bits.push("虚拟机");
+        }
+        if self.dmi.sys_vendor.value.is_none() && self.dmi.product_name.value.is_none() {
+            bits.push("无 DMI");
+        }
+        if self.gpu.devices.is_empty() {
+            bits.push("无 GPU");
+        }
+        if self.sensors.chips.is_empty() && self.sensors.thermal_zones.is_empty() {
+            bits.push("无温度传感器");
+        }
+        if bits.is_empty() {
+            None
+        } else {
+            Some(format!("本环境：{}", bits.join(" · ")))
+        }
+    }
+
+    /// 云主机/无 GPU/无传感器时用一句话说明「不适用」，避免像坏了。
+    pub fn environment_cards(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        if !self.privilege.is_root {
+            v.push(
+                "普通用户：DMI 序列号、SMBIOS 表、NVMe SMART、iomem 真实地址可能被内核隐藏。点「提权后重新采集」。".into(),
+            );
+        }
+        if self.cpu.hypervisor {
+            v.push("当前像是虚拟机：无主板 DMI、无独立 GPU、无 hwmon 都常见。".into());
+        }
+        if self.dmi.sys_vendor.value.is_none() && self.dmi.product_name.value.is_none() {
+            v.push("无 DMI/SMBIOS：云主机或容器经常不导出，不是采集失败。".into());
+        }
+        if self.gpu.devices.is_empty() {
+            v.push("无 GPU / DRM：本环境没有显示适配器，顶栏不会有 GPU 占用。".into());
+        }
+        if self.sensors.chips.is_empty() && self.sensors.thermal_zones.is_empty() {
+            v.push("无温度传感器：顶栏 TEMP — 表示没有 hwmon，点进去可看说明。".into());
+        }
+        v
     }
 }
 
