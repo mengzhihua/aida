@@ -347,6 +347,12 @@ pub struct NetReport {
     /// RA 默认路由的度量（内核默认 1024）。
     pub ipv6_ra_defrtr_metric: Sample<String>,
     pub ipv6_ra_defrtr_metric_dev: Vec<String>,
+    /// `1` 尊重 RA PIO 里的 P 标志（RFC 8981）。
+    pub ipv6_ra_honor_pio_pflag: Sample<String>,
+    pub ipv6_ra_honor_pio_pflag_dev: Vec<String>,
+    /// `1` 时经该接口出去的源地址只能用本接口地址。
+    pub ipv6_use_oif_addrs_only: Sample<String>,
+    pub ipv6_use_oif_addrs_only_dev: Vec<String>,
     pub notes: Vec<String>,
 }
 
@@ -1064,6 +1070,16 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
     let metric_all = ipv6_ra_defrtr_metric.value.clone();
     let ipv6_ra_defrtr_metric_dev =
         conf_dev_diffs(ctx, "ipv6", "ra_defrtr_metric", metric_all.as_deref());
+    let ipv6_ra_honor_pio_pflag =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/ra_honor_pio_pflag"));
+    let pflag_all = ipv6_ra_honor_pio_pflag.value.clone();
+    let ipv6_ra_honor_pio_pflag_dev =
+        conf_dev_diffs(ctx, "ipv6", "ra_honor_pio_pflag", pflag_all.as_deref());
+    let ipv6_use_oif_addrs_only =
+        access::read_trimmed(ctx.proc_path("sys/net/ipv6/conf/all/use_oif_addrs_only"));
+    let oif_all = ipv6_use_oif_addrs_only.value.clone();
+    let ipv6_use_oif_addrs_only_dev =
+        conf_dev_diffs(ctx, "ipv6", "use_oif_addrs_only", oif_all.as_deref());
     let root = ctx.sys_path("class/net");
     let names = match access::list_dir_names(&root) {
         Sample {
@@ -1337,6 +1353,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
                 ipv6_seg6_require_hmac_dev,
                 ipv6_ra_defrtr_metric,
                 ipv6_ra_defrtr_metric_dev,
+                ipv6_ra_honor_pio_pflag,
+                ipv6_ra_honor_pio_pflag_dev,
+                ipv6_use_oif_addrs_only,
+                ipv6_use_oif_addrs_only_dev,
                 notes,
             };
         }
@@ -1655,6 +1675,10 @@ pub fn collect_with_prev(ctx: &ProbeCtx, prev: Option<&[NetSnap]>, dt_sec: f64) 
         ipv6_seg6_require_hmac_dev,
         ipv6_ra_defrtr_metric,
         ipv6_ra_defrtr_metric_dev,
+        ipv6_ra_honor_pio_pflag,
+        ipv6_ra_honor_pio_pflag_dev,
+        ipv6_use_oif_addrs_only,
+        ipv6_use_oif_addrs_only_dev,
         notes,
     }
 }
@@ -3447,6 +3471,16 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ra_honor_pio_pflag"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/use_oif_addrs_only"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("proc/sys/net/ipv4/tcp_slow_start_after_idle"),
             "1\n",
         )
@@ -3663,6 +3697,8 @@ mod tests {
         assert_eq!(r.ipv6_ra_honor_pio_life.value.as_deref(), Some("0"));
         assert_eq!(r.ipv6_seg6_require_hmac.value.as_deref(), Some("-1"));
         assert_eq!(r.ipv6_ra_defrtr_metric.value.as_deref(), Some("1024"));
+        assert_eq!(r.ipv6_ra_honor_pio_pflag.value.as_deref(), Some("0"));
+        assert_eq!(r.ipv6_use_oif_addrs_only.value.as_deref(), Some("0"));
         assert_eq!(r.tcp.slow_start_after_idle.value.as_deref(), Some("1"));
         assert_eq!(r.netdev_budget.value, Some(300));
         assert_eq!(r.rp_filter.value.as_deref(), Some("0"));
@@ -4083,6 +4119,26 @@ mod tests {
             "256\n",
         )
         .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/ra_honor_pio_pflag"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/ra_honor_pio_pflag"),
+            "1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/all/use_oif_addrs_only"),
+            "0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("proc/sys/net/ipv6/conf/lo/use_oif_addrs_only"),
+            "1\n",
+        )
+        .unwrap();
         let ctx = ProbeCtx {
             proc: root.join("proc"),
             sys: root.join("sys"),
@@ -4395,6 +4451,18 @@ mod tests {
             r.ipv6_ra_defrtr_metric_dev.iter().any(|s| s == "lo:256"),
             "lo ra_defrtr_metric=256 must differ from conf/all: {:?}",
             r.ipv6_ra_defrtr_metric_dev
+        );
+        assert_eq!(r.ipv6_ra_honor_pio_pflag.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_ra_honor_pio_pflag_dev.iter().any(|s| s == "lo:1"),
+            "lo ra_honor_pio_pflag=1 must differ from conf/all: {:?}",
+            r.ipv6_ra_honor_pio_pflag_dev
+        );
+        assert_eq!(r.ipv6_use_oif_addrs_only.value.as_deref(), Some("0"));
+        assert!(
+            r.ipv6_use_oif_addrs_only_dev.iter().any(|s| s == "lo:1"),
+            "lo use_oif_addrs_only=1 must differ from conf/all: {:?}",
+            r.ipv6_use_oif_addrs_only_dev
         );
         let _ = fs::remove_dir_all(&root);
     }
