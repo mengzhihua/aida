@@ -76,6 +76,26 @@ pub fn collect(ctx: &ProbeCtx) -> PowerReport {
     PowerReport { supplies, notes }
 }
 
+/// GUI 快路径：只更新状态、容量、电压、电流、功率。型号和序列号留在启动采集。
+/// 没有电源设备时不再打开 `power_supply`。
+pub fn refresh_runtime(report: &mut PowerReport, ctx: &ProbeCtx) {
+    if report.supplies.is_empty() {
+        return;
+    }
+    let root = ctx.sys_path("class/power_supply");
+    for s in &mut report.supplies {
+        let dir = root.join(&s.name);
+        s.status = access::read_trimmed(dir.join("status"));
+        s.present = access::read_trimmed(dir.join("present"));
+        s.online = access::read_trimmed(dir.join("online"));
+        s.capacity_pct = read_u64(dir.join("capacity"));
+        s.voltage_v = scaled(dir.join("voltage_now"), 1_000_000.0);
+        s.current_a = scaled(dir.join("current_now"), 1_000_000.0);
+        s.power_w = scaled(dir.join("power_now"), 1_000_000.0);
+        s.energy_now_wh = scaled(dir.join("energy_now"), 1_000_000.0);
+    }
+}
+
 fn read_u64(path: std::path::PathBuf) -> Sample<u64> {
     let s = access::read_trimmed(&path);
     match (s.access, s.value.as_deref()) {
@@ -142,6 +162,38 @@ mod tests {
         assert_eq!(bat.capacity_pct.value, Some(77));
         assert_eq!(bat.voltage_v.value, Some(12.0));
         assert_eq!(bat.energy_now_wh.value, Some(40.0));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_runtime_keeps_model() {
+        let root = std::env::temp_dir().join(format!("aida-psu-fast-{}", std::process::id()));
+        let bat = root.join("sys/class/power_supply/BAT0");
+        fs::create_dir_all(&bat).unwrap();
+        fs::write(bat.join("type"), "Battery\n").unwrap();
+        fs::write(bat.join("status"), "Discharging\n").unwrap();
+        fs::write(bat.join("capacity"), "77\n").unwrap();
+        fs::write(bat.join("model_name"), "TestBat\n").unwrap();
+        let ctx = ProbeCtx {
+            proc: root.join("proc"),
+            sys: root.join("sys"),
+            dev: root.join("dev"),
+            etc: root.join("etc"),
+            usr_share: root.join("usr/share"),
+        };
+        let mut r = collect(&ctx);
+        fs::write(bat.join("capacity"), "10\n").unwrap();
+        fs::write(bat.join("model_name"), "Other\n").unwrap();
+        refresh_runtime(&mut r, &ctx);
+        let bat = r.supplies.iter().find(|s| s.name == "BAT0").unwrap();
+        assert_eq!(bat.capacity_pct.value, Some(10));
+        assert_eq!(bat.model.value.as_deref(), Some("TestBat"));
+        let mut empty = PowerReport {
+            supplies: Vec::new(),
+            notes: Vec::new(),
+        };
+        refresh_runtime(&mut empty, &ctx);
+        assert!(empty.supplies.is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 }
