@@ -323,6 +323,9 @@ ARM 板子：`/proc/cpuinfo` 没有 `model name` / `physical id`，只有 `CPU p
 299. **鼠标移动不要按事件速率整窗重绘。** 软件 OpenGL（没有 `/dev/dri` 时的 llvmpipe）每帧都要铺满窗口。指针移动大约 400ms 才重绘一次，按住拖拽大约 50ms；点击、滚轮、键盘仍立即重绘。egui 默认还会在指针移动后立刻再要一帧，这里改成同样等 400ms，避免事件一密就空转。CJK 只作拉丁字体的回退。IRQ 亲和最多打开计数最高的 48 条，多出来的写在 note 里。`conf/all` 的 per-iface 差异先比物理网卡，veth/docker/br-/cni 等靠后，最多看 48 个接口、列出 8 处不同。形状羽化和像素抖动关掉。
 300. **veth 等高基数网卡不逐个打开 sysfs。** 计数来自 `/proc/net/dev`，文件里没有这一行也仍列出名字。note 写明跳过了多少个。docker0、`br-*`、virbr 仍读 `bridge/`，type=1 的 docker0 仍是网桥。`br0` 不以 `br-` 开头，走完整 sysfs。界面把只记计数的接口收进一个折叠，曲线合成一条 virtual RX/TX。逻辑 CPU 超过 32 个时一行一个。
 301. **GUI 周期刷新不重扫静态节点。** 快路径只更新已经发现的传感器输入、电源容量/电压/电流、RAPL `energy_uj`；这些目录在启动时是空的，就不再每次打开。慢路径不重读 CPU 拓扑和漏洞、不重读 GPU EDID、不重读 TCP/IPv6 sysctl 和 per-iface conf 差异、不逐块读 `memoryN/state`。新传感器、新电池、新 RAPL 区、新网卡在约 60 秒的慢路径出现。CLI `collect` 仍是一次全量采集。
+302. **SMBIOS Type 14/15/45 按 DSP0134 偏移解析。** Type 14 成员个数是 `(Length-5)/3`，每条是结构类型 BYTE + 句柄 WORD。Type 15 短于 `0x14` 不解释；Access Method `0x03`=Memory-mapped，Log Status bit0 有效、bit1 已满；`0x14` 才有 Header Format（`0x01`=Type 1）。Type 45 短于 `0x18` 不解释；镜像大小 QWORD 仅全 `FF` 未知；Characteristics bit0 可更新、bit1 写保护；State `0x04`=Enabled。不调用 dmidecode。
+303. **空的 hdaudio / cdx / vio 表示没有对应硬件。** 三者都先看 `bus/*/devices`，没有再看 `class/*`。`PermissionDenied` 仍写 note。
+304. **`seg6_require_hmac` / `ra_defrtr_metric` 只列出与 `conf/all` 不同的接口。** HMAC：`-1` 默认，`0` 不校验 SRH，`1` 只收带有效 HMAC 的 SRH。`ra_defrtr_metric` 是 RA 默认路由度量，内核默认 1024。不要用 `default` 顶替已有 iface。
 
 ## 测试方案
 

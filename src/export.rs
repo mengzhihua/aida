@@ -993,6 +993,9 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         ("usb4", &snap.buses.usb4),
         ("ishtp", &snap.buses.ishtp),
         ("scmi", &snap.buses.scmi),
+        ("hdaudio", &snap.buses.hdaudio),
+        ("cdx", &snap.buses.cdx),
+        ("vio", &snap.buses.vio),
     ] {
         if !names.is_empty() {
             html.push_str(&format!(
@@ -1505,7 +1508,7 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         }
     ));
     html.push_str(&format!(
-        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {} regen {} desync {}s ioam6 {} seg6 {} rpl {} pio_life {}</p>",
+        "<p class=\"muted\">accept_ra {} autoconf {} hop {} ttl {} dad {} addr_gen {} ip6frag {}/{} max_addrs {} ra_defrtr {} rs {} ct_est {} buckets {} tw {} busy_read {} icmp_ratelimit {} force_mld {} ra_pinfo {} enhanced_dad {} auto_flowlabels {} icmp_msgs {}/{} flowlabel {} idgen {} ra_mtu {} idgen_delay {} ip6frag_time {} keep_addr {} ping_group {} icmp_ratemask {} ra_min_hop {} icmp_inbound_ifaddr {} ra_min_lft {} ra_rt_min_plen {} ra_rt_max_plen {} ra_rtr_pref {} ra_from_local {} v6_redir {} drop_una {} drop_l2mcast {} force_tllao {} untracked_na {} proxy_ndp {} ndisc_tclass {} frag_ndisc {} opt_dad {} v6_srcrt {} use_opt {} linkdown {} evict_nc {} dis_pol {} mc_fwd {} force_fwd {} temp_valid {}s temp_pref {}s dis_xfrm {} skip_notify {} regen {} desync {}s ioam6 {} seg6 {} rpl {} pio_life {} hmac {} ra_metric {}</p>",
         snap.net.ipv6_accept_ra.display(),
         snap.net.ipv6_autoconf.display(),
         snap.net.ipv6_hop_limit.display(),
@@ -1660,7 +1663,14 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
             Some("0") => "0 关".into(),
             Some("1") => "1 尊重".into(),
             _ => snap.net.ipv6_ra_honor_pio_life.display(),
-        }
+        },
+        match snap.net.ipv6_seg6_require_hmac.value.as_deref() {
+            Some("-1") => "-1 默认".into(),
+            Some("0") => "0 不校验".into(),
+            Some("1") => "1 要 HMAC".into(),
+            _ => snap.net.ipv6_seg6_require_hmac.display(),
+        },
+        snap.net.ipv6_ra_defrtr_metric.display()
     ));
     if !snap.net.rp_filter_dev.is_empty() {
         html.push_str(&format!(
@@ -1924,6 +1934,18 @@ pub fn to_html(snap: &HardwareSnapshot) -> String {
         html.push_str(&format!(
             "<p class=\"muted\">ra_honor_pio_life iface {}</p>",
             esc(&snap.net.ipv6_ra_honor_pio_life_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_seg6_require_hmac_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">seg6_require_hmac iface {}</p>",
+            esc(&snap.net.ipv6_seg6_require_hmac_dev.join(" "))
+        ));
+    }
+    if !snap.net.ipv6_ra_defrtr_metric_dev.is_empty() {
+        html.push_str(&format!(
+            "<p class=\"muted\">ra_defrtr_metric iface {}</p>",
+            esc(&snap.net.ipv6_ra_defrtr_metric_dev.join(" "))
         ));
     }
     if !snap.net.protocols.is_empty() {
@@ -3434,6 +3456,63 @@ fn html_dmi_board(html: &mut String, snap: &HardwareSnapshot) {
         }
         html.push_str("</table>");
     }
+    if !snap.dmi.groups.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 14 分组</p>");
+        html.push_str("<table><tr><th>名称</th><th>成员</th></tr>");
+        for g in &snap.dmi.groups {
+            let items = g
+                .items
+                .iter()
+                .map(|it| format!("{} #{:#06X}", it.kind, it.handle))
+                .collect::<Vec<_>>()
+                .join(", ");
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                esc(g.name.as_deref().unwrap_or("—")),
+                esc(if items.is_empty() { "—" } else { &items })
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.event_logs.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 15 事件日志</p>");
+        html.push_str("<table><tr><th>访问</th><th>区域</th><th>状态</th></tr>");
+        for e in &snap.dmi.event_logs {
+            let status = format!(
+                "{}{}{}",
+                if e.valid { "valid" } else { "invalid" },
+                if e.full { " full" } else { "" },
+                e.header
+                    .as_deref()
+                    .map(|h| format!(" {h}"))
+                    .unwrap_or_default()
+            );
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{} B</td><td>{}</td></tr>",
+                esc(&e.access),
+                e.area_bytes,
+                esc(&status)
+            ));
+        }
+        html.push_str("</table>");
+    }
+    if !snap.dmi.firmware_inventory.is_empty() {
+        html.push_str("<p class=\"muted\">SMBIOS Type 45 固件清单</p>");
+        html.push_str("<table><tr><th>名称</th><th>版本</th><th>状态</th><th>大小</th></tr>");
+        for f in &snap.dmi.firmware_inventory {
+            html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                esc(f.name.as_deref().unwrap_or("—")),
+                esc(f.version.as_deref().unwrap_or("—")),
+                esc(&f.state),
+                esc(&f
+                    .size_bytes
+                    .map(|n| format!("{n} B"))
+                    .unwrap_or_else(|| "—".into()))
+            ));
+        }
+        html.push_str("</table>");
+    }
 }
 
 fn kb_html(s: &crate::Sample<u64>) -> String {
@@ -3967,6 +4046,46 @@ fn report_sections(snap: &HardwareSnapshot) -> Vec<ReportSection> {
         dmi.push(pair(
             &h.kind,
             h.device.as_deref().unwrap_or("—").to_string(),
+        ));
+    }
+    for g in snap.dmi.groups.iter().take(4) {
+        let items = g
+            .items
+            .iter()
+            .map(|it| format!("{} #{:#06X}", it.kind, it.handle))
+            .collect::<Vec<_>>()
+            .join(", ");
+        dmi.push(pair(
+            g.name.as_deref().unwrap_or("分组"),
+            if items.is_empty() {
+                "—".into()
+            } else {
+                items
+            },
+        ));
+    }
+    for e in snap.dmi.event_logs.iter().take(2) {
+        dmi.push(pair(
+            &e.access,
+            format!(
+                "{} B  {}{}",
+                e.area_bytes,
+                if e.valid { "valid" } else { "invalid" },
+                if e.full { " full" } else { "" }
+            ),
+        ));
+    }
+    for f in snap.dmi.firmware_inventory.iter().take(8) {
+        dmi.push(pair(
+            f.name.as_deref().unwrap_or("固件"),
+            format!(
+                "{}  {}  {}",
+                f.version.as_deref().unwrap_or("—"),
+                f.state,
+                f.size_bytes
+                    .map(|n| format!("{n} B"))
+                    .unwrap_or_else(|| "—".into())
+            ),
         ));
     }
     let dmi_present = snap.dmi.sys_vendor.value.is_some()
